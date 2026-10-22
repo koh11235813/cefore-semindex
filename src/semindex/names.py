@@ -18,9 +18,17 @@ as holder:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 PREFIX = "ccnx:/semidx"
+
+# 2026-10-22 fix: str.isdigit() accepts Unicode digits outside plain
+# ASCII 0-9 (e.g. the superscript '²'), which int() then fails to parse,
+# raising an uncaught ValueError instead of MalformedNameError. Matching
+# against this pattern instead of calling isdigit() restricts a decimal
+# component to the exact character set int() can always parse.
+_DECIMAL_RE = re.compile(r"[0-9]+")
 
 
 class MalformedNameError(ValueError):
@@ -64,7 +72,7 @@ def _parse_int_component(value: str, label: str) -> int:
     '+', internal '_' separators, or surrounding whitespace, none of
     which a Cefore name component should ever carry.
     """
-    if not value.isdigit():
+    if not _DECIMAL_RE.fullmatch(value):
         raise MalformedNameError(f"{label} must be a non-negative decimal integer")
     return int(value)
 
@@ -81,6 +89,14 @@ def build_state_name(group: str, holder: str, requester: str, epoch_ms: int) -> 
     _validate_component(group, "group")
     _validate_component(holder, "holder")
     _validate_component(requester, "requester")
+    # 2026-10-22 fix: the `< 0` check below passes for a bool (True < 0
+    # is False) or a float (1.5 < 0 is False) just as it does for a
+    # plain int, so without this check build_state_name could silently
+    # emit a wire name whose last segment is "True" or "1.5" -- not a
+    # decimal integer at all -- instead of raising at the point of
+    # misuse.
+    if not isinstance(epoch_ms, int) or isinstance(epoch_ms, bool):
+        raise MalformedNameError("epoch_ms must be an integer")
     if epoch_ms < 0:
         raise MalformedNameError("epoch_ms must be non-negative")
     return f"{PREFIX}/{group}/{holder}/sv/{requester}/{epoch_ms}"
@@ -91,6 +107,8 @@ def build_record_name(group: str, holder: str, origin: str, seq: int) -> str:
     _validate_component(group, "group")
     _validate_component(holder, "holder")
     _validate_component(origin, "origin")
+    if not isinstance(seq, int) or isinstance(seq, bool):
+        raise MalformedNameError("seq must be an integer")
     if seq < 1:
         raise MalformedNameError("seq must be >= 1")
     return f"{PREFIX}/{group}/{holder}/rec/{origin}/{seq}"

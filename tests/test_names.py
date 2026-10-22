@@ -43,6 +43,22 @@ def test_build_rejects_component_containing_slash():
     assert str(exc_info.value) == "holder must be a non-empty name component without '/'"
 
 
+def test_build_state_name_rejects_a_bool_epoch_ms():
+    # 2026-10-22 fix regression: `True < 0` is False, same as any
+    # non-negative int, so without an explicit type check this used to
+    # build "ccnx:/semidx/g/h1/sv/h0/True" -- not a decimal integer at
+    # all -- instead of raising at the point of misuse.
+    with pytest.raises(names.MalformedNameError) as exc_info:
+        names.build_state_name("g", "h1", "h0", True)
+    assert str(exc_info.value) == "epoch_ms must be an integer"
+
+
+def test_build_record_name_rejects_a_float_seq():
+    with pytest.raises(names.MalformedNameError) as exc_info:
+        names.build_record_name("g", "h1", "h0", 1.5)
+    assert str(exc_info.value) == "seq must be an integer"
+
+
 @pytest.mark.parametrize(
     "name,expected_message",
     [
@@ -55,6 +71,11 @@ def test_build_rejects_component_containing_slash():
         ("ccnx:/semidx/g/h1/rec/h0/0", "seq must be >= 1"),
         ("ccnx:/semidx/g//sv/h0/1", "holder must be a non-empty name component without '/'"),
         ("ccnx:/semidx/g/h1/sv/h0/-1", "epoch_ms must be a non-negative decimal integer"),
+        # 2026-10-22 fix regression: '²'.isdigit() is True but int('²')
+        # raises ValueError -- it is category "No" (Number, other), not
+        # the decimal-digit category int() normalizes -- so this used
+        # to escape as an uncaught ValueError instead of this error.
+        ("ccnx:/semidx/g/h1/sv/h0/²", "epoch_ms must be a non-negative decimal integer"),
     ],
 )
 def test_parse_rejects_malformed_names(name, expected_message):
