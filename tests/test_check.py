@@ -897,7 +897,7 @@ def test_check_t2a_protocol_fails_on_a_fetch_timeout_for_a_seq_that_was_never_dr
     assert rc == 1
     out = capsys.readouterr().out
     assert (
-        "FAIL: h1 logged no fetch_timeout for any (h0, seq) other than the one actually dropped: "
+        "FAIL: h1 logged no fetch_timeout other than the configured dropped (h0, 2): "
         "unexpected timeout(s): [{'ts_ms': 1700000012000, 'event': 'fetch_timeout', 'origin': 'h0', "
         "'seq': 3, 'neighbor': 'h0'}]"
     ) in out.splitlines()
@@ -929,7 +929,7 @@ def test_check_t2a_protocol_fails_on_a_fetch_timeout_for_an_origin_that_was_neve
     assert rc == 1
     out = capsys.readouterr().out
     assert (
-        "FAIL: h1 logged no fetch_timeout for any (h0, seq) other than the one actually dropped: "
+        "FAIL: h1 logged no fetch_timeout other than the configured dropped (h0, 2): "
         "unexpected timeout(s): [{'ts_ms': 1700000012000, 'event': 'fetch_timeout', 'origin': 'h1', "
         "'seq': 2, 'neighbor': 'h0'}]"
     ) in out.splitlines()

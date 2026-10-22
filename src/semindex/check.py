@@ -618,13 +618,22 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # drop.seq's own number. Inspect every requester fetch_timeout and
     # reject anything whose (origin, seq) pair is not exactly the one the
     # experiment actually dropped.
+    #
+    # 2026-10-23 fix (review finding): the diagnostic
+    # used to read "... for any (drop.origin, seq) other than the one
+    # actually dropped", which fixes drop.origin in the wording even
+    # though a rejected timeout can carry any OTHER origin entirely (see
+    # the test above, which rejects an (h1, 2) timeout while drop.origin
+    # is "h0") -- misleading about what was actually rejected and why.
+    # State the real rule: no fetch_timeout at all other than the one
+    # exact configured (origin, seq) pair that was dropped.
     other_timeouts = [
         e
         for e in _events_of(requester_events, "fetch_timeout")
         if (e["origin"], e["seq"]) != (drop.origin, drop.seq)
     ]
     c.protocol(
-        f"{requester} logged no fetch_timeout for any ({drop.origin}, seq) other than the one actually dropped",
+        f"{requester} logged no fetch_timeout other than the configured dropped ({drop.origin}, {drop.seq})",
         other_timeouts == [],
         f"unexpected timeout(s): {other_timeouts}",
     )
