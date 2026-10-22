@@ -85,6 +85,27 @@ def test_validate_rejects_supersedes_pointing_at_self():
     assert str(exc_info.value) == "supersedes must not reference the record's own key"
 
 
+@pytest.mark.parametrize(
+    "field,value,expected_message",
+    [
+        # 2026-10-22 fix regression: `value not in <frozenset>` hashes
+        # its operand first, so an unhashable value here used to raise
+        # an uncaught TypeError instead of RecordError.
+        ("zone", [], "zone must be one of ['zone1', 'zone2', 'zone3', 'zone4', 'zone5']"),
+        ("zone", {}, "zone must be one of ['zone1', 'zone2', 'zone3', 'zone4', 'zone5']"),
+        ("disaster", [], "disaster must be one of ['collapse', 'fire', 'flood', 'landslide', 'unknown']"),
+        ("disaster", {}, "disaster must be one of ['collapse', 'fire', 'flood', 'landslide', 'unknown']"),
+        ("media", [], "media must be one of ['image', 'sensor', 'video']"),
+        ("media", {}, "media must be one of ['image', 'sensor', 'video']"),
+    ],
+)
+def test_validate_rejects_non_string_attribute_as_record_error_not_type_error(field, value, expected_message):
+    record = _make_record(**{field: value})
+    with pytest.raises(schema.RecordError) as exc_info:
+        schema.validate(record)
+    assert str(exc_info.value) == expected_message
+
+
 def test_encode_rejects_oversize_record():
     # A content_name long enough to push the canonical encoding past the
     # 2 KiB wire limit.
@@ -141,3 +162,51 @@ def test_decode_accepts_a_supersedes_record_key():
     record = _make_record(seq=2, supersedes=schema.RecordKey(origin="h0", seq=1))
     payload = schema.encode(record)
     assert schema.decode(payload).supersedes == schema.RecordKey(origin="h0", seq=1)
+
+
+def test_decode_rejects_array_valued_attribute_as_record_error_not_type_error():
+    # The attack path the validate()-level tests above exercise directly:
+    # a crafted wire payload reaching decode() with a non-string attrs
+    # value must come back as RecordError, which engine.on_record
+    # catches, not an uncaught TypeError that would crash the agent.
+    record = _make_record()
+    payload = schema.encode(record)
+    import json
+
+    obj = json.loads(payload)
+    obj["attrs"]["zone"] = []
+    bad = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("ascii")
+    with pytest.raises(schema.RecordError) as exc_info:
+        schema.decode(bad)
+    assert str(exc_info.value) == "zone must be one of ['zone1', 'zone2', 'zone3', 'zone4', 'zone5']"
+
+
+def test_decode_rejects_payload_with_incidental_whitespace():
+    # 2026-10-22 fix regression: decode() used to accept any JSON
+    # encoding of a valid record, then content_hash/the store hashed
+    # and kept the *received* bytes -- so the same record re-sent with
+    # different incidental whitespace would decode equal but hash
+    # differently, and look like a conflict against itself.
+    record = _make_record()
+    canonical = schema.canonical_bytes(record)
+    import json
+
+    noncanonical = json.dumps(json.loads(canonical), sort_keys=True).encode("ascii")  # default separators add spaces
+    assert noncanonical != canonical
+    with pytest.raises(schema.RecordError) as exc_info:
+        schema.decode(noncanonical)
+    assert str(exc_info.value) == "record payload is not canonical JSON"
+
+
+def test_decode_rejects_payload_with_reordered_keys():
+    record = _make_record()
+    canonical = schema.canonical_bytes(record)
+    import json
+
+    obj = json.loads(canonical)
+    reordered = {key: obj[key] for key in reversed(list(obj.keys()))}
+    noncanonical = json.dumps(reordered, separators=(",", ":")).encode("ascii")
+    assert noncanonical != canonical
+    with pytest.raises(schema.RecordError) as exc_info:
+        schema.decode(noncanonical)
+    assert str(exc_info.value) == "record payload is not canonical JSON"

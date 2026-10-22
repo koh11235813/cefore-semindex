@@ -104,11 +104,16 @@ def validate(record: IndexRecord) -> None:
         raise RecordError("seq must be an integer >= 1")
     if not isinstance(record.content_name, str) or not record.content_name:
         raise RecordError("content_name must be a non-empty string")
-    if record.zone not in ZONES:
+    # 2026-10-22 fix: `in` on a frozenset hashes its operand first, so an
+    # unhashable value here (a list or dict, e.g. a crafted wire payload
+    # with "zone": []) used to raise an uncaught TypeError instead of
+    # RecordError -- checking the type before the membership test turns
+    # that into an ordinary validation failure.
+    if not isinstance(record.zone, str) or record.zone not in ZONES:
         raise RecordError(f"zone must be one of {sorted(ZONES)}")
-    if record.disaster not in DISASTERS:
+    if not isinstance(record.disaster, str) or record.disaster not in DISASTERS:
         raise RecordError(f"disaster must be one of {sorted(DISASTERS)}")
-    if record.media not in MEDIA:
+    if not isinstance(record.media, str) or record.media not in MEDIA:
         raise RecordError(f"media must be one of {sorted(MEDIA)}")
     if (
         not isinstance(record.observed_at, int)
@@ -184,7 +189,19 @@ def decode(data: bytes) -> IndexRecord:
     Rejects oversize input before attempting to parse it -- a peer must
     not be able to force JSON parsing of an arbitrarily large payload --
     then rejects malformed JSON, a wrong key set, a field of the wrong
-    type, and finally anything `validate` rejects.
+    type, anything `validate` rejects, and finally any payload that is
+    not itself the canonical encoding of the record it describes.
+
+    2026-10-22 fix: that last check used to be missing, so two
+    byte-for-byte different encodings of the same record (reordered
+    keys, incidental whitespace) decoded to equal records but hashed
+    differently -- `content_hash` is computed over the received bytes,
+    not a re-canonicalized form, so a legitimate re-send in a different
+    encoding would be reported as a conflict against itself. The wire
+    format is specified as canonical (map.md "キー整列・空白なしの
+    UTF-8"), so a sender that violates it is rejected outright, the same
+    way holder_state.decode treats a noncompliant peer: never silently
+    renormalized.
     """
     if len(data) > MAX_RECORD_BYTES:
         raise RecordError(f"record payload is {len(data)} bytes, over the {MAX_RECORD_BYTES} byte limit")
@@ -246,4 +263,6 @@ def decode(data: bytes) -> IndexRecord:
         supersedes=supersedes,
     )
     validate(record)
+    if data != canonical_bytes(record):
+        raise RecordError("record payload is not canonical JSON")
     return record
