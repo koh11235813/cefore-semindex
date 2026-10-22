@@ -1,0 +1,1010 @@
+"""semindex.evalagg: aggregate stage-1 evaluation runs into map.md's metrics.
+
+Reads every (p, seed) run stored under `<store>/<stage>/p<p>/<seed>/`
+(semindex.evalgen's own layout, map.md "データの置き場所") and writes six
+CSV files into --out: runs.csv, discovery.csv, survival.csv,
+consistency.csv, summary.csv, decisions.csv. Nothing here duplicates
+semindex.analyze's event discovery or pairing -- this module calls into
+it for event-reading, (origin, seq) creation times, control-byte summing
+and probe pairing, and only adds the window cut, censoring, and the
+across-run pooling analyze.py has no reason to know about.
+
+Figures: map.md's own ticket also asks for plots, but this venv has no
+matplotlib (checked at import time, see FIGURES_AVAILABLE below) and the
+operator's hard rule for this effort forbids installing anything. Every
+output here is written as a plain CSV instead, chosen so each one is
+already in long/tidy form a plotting tool can read directly without
+reshaping -- survival.csv in particular is one row per (p, hop, t) grid
+point, exactly the shape a line-per-hop plot needs.
+
+t0 (map.md "計測の窓"): every agent's own `elapsed_s` is `now -
+t0_ms/1000`, and `t0_ms` only ever reaches the agent as a CLI override
+(`--t0-ms`) baked into the host_apps argv at ReCefore launch time -- the
+generated YAML stores that argv as the literal, unresolved template
+string "{t0_ms}" (semindex.gen's own placeholder), and a node's own
+agent-config JSON carries a "t0_ms": 0 placeholder default that is never
+the value actually used. Neither file this module could read holds the
+real t0_ms. It is derived instead, per run, from the one clock every
+node's events.jsonl and the run's own results.json already share
+(Mininet hosts share the wall clock -- see semindex.check.results_ts_ms's
+own docstring): see `derive_t0_ms` for the fallback chain and
+`t0_source` for which rung of it a given run actually used.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import glob
+import importlib.util
+import json
+import os
+import statistics
+import sys
+from dataclasses import dataclass, field
+
+from semindex import evalgen
+from semindex.analyze import (
+    _created_ts_by_key,
+    _node_sort_key,
+    control_bytes,
+    discover_node_events,
+    probe_pairs,
+)
+from semindex.check import CheckUsageError, read_results, results_ts_ms
+
+# Whether a figure step could even run in this interpreter. Checked once,
+# at import time, rather than inside main() on every invocation; a
+# venv's installed package set does not change between one run of this
+# CLI and the next. No plotting code is written at all when this is
+# False (see the module docstring) -- there is nothing here to guard with
+# it today, but a later effort adding figures should gate that code on
+# this flag instead of a bare `import matplotlib`.
+FIGURES_AVAILABLE = importlib.util.find_spec("matplotlib") is not None
+
+# 95% two-sided Wilson score interval z (scipy.stats.norm.ppf(0.975));
+# hardcoded rather than computed, since this module has no normal-quantile
+# routine of its own and stdlib has none either (map.md only ever asks
+# for the 95% interval, not a configurable confidence level).
+_WILSON_Z = 1.959963984540054
+
+# KM time grid for survival.csv (map.md "t グリッド 0..120 秒 0.5 秒刻み").
+# The grid's own span is WINDOW_END_S - WINDOW_START_S, not a hardcoded
+# 120 -- the one evalgen already fixed at 120.0 (DISCONNECT_WINDOW_S) --
+# so this module never carries its own copy of that number to drift from
+# evalgen's.
+_GRID_STEP_S = 0.5
+
+
+def _window_duration_s() -> float:
+    """The measurement window's own span in seconds, from evalgen's constants."""
+    return evalgen.WINDOW_END_S - evalgen.WINDOW_START_S
+
+
+def _survival_grid() -> list[float]:
+    """The t grid survival.csv reports delivered-fraction at: 0, 0.5, ..., up to the window's span."""
+    duration = _window_duration_s()
+    n_steps = round(duration / _GRID_STEP_S)
+    return [round(i * _GRID_STEP_S, 4) for i in range(n_steps + 1)]
+
+
+# -- run discovery -------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RunRef:
+    """One (p, seed) run's location under the store, before anything in it has been read."""
+
+    p: float
+    seed: int
+    run_dir: str
+
+
+def _parse_p_dirname(name: str) -> float | None:
+    """`"p0.2"` -> 0.2, `"p0"` -> 0.0; None if `name` is not a `p<number>` directory."""
+    if not name.startswith("p"):
+        return None
+    try:
+        return float(name[1:])
+    except ValueError:
+        return None
+
+
+def discover_runs(store: str, stage: str) -> list[RunRef]:
+    """Every (p, seed) run directory under `<store>/<stage>/`, sorted by (p, seed).
+
+    A run directory is any `<store>/<stage>/p<p>/<seed>/` whose `<seed>`
+    component is itself a run of ASCII digits (evalgen names every run's
+    seed directory after the plain int `--seed` it was generated with;
+    anything else under a `p<p>/` directory is not a run this module
+    knows how to read).
+    """
+    runs: list[RunRef] = []
+    for p_dir in sorted(glob.glob(os.path.join(store, stage, "p*"))):
+        p = _parse_p_dirname(os.path.basename(p_dir))
+        if p is None or not os.path.isdir(p_dir):
+            continue
+        for seed_dir in sorted(os.listdir(p_dir)):
+            if not seed_dir.isdigit():
+                continue
+            full = os.path.join(p_dir, seed_dir)
+            if os.path.isdir(full):
+                runs.append(RunRef(p=p, seed=int(seed_dir), run_dir=full))
+    runs.sort(key=lambda r: (r.p, r.seed))
+    return runs
+
+
+def run_has_done_marker(run_dir: str) -> bool:
+    """Whether `<run_dir>/DONE` exists.
+
+    DONE is the runner's own sentinel for "this run finished and its
+    retained files are complete" (map.md's runner ticket, 04, is still
+    open as of this module -- this is this module's own interface
+    expectation of it, not yet something any committed code writes). A
+    run missing it is skipped by default (ticket 05's "skip runs without
+    a DONE file"); `--include-undone` overrides that for exactly the
+    hand-stored trial-manual sample, which has neither DONE nor meta.json.
+    """
+    return os.path.isfile(os.path.join(run_dir, "DONE"))
+
+
+# -- meta.json / validity --------------------------------------------------
+
+
+def read_meta(run_dir: str) -> tuple[str, list[str]]:
+    """This run's validity status and flags from `<run_dir>/meta.json`.
+
+    Status is one of "valid", "flagged" or "unknown". `meta.json` is the
+    runner's own output (ticket 04, still open): map.md only commits to
+    it holding `{"valid": bool, "flags": [...]}` "under some key" -- so a
+    dict with both keys is accepted whether it sits at the top level or
+    one level down (e.g. `{"check": {"valid": ..., "flags": [...]}}`).
+    Missing the file, an unparsable file, or a file whose shape matches
+    neither all mean "unknown", never "flagged": there is no evidence
+    here that the run's own preconditions actually failed, only that this
+    module could not read a verdict.
+    """
+    path = os.path.join(run_dir, "meta.json")
+    if not os.path.isfile(path):
+        return "unknown", []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return "unknown", []
+
+    def _as_verdict(candidate: object) -> dict | None:
+        if isinstance(candidate, dict) and "valid" in candidate and "flags" in candidate:
+            return candidate
+        return None
+
+    verdict = _as_verdict(data)
+    if verdict is None and isinstance(data, dict):
+        for value in data.values():
+            verdict = _as_verdict(value)
+            if verdict is not None:
+                break
+    if verdict is None:
+        return "unknown", []
+
+    flags_raw = verdict.get("flags")
+    flags = [str(f) for f in flags_raw] if isinstance(flags_raw, list) else []
+    if verdict.get("valid") is True:
+        return "valid", flags
+    if verdict.get("valid") is False:
+        return "flagged", flags
+    return "unknown", flags
+
+
+# -- t0 derivation ---------------------------------------------------------
+
+
+def _t0_from_results(results: list[dict] | None) -> float | None:
+    """Median of (event ts_ms - actual_at*1000) over results.json's own scheduler event rows.
+
+    The most precise source available (see the module docstring): every
+    `op_type == "event"` row (link_down/link_up here) carries both a wall
+    clock `ts` and `actual_at`, the scheduler's own monotonic seconds
+    since ITS start -- and that start is the same instant every host_apps
+    process was launched with as its `t0_ms` (verified against
+    trial-manual: the spread across 17 link events there is under 25ms).
+    None at p=0, where no link events exist at all, so this is never the
+    only rung of the fallback chain.
+    """
+    if not results:
+        return None
+    anchors = []
+    for record in results:
+        if record.get("op_type") != "event":
+            continue
+        actual_at = record.get("actual_at")
+        if actual_at is None:
+            continue
+        try:
+            ts_ms = results_ts_ms(record)
+        except (KeyError, ValueError):
+            continue
+        anchors.append(ts_ms - actual_at * 1000.0)
+    return statistics.median(anchors) if anchors else None
+
+
+def _t0_from_boundary_event(nodes: dict[str, list[dict]], event_name: str, boundary_s: float) -> float | None:
+    """Median of (that event's ts_ms - boundary_s*1000) across every node that logged it.
+
+    Used for both fallback rungs below `_t0_from_results`:
+    `counters_snapshot` against evalgen.WINDOW_START_S, and the final
+    `counters` line against evalgen.WINDOW_END_S (Agent._elapsed_s / the
+    stop_at_s and counters_snapshot_at_s checks in agent.py fire these
+    once `elapsed_s(now) >= boundary_s`, so the event's own ts_ms is
+    `t0_ms + boundary_s*1000` plus at most one poll tick -- a late bias of
+    well under a second, not large enough to matter against a 120s
+    window).
+    """
+    anchors = [
+        event["ts_ms"] - boundary_s * 1000.0
+        for events in nodes.values()
+        for event in events
+        if event.get("event") == event_name and "ts_ms" in event
+    ]
+    return statistics.median(anchors) if anchors else None
+
+
+def _t0_from_first_event(nodes: dict[str, list[dict]]) -> float | None:
+    """The earliest ts_ms logged by any node, as a last-resort t0 (least precise rung)."""
+    all_ts = [event["ts_ms"] for events in nodes.values() for event in events if "ts_ms" in event]
+    return min(all_ts) if all_ts else None
+
+
+def derive_t0_ms(nodes: dict[str, list[dict]], results: list[dict] | None) -> tuple[float, str]:
+    """This run's t0_ms and which fallback rung produced it ("scheduler" | "snapshot" | "stop" | "first_event").
+
+    Tried in order of precision (see each helper's own docstring); the
+    first rung that finds any evidence wins. Raises CheckUsageError only
+    if a run has no evidence at all (no results.json events, no
+    counters/counters_snapshot lines, and not even an ordinary ts_ms
+    anywhere) -- a run this broken has nothing this module could anchor a
+    window to.
+    """
+    scheduler = _t0_from_results(results)
+    if scheduler is not None:
+        return scheduler, "scheduler"
+    snapshot = _t0_from_boundary_event(nodes, "counters_snapshot", evalgen.WINDOW_START_S)
+    if snapshot is not None:
+        return snapshot, "snapshot"
+    stop = _t0_from_boundary_event(nodes, "counters", evalgen.WINDOW_END_S)
+    if stop is not None:
+        return stop, "stop"
+    first = _t0_from_first_event(nodes)
+    if first is not None:
+        return first, "first_event"
+    raise CheckUsageError("no results.json events, counters lines, or any other ts_ms found to derive t0 from")
+
+
+# -- small numeric helpers -------------------------------------------------
+
+
+def _percentile(sorted_values: list[float], q: float) -> float | None:
+    """The `q`-quantile (0..1) of already-sorted `sorted_values`, linear interpolation (numpy's default "linear" method).
+
+    None for an empty input. A single value returns itself for every q
+    (the interpolation index is always 0), which is also numpy's
+    behaviour and needs no special case here.
+    """
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    idx = q * (len(sorted_values) - 1)
+    lo = int(idx)
+    hi = min(lo + 1, len(sorted_values) - 1)
+    frac = idx - lo
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac
+
+
+def median_q1_q3(values: list[float]) -> tuple[float | None, float | None, float | None]:
+    """(median, Q1, Q3) of `values` via `_percentile`; (None, None, None) if `values` is empty."""
+    if not values:
+        return None, None, None
+    ordered = sorted(values)
+    return _percentile(ordered, 0.5), _percentile(ordered, 0.25), _percentile(ordered, 0.75)
+
+
+def wilson_interval(x: int, n: int, z: float = _WILSON_Z) -> tuple[float, float] | None:
+    """The two-sided Wilson score interval for `x` successes out of `n` trials; None if n == 0."""
+    if n <= 0:
+        return None
+    p_hat = x / n
+    z2 = z * z
+    denom = 1 + z2 / n
+    center = (p_hat + z2 / (2 * n)) / denom
+    margin = (z / denom) * ((p_hat * (1 - p_hat) / n) + z2 / (4 * n * n)) ** 0.5
+    lo = max(0.0, center - margin)
+    hi = min(1.0, center + margin)
+    return lo, hi
+
+
+# -- Kaplan-Meier product-limit estimator ----------------------------------
+
+
+@dataclass(frozen=True)
+class Sample:
+    """One (origin, seq, node) discovery pair's follow-up, as a KM input: a duration and whether it was an event."""
+
+    duration_s: float
+    delivered: bool
+
+
+def kaplan_meier_steps(samples: list[Sample]) -> list[tuple[float, float]]:
+    """The product-limit survival curve for `samples`: a list of (t, S(t)) steps, ascending t, starting at (0.0, 1.0).
+
+    S(t) is the probability of NOT YET being delivered by time t
+    ("surviving" past t without the delivery event); `1 - S(t)` is map.md's
+    own "届いた割合" (delivered fraction). At each distinct delivery time
+    t_i: n_i = count of samples whose duration is >= t_i (everyone still
+    "at risk" -- not yet delivered and not yet censored out, inclusive of
+    anyone censored at exactly t_i, which is the standard convention for
+    ties between an event and a censoring at the same instant), d_i = how
+    many of those samples were delivered at exactly t_i. S is updated
+    multiplicatively by (1 - d_i/n_i) at each such t_i; a censoring-only
+    time contributes no step on its own (it only shrinks n_i at later
+    event times).
+
+    A censored sample's own duration is its follow-up time (map.md
+    "記録created late in the window have shorter follow-up"), not the
+    window's full span -- this is exactly what keeps a late-created,
+    not-yet-censored record from being double-penalized against a record
+    that had the whole window to be delivered in.
+    """
+    if not samples:
+        return [(0.0, 1.0)]
+    event_times = sorted({s.duration_s for s in samples if s.delivered})
+    steps = [(0.0, 1.0)]
+    survival = 1.0
+    for t in event_times:
+        at_risk = sum(1 for s in samples if s.duration_s >= t)
+        events_here = sum(1 for s in samples if s.delivered and s.duration_s == t)
+        if at_risk > 0:
+            survival *= 1 - events_here / at_risk
+        steps.append((t, survival))
+    return steps
+
+
+def km_delivered_fraction_at(steps: list[tuple[float, float]], t_query: float) -> float:
+    """1 - S(t_query), reading the step function `steps` (ascending t, as `kaplan_meier_steps` returns)."""
+    survival = 1.0
+    for t, s in steps:
+        if t <= t_query:
+            survival = s
+        else:
+            break
+    return 1 - survival
+
+
+def km_quantile(steps: list[tuple[float, float]], q: float) -> float | None:
+    """The smallest t at which the KM delivered-fraction first reaches `q`; None if it never does.
+
+    A small epsilon absorbs float rounding in `survival` (repeated
+    multiplication) that could otherwise land a hair below an exact `q`
+    boundary and miss it.
+    """
+    for t, s in steps:
+        if 1 - s >= q - 1e-9:
+            return t
+    return None
+
+
+# -- per-run analysis --------------------------------------------------------
+
+
+@dataclass
+class RunAnalysis:
+    """Everything this module computes from one run's events.jsonl files, before any cross-run pooling."""
+
+    p: float
+    seed: int
+    status: str  # "valid" | "flagged" | "unknown"
+    flags: list[str]
+    t0_ms: float
+    t0_source: str
+    window_start_ms: float
+    window_end_ms: float
+    n_records_created: int
+    discovery_rows: list[dict] = field(default_factory=list)  # origin, seq, node, hop, latency_ms, censored
+    consistency_rows: list[dict] = field(default_factory=list)  # origin, seq, time_ms, censored
+    control_bytes_sent_window: dict[str, int | None] = field(default_factory=dict)
+    control_bytes_received_window: dict[str, int | None] = field(default_factory=dict)
+    probe_issued: int = 0
+    probe_discovered: int = 0
+    probe_retrieved: int = 0
+    decision_rows: list[dict] = field(default_factory=list)  # kind, in_flight, missing (list), wait_s
+
+
+def _window_control_bytes(nodes: dict[str, list[dict]]) -> tuple[dict[str, int | None], dict[str, int | None]]:
+    """Per-node control bytes sent/received strictly inside the window: the final `counters` line
+
+    minus the earliest `counters_snapshot` line (map.md "最後の counters
+    行から助走の終わりの counters_snapshot 行を引いた"). "Earliest", not
+    summed: stage 1 generates exactly one counters_snapshot per node
+    (evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S is a 1-tuple), but a later
+    stage could add more, and only the one at the window's own start
+    marks "助走の終わり". None (not 0) for a node missing either side,
+    the same "no data" convention semindex.analyze.control_bytes uses.
+    """
+    final = control_bytes(nodes)["per_node"]
+    sent: dict[str, int | None] = {}
+    received: dict[str, int | None] = {}
+    for node, events in nodes.items():
+        snapshots = sorted(
+            (e for e in events if e.get("event") == "counters_snapshot"), key=lambda e: e["ts_ms"]
+        )
+        final_sent = final.get(node, {}).get("control_bytes_sent")
+        final_received = final.get(node, {}).get("control_bytes_received")
+        if not snapshots or final_sent is None or final_received is None:
+            sent[node] = None
+            received[node] = None
+            continue
+        snapshot = snapshots[0]
+        sent[node] = final_sent - snapshot["control_bytes_sent"]
+        received[node] = final_received - snapshot["control_bytes_received"]
+    return sent, received
+
+
+def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
+    """Build one run's full RunAnalysis: window cut, discovery/consistency pairs, control bytes, probes, decisions.
+
+    Raises CheckUsageError (propagated from discover_node_events/derive_t0_ms)
+    if this run's own files are too broken to analyze at all -- the
+    caller decides whether that means "skip it" or "fail the batch".
+    """
+    nodes = discover_node_events(run_dir)
+    results_path = os.path.join(run_dir, "results.json")
+    results = read_results(run_dir) if os.path.isfile(results_path) else None
+    t0_ms, t0_source = derive_t0_ms(nodes, results)
+    window_start_ms = t0_ms + evalgen.WINDOW_START_S * 1000.0
+    window_end_ms = t0_ms + evalgen.WINDOW_END_S * 1000.0
+
+    created = _created_ts_by_key(nodes)
+    in_window_created = {
+        key: ts for key, ts in created.items() if window_start_ms <= ts <= window_end_ms
+    }
+
+    # (node, event_idx) -> ts_ms is not enough to tell duplicates apart
+    # from genuinely distinct stores; keep the EARLIEST record_stored per
+    # (origin, seq, node), matching semindex.check's own "first store wins"
+    # treatment of a holder that re-sends the same record.
+    stored_ts: dict[tuple[str, int, str], float] = {}
+    for node, events in nodes.items():
+        for event in events:
+            if event.get("event") != "record_stored":
+                continue
+            key = (event["origin"], event["seq"], node)
+            ts = event["ts_ms"]
+            if key not in stored_ts or ts < stored_ts[key]:
+                stored_ts[key] = ts
+
+    discovery_rows: list[dict] = []
+    consistency_rows: list[dict] = []
+    for (origin, seq), created_ts in sorted(in_window_created.items()):
+        origin_idx = _node_sort_key(origin)
+        last_delivered_ts = created_ts
+        all_delivered = True
+        for node in nodes:
+            if node == origin:
+                continue
+            node_idx = _node_sort_key(node)
+            ts = stored_ts.get((origin, seq, node))
+            censored = ts is None or ts > window_end_ms
+            latency_ms = None if censored else ts - created_ts
+            discovery_rows.append(
+                {
+                    "origin": origin,
+                    "seq": seq,
+                    "node": node,
+                    "hop_distance": abs(node_idx - origin_idx),
+                    "latency_ms": latency_ms,
+                    # Follow-up for a censored pair: from this record's own
+                    # creation to the window's close, never the window's
+                    # full span -- a record created late in the window has
+                    # correspondingly less time to be delivered in before
+                    # censoring, and the KM estimator (kaplan_meier_steps)
+                    # needs that shorter follow-up to keep such a pair from
+                    # inflating the at-risk set past when it actually left it.
+                    "follow_up_ms": window_end_ms - created_ts,
+                    "censored": censored,
+                }
+            )
+            if censored:
+                all_delivered = False
+            else:
+                last_delivered_ts = max(last_delivered_ts, ts)
+        consistency_rows.append(
+            {
+                "origin": origin,
+                "seq": seq,
+                "time_ms": (last_delivered_ts - created_ts) if all_delivered else None,
+                "follow_up_ms": window_end_ms - created_ts,
+                "censored": not all_delivered,
+            }
+        )
+
+    sent_window, received_window = _window_control_bytes(nodes)
+
+    probe_rows = [
+        p_pair
+        for p_pair in probe_pairs(nodes)
+        if window_start_ms <= p_pair["discovered_ts_ms"] <= window_end_ms
+    ]
+    probe_issued = len(probe_rows)
+    probe_discovered = sum(1 for row in probe_rows if row["match_count"] > 0)
+    probe_retrieved = sum(
+        1 for row in probe_rows if row["retrieved"] is not None and row["retrieved"].get("success") is True
+    )
+
+    decision_rows: list[dict] = []
+    for events in nodes.values():
+        for event in events:
+            if event.get("event") != "decision":
+                continue
+            if not (window_start_ms <= event["ts_ms"] <= window_end_ms):
+                continue
+            state = event.get("state", {})
+            action = event.get("action", {})
+            decision_rows.append(
+                {
+                    "kind": event.get("kind"),
+                    "in_flight": state.get("in_flight"),
+                    "missing": [info.get("missing") for info in state.get("origins", {}).values()],
+                    "wait_s": action.get("wait_s") if event.get("kind") == "fetch_backoff" else None,
+                }
+            )
+
+    status, flags = read_meta(run_dir)
+    return RunAnalysis(
+        p=p,
+        seed=seed,
+        status=status,
+        flags=flags,
+        t0_ms=t0_ms,
+        t0_source=t0_source,
+        window_start_ms=window_start_ms,
+        window_end_ms=window_end_ms,
+        n_records_created=len(in_window_created),
+        discovery_rows=discovery_rows,
+        consistency_rows=consistency_rows,
+        control_bytes_sent_window=sent_window,
+        control_bytes_received_window=received_window,
+        probe_issued=probe_issued,
+        probe_discovered=probe_discovered,
+        probe_retrieved=probe_retrieved,
+        decision_rows=decision_rows,
+    )
+
+
+# -- CSV cell formatting -----------------------------------------------------
+
+
+def _cell(value: object) -> str:
+    """Render one CSV cell: None -> "", bool -> "true"/"false", everything else -> str()."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _write_csv(path: str, fieldnames: list[str], rows: list[dict]) -> None:
+    """Write `rows` to `path` as a header plus one line per row, every cell passed through `_cell`."""
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(fieldnames)
+        for row in rows:
+            writer.writerow([_cell(row.get(name)) for name in fieldnames])
+
+
+# -- building the six tables -------------------------------------------------
+
+
+def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
+    """runs.csv: one row per run (map.md's own run-level fields, ticket 05's own column list)."""
+    rows = []
+    for run in analyses:
+        n_pairs = len(run.discovery_rows)
+        n_delivered = sum(1 for row in run.discovery_rows if not row["censored"])
+        n_censored = n_pairs - n_delivered
+        # `None`, not 0, when every node's own window value is None (no
+        # usable data anywhere) -- summing an empty list would silently
+        # report "zero traffic", indistinguishable from a run that
+        # genuinely sent nothing (same "no data" convention as
+        # semindex.analyze.control_bytes's own total).
+        sent_values = [v for v in run.control_bytes_sent_window.values() if v is not None]
+        received_values = [v for v in run.control_bytes_received_window.values() if v is not None]
+        sent_total = sum(sent_values) if sent_values else None
+        received_total = sum(received_values) if received_values else None
+        rows.append(
+            {
+                "p": run.p,
+                "seed": run.seed,
+                "valid": run.status,
+                "flags": ";".join(run.flags),
+                "n_records_created": run.n_records_created,
+                "n_pairs": n_pairs,
+                "n_delivered_in_window": n_delivered,
+                "n_censored": n_censored,
+                "control_bytes_sent_window_per_node": json.dumps(run.control_bytes_sent_window, sort_keys=True),
+                "control_bytes_received_window_per_node": json.dumps(
+                    run.control_bytes_received_window, sort_keys=True
+                ),
+                "control_bytes_sent_window_total": sent_total,
+                "control_bytes_received_window_total": received_total,
+                "control_bytes_sent_per_record": (
+                    sent_total / run.n_records_created if sent_total is not None and run.n_records_created else None
+                ),
+                "control_bytes_received_per_record": (
+                    received_total / run.n_records_created
+                    if received_total is not None and run.n_records_created
+                    else None
+                ),
+                "probe_issued": run.probe_issued,
+                "probe_discovered": run.probe_discovered,
+                "probe_retrieved": run.probe_retrieved,
+                "t0_ms": run.t0_ms,
+                "t0_source": run.t0_source,
+            }
+        )
+    return rows
+
+
+RUNS_FIELDS = [
+    "p",
+    "seed",
+    "valid",
+    "flags",
+    "n_records_created",
+    "n_pairs",
+    "n_delivered_in_window",
+    "n_censored",
+    "control_bytes_sent_window_per_node",
+    "control_bytes_received_window_per_node",
+    "control_bytes_sent_window_total",
+    "control_bytes_received_window_total",
+    "control_bytes_sent_per_record",
+    "control_bytes_received_per_record",
+    "probe_issued",
+    "probe_discovered",
+    "probe_retrieved",
+    "t0_ms",
+    "t0_source",
+]
+
+
+def build_discovery_rows(analyses: list[RunAnalysis]) -> list[dict]:
+    """discovery.csv: one row per (run, origin, seq, node) pair, every run's rows included regardless of status
+
+    (map.md counts flagged runs out of AGGREGATES, not out of this raw
+    per-pair table; survival.csv is what actually excludes them, at
+    pooling time).
+    """
+    rows = []
+    for run in analyses:
+        for row in run.discovery_rows:
+            rows.append(
+                {
+                    "p": run.p,
+                    "seed": run.seed,
+                    "origin": row["origin"],
+                    "seq": row["seq"],
+                    "node": row["node"],
+                    "hop_distance": row["hop_distance"],
+                    "latency_ms": row["latency_ms"],
+                    "censored": row["censored"],
+                }
+            )
+    return rows
+
+
+DISCOVERY_FIELDS = ["p", "seed", "origin", "seq", "node", "hop_distance", "latency_ms", "censored"]
+
+
+def build_consistency_rows(analyses: list[RunAnalysis]) -> list[dict]:
+    """consistency.csv: one row per (run, origin, seq) -- time until the last node stored it, or censored."""
+    rows = []
+    for run in analyses:
+        for row in run.consistency_rows:
+            rows.append(
+                {
+                    "p": run.p,
+                    "seed": run.seed,
+                    "origin": row["origin"],
+                    "seq": row["seq"],
+                    "time_ms": row["time_ms"],
+                    "censored": row["censored"],
+                }
+            )
+    return rows
+
+
+CONSISTENCY_FIELDS = ["p", "seed", "origin", "seq", "time_ms", "censored"]
+
+
+def _included(analyses: list[RunAnalysis]) -> list[RunAnalysis]:
+    """Every run except flagged ones (map.md "印つきの run は集計から外す"; "unknown" runs are kept --
+
+    see the module's report for why: excluding every run this module
+    cannot positively confirm as passing would also exclude the one real
+    sample run this effort has to check against, which has no meta.json
+    at all).
+    """
+    return [run for run in analyses if run.status != "flagged"]
+
+
+def build_survival_rows(analyses: list[RunAnalysis]) -> list[dict]:
+    """survival.csv: per (p, hop_distance), the KM delivered-fraction curve plus its median/Q1/Q3.
+
+    Pools every discovery pair from every INCLUDED run (map.md "印つきの
+    run は集計から外す" -- see `_included`) sharing a (p, hop_distance),
+    each contributing one KM sample: its latency (delivered) or its
+    follow_up_ms (censored, from `analyze_run`'s own per-pair computation
+    -- the window's close minus that specific record's own creation
+    time, never a flat window span).
+    """
+    included = _included(analyses)
+    samples_by_group: dict[tuple[float, int], list[Sample]] = {}
+    for run in included:
+        for row in run.discovery_rows:
+            key = (run.p, row["hop_distance"])
+            if row["censored"]:
+                duration_s = row["follow_up_ms"] / 1000.0
+                samples_by_group.setdefault(key, []).append(Sample(duration_s, delivered=False))
+            else:
+                duration_s = row["latency_ms"] / 1000.0
+                samples_by_group.setdefault(key, []).append(Sample(duration_s, delivered=True))
+
+    rows = []
+    grid = _survival_grid()
+    for key in sorted(samples_by_group):
+        p, hop = key
+        samples = samples_by_group[key]
+        steps = kaplan_meier_steps(samples)
+        median_s = km_quantile(steps, 0.5)
+        q1_s = km_quantile(steps, 0.25)
+        q3_s = km_quantile(steps, 0.75)
+        for t in grid:
+            rows.append(
+                {
+                    "p": p,
+                    "hop_distance": hop,
+                    "t_s": t,
+                    "delivered_fraction": km_delivered_fraction_at(steps, t),
+                    "n_pairs": len(samples),
+                    "median_s": median_s,
+                    "q1_s": q1_s,
+                    "q3_s": q3_s,
+                }
+            )
+    return rows
+
+
+SURVIVAL_FIELDS = ["p", "hop_distance", "t_s", "delivered_fraction", "n_pairs", "median_s", "q1_s", "q3_s"]
+
+
+def build_summary_rows(analyses: list[RunAnalysis]) -> list[dict]:
+    """summary.csv: per p, run-status counts, discovery/consistency/control-byte summaries, probe discovery rate."""
+    by_p: dict[float, list[RunAnalysis]] = {}
+    for run in analyses:
+        by_p.setdefault(run.p, []).append(run)
+
+    rows = []
+    for p in sorted(by_p):
+        runs = by_p[p]
+        included = _included(runs)
+        n_valid = sum(1 for r in runs if r.status == "valid")
+        n_flagged = sum(1 for r in runs if r.status == "flagged")
+        n_unknown = sum(1 for r in runs if r.status == "unknown")
+
+        latency_samples = [
+            Sample(
+                row["latency_ms"] / 1000.0 if not row["censored"] else row["follow_up_ms"] / 1000.0,
+                delivered=not row["censored"],
+            )
+            for run in included
+            for row in run.discovery_rows
+        ]
+        latency_steps = kaplan_meier_steps(latency_samples)
+
+        consistency_samples = [
+            Sample(
+                row["time_ms"] / 1000.0 if not row["censored"] else row["follow_up_ms"] / 1000.0,
+                delivered=not row["censored"],
+            )
+            for run in included
+            for row in run.consistency_rows
+        ]
+        consistency_steps = kaplan_meier_steps(consistency_samples)
+
+        sent_per_record = [
+            sum(v for v in run.control_bytes_sent_window.values() if v is not None) / run.n_records_created
+            for run in included
+            if run.n_records_created and any(v is not None for v in run.control_bytes_sent_window.values())
+        ]
+        received_per_record = [
+            sum(v for v in run.control_bytes_received_window.values() if v is not None) / run.n_records_created
+            for run in included
+            if run.n_records_created and any(v is not None for v in run.control_bytes_received_window.values())
+        ]
+        sent_med, sent_q1, sent_q3 = median_q1_q3(sent_per_record)
+        recv_med, recv_q1, recv_q3 = median_q1_q3(received_per_record)
+
+        probe_issued_total = sum(r.probe_issued for r in included)
+        probe_discovered_total = sum(r.probe_discovered for r in included)
+        rate = probe_discovered_total / probe_issued_total if probe_issued_total else None
+        wilson = wilson_interval(probe_discovered_total, probe_issued_total)
+
+        rows.append(
+            {
+                "p": p,
+                "n_valid": n_valid,
+                "n_flagged": n_flagged,
+                "n_unknown": n_unknown,
+                "discovery_latency_median_ms": _s_to_ms(km_quantile(latency_steps, 0.5)),
+                "discovery_latency_q1_ms": _s_to_ms(km_quantile(latency_steps, 0.25)),
+                "discovery_latency_q3_ms": _s_to_ms(km_quantile(latency_steps, 0.75)),
+                "consistency_time_median_ms": _s_to_ms(km_quantile(consistency_steps, 0.5)),
+                "consistency_time_q1_ms": _s_to_ms(km_quantile(consistency_steps, 0.25)),
+                "consistency_time_q3_ms": _s_to_ms(km_quantile(consistency_steps, 0.75)),
+                "control_bytes_sent_per_record_median": sent_med,
+                "control_bytes_sent_per_record_q1": sent_q1,
+                "control_bytes_sent_per_record_q3": sent_q3,
+                "control_bytes_received_per_record_median": recv_med,
+                "control_bytes_received_per_record_q1": recv_q1,
+                "control_bytes_received_per_record_q3": recv_q3,
+                "probe_issued_total": probe_issued_total,
+                "probe_discovered_total": probe_discovered_total,
+                "probe_discovery_rate": rate,
+                "probe_discovery_rate_wilson_lo": wilson[0] if wilson else None,
+                "probe_discovery_rate_wilson_hi": wilson[1] if wilson else None,
+            }
+        )
+    return rows
+
+
+def _s_to_ms(value: float | None) -> float | None:
+    """Convert a KM quantile from seconds to milliseconds, passing None through."""
+    return None if value is None else value * 1000.0
+
+
+SUMMARY_FIELDS = [
+    "p",
+    "n_valid",
+    "n_flagged",
+    "n_unknown",
+    "discovery_latency_median_ms",
+    "discovery_latency_q1_ms",
+    "discovery_latency_q3_ms",
+    "consistency_time_median_ms",
+    "consistency_time_q1_ms",
+    "consistency_time_q3_ms",
+    "control_bytes_sent_per_record_median",
+    "control_bytes_sent_per_record_q1",
+    "control_bytes_sent_per_record_q3",
+    "control_bytes_received_per_record_median",
+    "control_bytes_received_per_record_q1",
+    "control_bytes_received_per_record_q3",
+    "probe_issued_total",
+    "probe_discovered_total",
+    "probe_discovery_rate",
+    "probe_discovery_rate_wilson_lo",
+    "probe_discovery_rate_wilson_hi",
+]
+
+
+def build_decisions_rows(analyses: list[RunAnalysis]) -> list[dict]:
+    """decisions.csv: per (p, kind), count plus distribution summaries of in_flight/missing/wait_s."""
+    included = _included(analyses)
+    groups: dict[tuple[float, str], list[dict]] = {}
+    for run in included:
+        for decision in run.decision_rows:
+            groups.setdefault((run.p, decision["kind"]), []).append(decision)
+
+    rows = []
+    for key in sorted(groups):
+        p, kind = key
+        decisions = groups[key]
+        in_flight_values = [d["in_flight"] for d in decisions if d["in_flight"] is not None]
+        missing_values = [m for d in decisions for m in d["missing"] if m is not None]
+        wait_s_values = [d["wait_s"] for d in decisions if d["wait_s"] is not None]
+        in_flight_med, in_flight_q1, in_flight_q3 = median_q1_q3(in_flight_values)
+        missing_med, missing_q1, missing_q3 = median_q1_q3(missing_values)
+        wait_med, wait_q1, wait_q3 = median_q1_q3(wait_s_values)
+        rows.append(
+            {
+                "p": p,
+                "kind": kind,
+                "count": len(decisions),
+                "in_flight_median": in_flight_med,
+                "in_flight_q1": in_flight_q1,
+                "in_flight_q3": in_flight_q3,
+                "missing_median": missing_med,
+                "missing_q1": missing_q1,
+                "missing_q3": missing_q3,
+                "wait_s_median": wait_med,
+                "wait_s_q1": wait_q1,
+                "wait_s_q3": wait_q3,
+            }
+        )
+    return rows
+
+
+DECISIONS_FIELDS = [
+    "p",
+    "kind",
+    "count",
+    "in_flight_median",
+    "in_flight_q1",
+    "in_flight_q3",
+    "missing_median",
+    "missing_q1",
+    "missing_q3",
+    "wait_s_median",
+    "wait_s_q1",
+    "wait_s_q3",
+]
+
+
+# -- CLI --------------------------------------------------------------------
+
+
+def aggregate(store: str, stage: str, outdir: str, include_undone: bool) -> list[RunAnalysis]:
+    """Discover every run, analyze the ones this call will process, write all six CSVs into `outdir`.
+
+    Returns every run's RunAnalysis actually processed (DONE, or
+    `include_undone`); a run skipped for lacking DONE, or one whose files
+    were too broken to analyze at all, is reported to stderr and left out
+    of every output table.
+    """
+    refs = discover_runs(store, stage)
+    analyses: list[RunAnalysis] = []
+    for ref in refs:
+        if not include_undone and not run_has_done_marker(ref.run_dir):
+            print(f"semindex.evalagg: skipping {ref.run_dir} (no DONE marker)", file=sys.stderr)
+            continue
+        try:
+            analyses.append(analyze_run(ref.p, ref.seed, ref.run_dir))
+        except CheckUsageError as exc:
+            print(f"semindex.evalagg: skipping {ref.run_dir}: {exc}", file=sys.stderr)
+            continue
+
+    os.makedirs(outdir, exist_ok=True)
+    _write_csv(os.path.join(outdir, "runs.csv"), RUNS_FIELDS, build_runs_rows(analyses))
+    _write_csv(os.path.join(outdir, "discovery.csv"), DISCOVERY_FIELDS, build_discovery_rows(analyses))
+    _write_csv(os.path.join(outdir, "survival.csv"), SURVIVAL_FIELDS, build_survival_rows(analyses))
+    _write_csv(os.path.join(outdir, "consistency.csv"), CONSISTENCY_FIELDS, build_consistency_rows(analyses))
+    _write_csv(os.path.join(outdir, "summary.csv"), SUMMARY_FIELDS, build_summary_rows(analyses))
+    _write_csv(os.path.join(outdir, "decisions.csv"), DECISIONS_FIELDS, build_decisions_rows(analyses))
+    if not FIGURES_AVAILABLE:
+        print("semindex.evalagg: matplotlib not importable in this venv -- wrote CSVs only, no figures", file=sys.stderr)
+    return analyses
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the aggregation script."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--store", required=True, help="Root directory holding <store>/<stage>/p<p>/<seed>/ runs")
+    parser.add_argument("--stage", required=True, help="Stage label (the <stage> path component under --store)")
+    parser.add_argument("--out", required=True, dest="outdir", help="Directory to write the six CSV files into")
+    parser.add_argument(
+        "--include-undone",
+        action="store_true",
+        help="Also process runs with no DONE marker (e.g. a hand-stored trial run)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point: python3 -m semindex.evalagg --store ... --stage ... --out ..."""
+    args = parse_args(argv)
+    aggregate(args.store, args.stage, args.outdir, args.include_undone)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
