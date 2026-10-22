@@ -601,6 +601,183 @@ def test_a_stop_request_mid_probe_fetch_ends_the_wait_promptly_and_still_shuts_d
     assert lines[-1]["event"] == "counters"
 
 
+def test_stop_at_s_abandons_an_in_progress_probe_when_the_deadline_is_crossed_mid_wait(tmp_path: Path):
+    """A probe's fetch_content waiting on content that never arrives must
+    notice stop_at_s mid-wait (via should_stop(), wired to the same boundary
+    check as stop_at_s itself -- see CefpycoTransport.fetch_content) and
+    abandon the fetch, instead of blocking for the full chunk_lifetime_ms
+    (2s of fake-clock ticks here) and only being noticed on run()'s next
+    step().
+
+    The abandoned fetch is recorded as probe_retrieved(success=False, bytes=0)
+    -- the same representation an ordinary unreachable-content failure already
+    uses (test_probe_retrieval_failure_does_not_block_the_loop); stop_at_s
+    needs no new event shape of its own.
+    """
+    content_name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+        stop_at_s=0.5,
+        chunk_lifetime_ms=2000,
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.step()  # schedule entry creates the record this step's own probe then discovers and fetches
+
+    # Abandoned promptly at the deadline (0.5), nowhere near the 2.1s this
+    # chunk's own Interest lifetime would otherwise have run to.
+    assert clock.value == 0.5
+    assert agent._stop_requested
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
+    assert (retrieved["success"], retrieved["bytes"]) == (False, 0)
+
+    agent.run()  # _stop_requested is already True, so this exits immediately and still shuts down cleanly
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert lines[-1]["event"] == "counters"
+
+
+def test_a_counters_snapshot_due_mid_probe_never_splits_its_discovery_from_its_retrieval(tmp_path: Path):
+    """should_stop (CefpycoTransport.fetch_content's own boundary check,
+    Agent._on_receive_boundary) does capture a counters_snapshot_at_s entry
+    that becomes due while a probe's fetch_content is blocked waiting on
+    content that never arrives -- but only ever queues it in memory
+    (Agent._pending_snapshots); the write itself waits for a receive
+    boundary outside that probe's own call stack. A probe's fetch_content
+    runs synchronously inside _run_probe, strictly between that probe's own
+    probe_discovered and probe_retrieved writes, and check.py's own
+    retrieval-pairing check depends on nothing else from this node being
+    logged in between (see check.py's own comment on retrieved_after) -- a
+    counters_snapshot line written from inside that wait would break it.
+    """
+    content_name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+        counters_snapshot_at_s=[0.25],  # falls strictly inside the probe's own fetch_content wait below
+        chunk_lifetime_ms=500,
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.step()  # schedule entry, then the probe: its fetch_content's wait captures the 0.25 entry mid-call
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    kinds = [e["event"] for e in lines]
+    discovered_i = kinds.index("probe_discovered")
+    retrieved_i = kinds.index("probe_retrieved")
+    assert retrieved_i == discovered_i + 1, f"something else was logged in between: {kinds}"
+    # Captured mid-fetch, but not lost -- written out right after
+    # drain_probes returns, still within this same step, never before the
+    # probe's own probe_retrieved.
+    assert kinds.count("counters_snapshot") == 1
+    assert kinds.index("counters_snapshot") > retrieved_i
+
+
+def test_a_counters_snapshot_captured_mid_probe_excludes_that_probes_own_chunk_once_it_arrives(
+    tmp_path: Path,
+):
+    """Pins down *where exactly* inside fetch_content's wait loop the capture
+    happens: before the matching chunk is counted, not after. Two blank
+    packets (absorbed by step()'s own poll() and fetch_content's first
+    receive() call) put the chunk's own Data on the very receive() call
+    whose tick crosses elapsed 0.25 (step_s=0.1) -- the capture and the
+    chunk's own arrival happen on the *same* should_stop()/receive() call.
+    If the post-receive should_stop() check inside fetch_content's wait
+    loop were ever moved below the `bytes_received +=` line (or capture
+    happened only outside fetch_content, never from inside it), this
+    chunk's bytes would already be counted by the time the snapshot
+    captures, and the first assert below would fail.
+    """
+    content_name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    payload = b"a probe's own chunk 0 payload"
+    handle = _FakeHandle(
+        [
+            _FakePacket(),  # absorbed by step()'s own poll()
+            _FakePacket(),  # fetch_content's receive() #1
+            # fetch_content's receive() #2 -- this tick (0.2 -> 0.3) crosses
+            # elapsed 0.25, on the exact same call that delivers this chunk.
+            _FakePacket(is_data=True, name=content_name, payload=payload, chunk_num=0, end_chunk_num=0),
+        ],
+        clock=clock,
+        step_s=0.1,
+    )
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+        counters_snapshot_at_s=[0.25],
+        chunk_lifetime_ms=2000,
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.step()
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    kinds = [e["event"] for e in lines]
+    discovered_i = kinds.index("probe_discovered")
+    retrieved_i = kinds.index("probe_retrieved")
+    assert retrieved_i == discovered_i + 1
+    retrieved = lines[retrieved_i]
+    assert retrieved["success"] is True
+
+    snapshot = next(e for e in lines if e["event"] == "counters_snapshot")
+    assert snapshot["bytes_received"] == 0  # the chunk hadn't arrived yet when this was captured
+    assert agent._transport.bytes_received > 0  # but it has, by the time this step ends
+
+
+def test_a_counters_snapshot_captured_mid_probe_is_not_lost_when_that_probe_is_what_triggers_stop(
+    tmp_path: Path,
+):
+    """The scenario that defeats a naive 'defer the write to the next step'
+    fix: when the very probe whose fetch_content captured a due
+    counters_snapshot is also what notices stop_at_s has been reached
+    (should_stop, Agent._on_receive_boundary, sets the flag mid-wait), there
+    is no next step -- run() sees _stop_requested and goes straight to
+    shutdown(). The captured entry must still be written before shutdown's
+    own `counters` line, not dropped for want of a later step to flush it.
+    """
+    content_name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+        counters_snapshot_at_s=[0.5],
+        stop_at_s=0.5,  # same instant: the probe's own should_stop check is what notices both
+        chunk_lifetime_ms=2000,
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.run()  # the probe's fetch_content both captures the snapshot and triggers the stop, mid-wait
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    kinds = [e["event"] for e in lines]
+    assert kinds.count("counters_snapshot") == 1, f"the entry was lost: {kinds}"
+    assert kinds.index("counters_snapshot") < kinds.index("counters")
+
+
 def test_run_exits_and_shuts_down_cleanly_once_stop_is_requested(tmp_path: Path):
     """run() exits its loop and shuts down (flush remaining events, write the counters
     line, close the store) once request_stop() has been called -- the SIGTERM path,
@@ -801,14 +978,13 @@ def test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_ste
     handle's clock advancing 0.3s per poll() put a state-poll due at exactly
     0.3 and another at exactly 0.6 -- the same instant stop_at_s=0.6 is reached.
     Step 1 (pre-poll elapsed 0.0, < 0.6) polls to 0.3 and sends the first poll.
-    Step 2 (pre-poll elapsed 0.3, still < 0.6 -- the check runs *before* this
-    step's own poll, not after) polls to 0.6 and sends the second poll: this
-    step is allowed to finish normally even though its own poll lands exactly
-    on the deadline, the same way a step already in progress when SIGTERM
-    arrives is allowed to finish. Step 3 (pre-poll elapsed 0.6, >= 0.6) is the
-    one that actually notices the deadline, and sends nothing at all -- if the
-    check instead ran *after* poll/tick, step 2 would stop before ever ticking
-    and only one Interest (not two) would have gone out.
+    Step 2 (pre-poll elapsed 0.3, still < 0.6, so poll() is still allowed to
+    start) polls to 0.6 -- but unlike a real SIGTERM, which would let a step
+    already in progress finish, stop_at_s is a measurement-window boundary:
+    poll()'s own should_stop() check (right after its receive() returns, see
+    CefpycoTransport.poll()) notices 0.6 has been reached immediately, before
+    dispatch/on_tick ever run for this step, so this step sends nothing at
+    all. Only step 1's Interest ever goes out.
     """
     clock = _FakeClock(0.0)
     handle = _FakeHandle([], clock=clock, step_s=0.3)
@@ -819,12 +995,17 @@ def test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_ste
 
     agent.run()
 
-    # Exactly two poll() calls happened: a third would have ticked the clock to
+    # Two receive() calls happened (step 1's and step 2's -- the second is
+    # what carries the clock to 0.6 and is itself what notices the
+    # deadline), but a third never does: that would have ticked the clock to
     # 0.9 and sent a third Interest once the next 0.3s interval elapsed.
     assert len(handle.receive_timeout_calls) == 2
     assert clock.value == 0.6
 
-    assert len(handle.sent_interests) == 2
+    # Only step 1's poll went out; step 2's own poll is held back by the
+    # deadline it crossed getting there -- this is exactly the leak the
+    # 2026-10-23 fix closes (see _on_receive_boundary's docstring).
+    assert len(handle.sent_interests) == 1
     sent_bytes = sum(len(name.encode("utf-8")) for name, _, _ in handle.sent_interests)
 
     events_path = Path(config.state_dir) / "events.jsonl"
@@ -837,6 +1018,46 @@ def test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_ste
         counters[0]["control_bytes_sent"],
         counters[0]["control_bytes_received"],
     ) == (sent_bytes, 0, sent_bytes, 0)
+
+
+def test_stop_at_s_sends_no_bytes_after_the_deadline_when_a_receive_wait_crosses_it(tmp_path: Path):
+    """A receive wait that straddles stop_at_s (starts before it, returns
+    after it) must not let this step go on to tick and send -- even though
+    the step itself started while still before the deadline.
+
+    state_poll_interval_s=0.2 (no jitter) and step_s=0.3 on the fake handle
+    put a state-poll due at elapsed 0.2 and another at 0.4, with stop_at_s=0.5
+    landing strictly between them. Step 1's poll() carries the clock from 0.0
+    to 0.3 (not yet past 0.5), ticks, and sends the first Interest. Step 2's
+    poll() carries the clock from 0.3 to 0.6 -- past 0.5 -- and under the
+    pre-fix code this step still ticked at elapsed 0.6 and sent the second
+    poll anyway. Every Interest's own send time is recorded (the clock
+    reading at the moment send_interest is actually called) to pin that none
+    of them lands at or after the deadline, not just that the final count is
+    right.
+    """
+    clock = _FakeClock(0.0)
+    sent_at: list[float] = []
+
+    class _TimestampingHandle(_FakeHandle):
+        def send_interest(self, name: str, chunk_num: int, lifetime: int) -> None:
+            sent_at.append(clock.value)
+            super().send_interest(name, chunk_num, lifetime)
+
+    handle = _TimestampingHandle([], clock=clock, step_s=0.3)
+    config = _config(
+        tmp_path, neighbors=["h1"], stop_at_s=0.5, state_poll_interval_s=0.2, state_poll_jitter_frac=0.0
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.step()  # clock 0.0 -> 0.3, ticks and sends the first poll (due at 0.2)
+    assert not agent._stop_requested
+    agent.step()  # clock 0.3 -> 0.6, crossing stop_at_s=0.5 inside this step's own receive wait
+
+    assert clock.value == 0.6
+    assert agent._stop_requested
+    assert sent_at == [0.3]
+    assert all(t < 0.5 for t in sent_at), f"an Interest was sent at or after the deadline: {sent_at}"
 
 
 def test_a_relaunched_life_with_stop_at_s_already_past_stops_immediately(tmp_path: Path):
@@ -928,6 +1149,82 @@ def test_counters_snapshot_reports_this_lifes_current_byte_counters(tmp_path: Pa
         snapshots[0]["control_bytes_received"],
     ) == (bytes_sent_so_far, 0, bytes_sent_so_far, 0)
     assert snapshots[0]["ts_ms"] == 1000
+
+
+def test_counters_snapshot_excludes_a_send_whose_receive_wait_crossed_the_snapshot_time(tmp_path: Path):
+    """A receive wait that starts before counters_snapshot_at_s but returns
+    after it must not let the snapshot include bytes this same step's own
+    on_tick is about to send.
+
+    state_poll_interval_s=0.2 (no jitter) and step_s=0.3 on the fake handle
+    put a state-poll due at elapsed 0.2 and another at 0.5, with the snapshot
+    at 0.5 landing exactly on that second poll's own due time. Step 1's
+    poll() carries the clock from 0.0 to 0.3 (not yet at 0.5) and sends the
+    first Interest. Step 2's poll() carries the clock from 0.3 to 0.6,
+    crossing 0.5 -- the pre-fix code only drained the snapshot against the
+    pre-poll `now` (0.3, not yet due) and would not have taken it until the
+    *next* step, by which point step 2's own second send had already landed
+    in the counters it reports.
+    """
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.3)
+    config = _config(
+        tmp_path, neighbors=["h1"], counters_snapshot_at_s=[0.5], state_poll_interval_s=0.2,
+        state_poll_jitter_frac=0.0,
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.step()  # clock 0.0 -> 0.3, sends the first poll (due at 0.2)
+    bytes_sent_after_step1 = agent._transport.bytes_sent
+    assert bytes_sent_after_step1 > 0
+
+    agent.step()  # clock 0.3 -> 0.6, crossing the 0.5 snapshot time inside this step's own receive wait
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    snapshots = [e for e in lines if e["event"] == "counters_snapshot"]
+    assert len(snapshots) == 1
+    # The snapshot reports step 1's bytes only -- not step 2's own second send,
+    # which happens after the snapshot is taken (see on the next assert).
+    assert snapshots[0]["bytes_sent"] == bytes_sent_after_step1
+    assert agent._transport.bytes_sent > bytes_sent_after_step1
+
+
+def test_a_counters_snapshot_entry_exactly_at_stop_at_s_still_fires_before_the_stop(tmp_path: Path):
+    """A counters_snapshot_at_s entry due at exactly the same instant as
+    stop_at_s still fires on the step that notices the deadline, and its four
+    byte fields exactly match the final `counters` line shutdown() writes --
+    nothing more is ever sent once _on_receive_boundary has drained the
+    snapshot and found the deadline reached in the same call, so the two
+    lines describe the identical state.
+    """
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.3)
+    config = _config(
+        tmp_path, neighbors=["h1"], stop_at_s=0.5, counters_snapshot_at_s=[0.5],
+        state_poll_interval_s=0.2, state_poll_jitter_frac=0.0,
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.run()  # step 1 polls to 0.3 and sends; step 2's poll crosses 0.5, snapshotting then stopping
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    all_lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    # Step 1's on_tick also emits its own "decision" event (it decides to poll
+    # h1's state) -- irrelevant to this test, which only cares about the two
+    # counters-shaped lines and their relative order.
+    lines = [e for e in all_lines if e["event"] in ("counters_snapshot", "counters")]
+    assert [e["event"] for e in lines] == ["counters_snapshot", "counters"]
+    snapshot, counters = lines
+    fields = ("bytes_sent", "bytes_received", "control_bytes_sent", "control_bytes_received")
+    assert tuple(snapshot[f] for f in fields) == tuple(counters[f] for f in fields)
+    assert snapshot["bytes_sent"] > 0  # step 1's send did happen, so this pins down a non-trivial match
+    # Both lines matching is not enough on its own -- the pre-fix code also
+    # ended up with snapshot == counters (just one step late, after *both*
+    # sends). Only step 1's Interest (due at 0.2) must ever have gone out;
+    # step 2's own poll (due at 0.5, the same instant as the deadline) must
+    # never have been sent at all.
+    assert len(handle.sent_interests) == 1
 
 
 def test_a_counters_snapshot_entry_exactly_at_a_fresh_lifes_start_still_fires(tmp_path: Path):

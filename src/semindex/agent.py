@@ -558,19 +558,60 @@ class Agent:
 
         self._stop_requested = False
 
+        # Captured counters_snapshot events awaiting their actual write --
+        # see _capture_due_snapshots/_emit_pending_snapshots for why the two
+        # are split.
+        self._pending_snapshots: list[dict] = []
+
     def request_stop(self) -> None:
         """Ask the loop to exit after its current step; safe to call from a signal handler."""
         self._stop_requested = True
 
-    def is_stop_requested(self) -> bool:
-        """Whether request_stop() has already been called.
+    def _on_receive_boundary(self) -> bool:
+        """Run once every time a blocking receive() call returns control to this
+        agent -- step()'s own pre-poll and post-poll calls, and (wired as
+        the transport's should_stop) CefpycoTransport.poll() and a probe's
+        fetch_content wait loop alike -- so none of these call sites can
+        act on whatever that receive() returned without first re-checking
+        both measurement boundaries against the clock reading *at this
+        exact point*, not the reading taken before that receive() started
+        blocking.
 
-        build_agent wires this in as the transport's should_stop, so a
-        probe's fetch_content call -- which runs synchronously inside one
-        step(), unlike every other transport call -- notices a stop
-        request within one receive_timeout_ms instead of blocking for up
-        to its own chunk_lifetime_ms.
+        Captures (does not yet write -- see _emit_pending_snapshots) any
+        counters_snapshot_at_s entry now due, using the counters as they
+        stand right here, then reports whether stop_at_s has also been
+        reached, setting the stop flag if so.
+
+        2026-10-23 fix: stop_at_s and counters_snapshot_at_s used to each be
+        checked/captured only once per step(), against the clock reading
+        taken *before* that step's own poll() call. A blocking receive (up
+        to receive_timeout_ms), or a probe's fetch_content (up to
+        chunk_lifetime_ms per chunk), could each cross either boundary
+        while blocked, and the step/probe would still dispatch/tick/send,
+        or a snapshot would not be captured until a later step/never at all
+        if that step turned out to be the run's last one, by which point
+        the counters it would report had already moved on. Calling this
+        same check at every receive boundary bounds the remaining error by
+        the one packet/chunk a single receive() call can return, not by
+        receive_timeout_ms or chunk_lifetime_ms -- see step()'s own
+        docstring for the exact remaining bound.
+
+        Capture is split from the actual event write on purpose: a probe's
+        fetch_content runs synchronously inside _run_probe, strictly
+        between that probe's own probe_discovered and probe_retrieved
+        writes, with nothing else from this node logged in between by
+        design -- check.py's own retrieval-pairing check (see its own
+        comment on retrieved_after) depends on that adjacency. Writing a
+        counters_snapshot line from inside that wait would separate them,
+        so this only ever queues it in self._pending_snapshots; step() (and,
+        as a last-resort safety net, shutdown()) is what actually calls
+        _emit_pending_snapshots, always from outside any probe's own call
+        stack.
         """
+        now = self._transport.now()
+        self._capture_due_snapshots(now)
+        if self._stop_at_s is not None and self._elapsed_s(now) >= self._stop_at_s:
+            self.request_stop()
         return self._stop_requested
 
     def _elapsed_s(self, now: float) -> float:
@@ -591,9 +632,17 @@ class Agent:
             )
 
     def _drain_probes(self, now: float) -> None:
-        """Run every scheduled probe whose at_s has come due."""
+        """Run every scheduled probe whose at_s has come due.
+
+        2026-10-23 fix: stops firing further due probes, leaving them queued,
+        the instant request_stop() has been set -- a probe's own
+        fetch_content can block long enough (up to chunk_lifetime_ms per
+        chunk) for _on_receive_boundary to notice stop_at_s crossed mid-call,
+        and a second probe already due at this same `now` must not then
+        start a fresh fetch into a life that has already decided to stop.
+        """
         elapsed = self._elapsed_s(now)
-        while self._probes and self._probes[0].at_s <= elapsed:
+        while self._probes and self._probes[0].at_s <= elapsed and not self._stop_requested:
             entry = self._probes.pop(0)
             self._run_probe(entry)
 
@@ -634,25 +683,42 @@ class Agent:
             }
         )
 
-    def _drain_counters_snapshots(self, now: float) -> None:
-        """Emit one counters_snapshot event for every due entry of config key
-        counters_snapshot_at_s: this life's current byte counters, under the same
-        four fields shutdown()'s own `counters` line uses, but a different event
-        name on purpose -- analyze.py and check.py both key their own counters
-        handling off the exact string "counters", so this needs no special-casing
-        in either to stay invisible to them.
+    def _capture_due_snapshots(self, now: float) -> None:
+        """Capture (queue in self._pending_snapshots, do not yet write -- see
+        _emit_pending_snapshots) one counters_snapshot entry for every due
+        entry of config key counters_snapshot_at_s: this life's current byte
+        counters, under the same four fields shutdown()'s own `counters`
+        line uses, but a different event name on purpose -- analyze.py and
+        check.py both key their own counters handling off the exact string
+        "counters", so a written counters_snapshot line needs no
+        special-casing in either to stay invisible to them.
 
-        Called with the clock reading from *before* this step's own poll/tick
-        (see step()), so a snapshot due at exactly this instant reports the
-        counters as they stood at the end of the previous step, not whatever
-        this same step's own tick is about to add.
+        Called from _on_receive_boundary only -- step()'s own pre-poll and
+        post-poll calls, and (via transport.should_stop) from inside
+        poll()/fetch_content's own receive-wait loops -- so an entry due at
+        exactly this instant always captures the counters as they stood at
+        that exact receive boundary, never counters this same step's own
+        post-receive tick/send (or an in-progress probe's own fetch) is
+        about to add. `now` is captured into the queued dict's own ts_ms
+        (EventWriter.write lets a pre-set key in the event win over its own
+        stamp-at-write-time default), since the write itself may happen one
+        or more receive boundaries later than this capture -- so a
+        counters_snapshot line's ts_ms can be *earlier* than the line
+        immediately before it in events.jsonl (e.g. a probe's own
+        probe_retrieved, written after a snapshot captured mid-fetch but
+        emitted only once that fetch returns): this is not a clock bug, it
+        is the write catching up to a capture it was deliberately held back
+        from making sooner. Neither check.py nor analyze.py sorts raw
+        events.jsonl lines by ts_ms before pairing anything, so this never
+        confuses either reader.
         """
         elapsed = self._elapsed_s(now)
         while self._counters_snapshot_at_s and self._counters_snapshot_at_s[0] <= elapsed:
             self._counters_snapshot_at_s.pop(0)
-            self._events.write(
+            self._pending_snapshots.append(
                 {
                     "event": "counters_snapshot",
+                    "ts_ms": round(now * 1000),
                     "bytes_sent": self._transport.bytes_sent,
                     "bytes_received": self._transport.bytes_received,
                     "control_bytes_sent": self._transport.control_bytes_sent,
@@ -660,43 +726,95 @@ class Agent:
                 }
             )
 
+    def _emit_pending_snapshots(self) -> None:
+        """Write every counters_snapshot captured (by _capture_due_snapshots)
+        since the last call, in capture order, then clear the queue; a no-op
+        when nothing is pending. Called by step() itself, from outside any
+        probe's own call stack, so a written line never lands between that
+        probe's probe_discovered and probe_retrieved (see
+        _on_receive_boundary's own docstring); shutdown() also calls this,
+        once, as a last-resort safety net in case a life ends between two of
+        step()'s own calls to it.
+        """
+        for snapshot in self._pending_snapshots:
+            self._events.write(snapshot)
+        self._pending_snapshots = []
+
     def _drain_engine_events(self) -> None:
         """Flush every event the engine has queued since the last drain."""
         for event in self._engine.drain_events():
             self._events.write(event)
 
     def step(self) -> None:
-        """One loop iteration: emit any due counters_snapshot, stop if stop_at_s has
-        been reached, else poll the transport, tick the engine, fire due
-        schedule/probe entries, and flush events.
+        """One loop iteration: capture/emit any due counters_snapshot, stop if
+        stop_at_s has been reached, else poll the transport, tick the
+        engine, fire due schedule/probe entries, and flush events.
 
-        2026-10-23: stop_at_s is checked against `now` read *before* poll()/tick,
-        and this step does none of that work at all once it is due -- unlike a
-        real SIGTERM, which only asks the step already in progress to be the
-        last one, stop_at_s is a measurement-window boundary: the step that
-        first notices it has been reached must not send one more Interest or
-        fire one more schedule/probe entry only to have the result thrown away.
+        stop_at_s is a measurement-window boundary, not a real SIGTERM: the
+        step that first notices it has been reached must not send one more
+        Interest or fire one more schedule/probe entry only to have the
+        result thrown away. Unlike a real SIGTERM, which only asks the step
+        already in progress to be the last one, nothing here is allowed to
+        finish "in progress" past this boundary.
+
+        2026-10-23 fix: stop_at_s and counters_snapshot_at_s used to each be
+        checked/captured only once per step, against `now` read *before*
+        poll() -- but poll() itself blocks for up to receive_timeout_ms,
+        long enough to cross either on its own, and this step would still
+        tick/send against the post-poll `now` (or a snapshot would not be
+        captured until the *next* step, by which point this step's own
+        post-receive send had already mutated the counters it reports, or
+        never at all if this step turned out to be the run's last one) once
+        control returned. _on_receive_boundary is called again right here,
+        with the post-poll `now`, for exactly that reason. CefpycoTransport
+        .poll() runs the same check itself (via transport.should_stop =
+        Agent._on_receive_boundary) right after its own receive() returns,
+        before dispatching anything, so a packet is never dispatched past
+        the boundary either -- and fetch_content's wait loop does the same
+        around each of its own receive() calls, so a probe can never block
+        past stop_at_s for longer than one receive_timeout_ms either (see
+        _on_receive_boundary's own docstring for why what it captures there
+        isn't written until _emit_pending_snapshots runs, below, outside
+        that probe's own call stack).
+
+        The remaining bound: should_stop() is checked against the clock
+        reading *after* receive() returns, not against when a packet
+        physically arrived, so two single-step errors are possible, never
+        more. (a) A packet that in truth arrived a moment before the
+        deadline can still be dropped unprocessed, if receive() itself
+        happened to return at or after it -- an in-window packet
+        under-counted, not an out-of-window one leaking in. (b) When poll()
+        is instead allowed to continue (its post-receive `now` still short
+        of the deadline), on_tick below runs against that same `now` and may
+        send -- modeled as landing exactly then, but a real send has no
+        wall-clock cost here, so if `now` was a hair before the deadline the
+        physical send could land a hair after it. Both are bounded by one
+        receive()/dispatch/tick, never by the full receive_timeout_ms or
+        chunk_lifetime_ms.
+
         This also gives restart its "already past" behavior for free, with no
         separate check: a relaunched life whose very first step already finds
         itself past stop_at_s takes this same early return before ever calling
         poll() or on_tick(), so it stops immediately -- see run()/shutdown()
         for where the final `counters` line actually gets written.
 
-        2026-10-23: counters_snapshot is drained *before* the stop_at_s check,
-        both against the same pre-poll `now` -- an entry due at exactly
-        stop_at_s still gets emitted on this, the last step, before that same
-        step's early return skips everything else.
+        An entry due at exactly stop_at_s is still captured on this, the
+        last step, before that same step's early return skips everything
+        else, and is emitted right there -- _on_receive_boundary captures
+        before testing the deadline, not after.
         """
-        now = self._transport.now()
-        self._drain_counters_snapshots(now)
-        if self._stop_at_s is not None and self._elapsed_s(now) >= self._stop_at_s:
-            self.request_stop()
+        if self._on_receive_boundary():
+            self._emit_pending_snapshots()
             return
         self._transport.poll()
+        if self._on_receive_boundary():
+            self._emit_pending_snapshots()
+            return
         now = self._transport.now()
         self._engine.on_tick(now)
         self._drain_schedule(now)
         self._drain_probes(now)
+        self._emit_pending_snapshots()
         self._drain_engine_events()
 
     def run(self) -> None:
@@ -712,7 +830,15 @@ class Agent:
         baseline's scenarios are short enough that a single end-of-run
         total is sufficient, and it keeps every other event line free of
         a running total that would otherwise have to be repeated on each one.
+
+        2026-10-23 fix: _emit_pending_snapshots() is called here too, before
+        the `counters` line, as a last-resort safety net -- step() itself
+        already calls it on every one of its own exit paths, so this should
+        normally find nothing pending, but a stop triggered from somewhere
+        this file hasn't been made to call it from must still never lose an
+        already-captured entry rather than silently dropping it.
         """
+        self._emit_pending_snapshots()
         self._drain_engine_events()
         self._events.write(
             {
@@ -750,9 +876,10 @@ def build_agent(config: AgentConfig, handle: CefpycoHandle, *, clock: Callable[[
     events = EventWriter(os.path.join(config.state_dir, "events.jsonl"), clock=clock)
     agent = Agent(config, engine, store, transport, events)
     # Same construction-order reason as transport.engine above: the Agent
-    # that owns the real stop flag can only be built from this transport,
-    # not the other way around.
-    transport.should_stop = agent.is_stop_requested
+    # that owns the real stop flag (and the counters_snapshot/stop_at_s
+    # boundary check that now lives alongside it, _on_receive_boundary) can
+    # only be built from this transport, not the other way around.
+    transport.should_stop = agent._on_receive_boundary
     return agent
 
 
