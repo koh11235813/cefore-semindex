@@ -16,14 +16,28 @@ import json
 import sys
 
 
-def _read_events(path: str) -> list[dict]:
-    """Parse one events.jsonl file into a list of event dicts, in file order."""
+def _read_events(path: str) -> list[dict] | None:
+    """Parse one events.jsonl file into a list of event dicts, in file order.
+
+    Returns None (after printing one FAIL line naming the bad line) if any
+    line cannot be parsed as JSON. 2026-10-22 fix: a host_apps process that
+    is still writing events.jsonl when ReCefore's SIGKILL lands (2s after
+    SIGTERM, if shutdown() has not finished flushing by then) can leave
+    that last line truncated mid-write; json.loads on it used to raise a
+    traceback instead of going through this script's own PASS/FAIL/exit-code
+    convention.
+    """
     events = []
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
+        for lineno, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
                 events.append(json.loads(line))
+            except json.JSONDecodeError:
+                print(f"FAIL: {path} line {lineno} unparsable")
+                return None
     return events
 
 
@@ -50,6 +64,8 @@ def run(h0_path: str, h1_path: str) -> int:
     """Check both sides' events.jsonl and return 0 if every assertion passed, else 1."""
     h0_events = _read_events(h0_path)
     h1_events = _read_events(h1_path)
+    if h0_events is None or h1_events is None:
+        return 1  # _read_events already printed its own FAIL line
 
     ok = True
 
