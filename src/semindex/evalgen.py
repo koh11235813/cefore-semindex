@@ -131,6 +131,22 @@ def _rng_for(seed: int, p: float, purpose: str) -> random.Random:
     return random.Random(_derive_seed(seed, p, purpose))
 
 
+def _validate_p(p: float) -> None:
+    """Reject a disconnect probability that is not a finite number in [0, 1].
+
+    2026-10-23 (review r1, finding 4) fix: `rng.random() < p` is simply
+    False for every draw when p is negative or NaN, and simply True for
+    every draw when p is >1 or +inf -- so an out-of-range or non-finite p
+    used to produce a normal-looking, fully valid experiment ("never down"
+    or "always down") instead of an error, silently mislabeling the run's
+    condition. This is the one common entry point `build_experiment` calls
+    before any draw, so every caller (the CLI and every direct test call)
+    gets the same check.
+    """
+    if not isinstance(p, (int, float)) or isinstance(p, bool) or not (0.0 <= p <= 1.0):
+        raise gen.ExperimentError(f"p must be a finite number in [0, 1], got {p!r}")
+
+
 def _format_p(p: float) -> str:
     """Render `p` as a short decimal string safe to use as a path/name component.
 
@@ -220,6 +236,7 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
     seed) => byte-identical output" holds regardless of which stage label
     or output directory a caller passes.
     """
+    _validate_p(p)
     name = f"{stage}_p{_format_p(p)}_seed{seed}"
     schedule = {str(host): _record_schedule(host, seed, p) for host in RECORD_ORIGIN_HOSTS}
     return {

@@ -154,6 +154,28 @@ def test_cli_output_is_byte_identical_across_separate_processes(tmp_path: Path):
     assert before == after
 
 
+# -- disconnect probability: must be a finite value in [0, 1] ----------------
+#
+# 2026-10-23 review r1 (finding 4, minor): build_experiment used to accept
+# any float for p. p=-0.1/NaN silently drew "never down" (`rng.random() < p`
+# is False for every draw) and p=1.1/+inf silently drew "always down" (True
+# for every draw) -- a typo'd p produced a normal-looking, fully-valid
+# experiment whose condition label did not match its actual behavior.
+
+
+@pytest.mark.parametrize("bad_p", [-0.1, 1.1, float("nan"), float("inf"), float("-inf")])
+def test_build_experiment_rejects_p_outside_zero_one(bad_p: float):
+    """An out-of-range or non-finite p must raise, not silently clamp."""
+    with pytest.raises(ExperimentError, match=r"p must be"):
+        evalgen.build_experiment(bad_p, 7, "s1", "/out")
+
+
+@pytest.mark.parametrize("good_p", [0.0, 0.2, 1.0])
+def test_build_experiment_accepts_p_inside_zero_one(good_p: float):
+    """The boundary values 0.0 and 1.0, and an ordinary mid-range p, must still be accepted."""
+    evalgen.build_experiment(good_p, 7, "s1", "/out")  # must not raise
+
+
 # -- disconnect schedule: p = 0 ----------------------------------------------
 
 
