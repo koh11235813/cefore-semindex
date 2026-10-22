@@ -281,6 +281,78 @@ def test_run_one_refuses_to_delete_through_a_symlinked_stage_dir(tmp_path: Path,
     assert (sentinel_dir / "sentinel.txt").exists()
 
 
+# -- _verify_safe_run_dir / run_one: path-safety regressions (review r2) --------
+
+
+def test_verify_safe_run_dir_accepts_a_path_that_does_not_exist_yet(tmp_path: Path):
+    """Verify safe run dir accepts a path that does not exist yet, as long as every
+    component down to it is a plain (non-symlink) name under store."""
+    store = tmp_path / "store"
+    store.mkdir()
+    run_dir = store / "s1" / "p0.2" / "7"
+    evalrun._verify_safe_run_dir(str(run_dir), str(store))  # must not raise
+    assert not run_dir.exists()
+
+
+def test_verify_safe_run_dir_refuses_a_symlinked_component_whose_target_does_not_exist_yet(tmp_path: Path):
+    """Verify safe run dir refuses a symlinked intermediate component even when its target has not
+    been created at all yet: `os.path.isdir` on the full run dir is False here, which is exactly what
+    let an isdir-gated check (the only boundary check this used to have) skip this case entirely."""
+    store = tmp_path / "store"
+    store.mkdir()
+    outside_target = tmp_path / "outside_target"  # deliberately never created
+    (store / "s1").symlink_to(outside_target, target_is_directory=True)
+    run_dir = store / "s1" / "p0.2" / "7"
+    with pytest.raises(ValueError):
+        evalrun._verify_safe_run_dir(str(run_dir), str(store))
+    assert not outside_target.exists()
+
+
+def test_verify_safe_run_dir_refuses_a_symlinked_component_whose_target_already_exists(tmp_path: Path):
+    """Verify safe run dir refuses a symlinked intermediate component whose target already exists too
+    (the case the old check -- gated on the full run dir existing -- did catch)."""
+    store = tmp_path / "store"
+    store.mkdir()
+    outside_target = tmp_path / "outside_target"
+    outside_target.mkdir()
+    (store / "s1").symlink_to(outside_target, target_is_directory=True)
+    run_dir = store / "s1" / "p0.2" / "7"
+    with pytest.raises(ValueError):
+        evalrun._verify_safe_run_dir(str(run_dir), str(store))
+
+
+def test_run_one_refuses_a_symlinked_stage_dir_whose_target_run_dir_does_not_exist_yet(tmp_path: Path, monkeypatch):
+    """Run one refuses the whole run before touching anything when `store/<stage>` is a symlink to an
+    external directory that does not yet exist at all.
+
+    Unlike the existing symlink test above, where the external target's `p0.2/7` leaf already
+    existed, here NOTHING under the external target exists yet. `os.path.isdir(store_run_dir)` is
+    therefore False, which is exactly what let the old,
+    isdir-gated boundary check skip straight past the DONE check and into the full pipeline --
+    `os.makedirs(store_run_dir, exist_ok=True)` would then have created the external target from
+    scratch and written `meta.json`/DONE into it, entirely outside `store`.
+    """
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    store.mkdir()
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    outside_target = tmp_path / "outside_target"  # deliberately never created
+    (store / "s1").symlink_to(outside_target, target_is_directory=True)
+
+    def _must_not_run(argv, *, cwd=None):
+        raise AssertionError("run_subprocess must not be called: the safety check should fail first")
+
+    with pytest.raises(ValueError):
+        evalrun.run_one(0.2, 7, "s1", str(store), str(recefore), str(staging_root), run_subprocess=_must_not_run)
+
+    assert not outside_target.exists()
+
+
 # -- ReCefore invocation: --kill-after (review r1) -------------------------------
 
 

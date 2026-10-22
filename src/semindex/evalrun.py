@@ -179,6 +179,54 @@ def _guarded_rmtree(path: str, *, root: str) -> None:
     shutil.rmtree(real_path)
 
 
+def _verify_safe_run_dir(store_run_dir: str, store: str) -> None:
+    """Verify `store_run_dir` is safe to read, write, or delete under `store`, before anything else touches it.
+
+    2026-10-23 fix: the only boundary check `run_one` had
+    (`_guarded_rmtree`'s own realpath comparison) ran exclusively inside
+    `if os.path.isdir(store_run_dir): ...` -- so a `store/<stage>`
+    replaced with a symlink to an EXTERNAL directory that did not yet
+    exist at all (not even its `p<p>/<seed>` leaf) made `os.path.isdir`
+    False, skipping that check entirely. The run then proceeded straight
+    through the DONE check (also False, nothing there yet) into the full
+    pipeline, and `os.makedirs(store_run_dir, exist_ok=True)` further
+    down happily created the external target from scratch and wrote
+    `meta.json`/`DONE` into it -- entirely outside `store`, with no
+    directory ever having existed there to trip the old check.
+
+    Called unconditionally here, before the DONE check or anything else
+    touches `store_run_dir`: every path component of `store_run_dir`
+    below `store` (`stage`, `p<p>`, `<seed>`) is checked for being a
+    symlink -- existing or not; `os.path.islink` on a component that does
+    not exist yet is simply False, which is exactly right: there is
+    nothing there yet to be a symlink, and the component will be created
+    fresh, under `store`, by `os.makedirs` later. Only an EXISTING
+    symlink anywhere in that chain is rejected, regardless of where it
+    happens to point (even if that target would itself resolve back
+    inside `store`: the point is store_run_dir must be reached by walking
+    real directories under store, never by following a redirect). The
+    final resolved path is then also required to land strictly inside
+    `store`'s own resolved path, as a second, independent check.
+
+    `_guarded_rmtree`'s own check (below) stays as it was -- a second,
+    narrower layer that runs right before an actual delete, once
+    `store_run_dir` is already known to exist -- this function's job is
+    only to catch the case that check could never even reach.
+    """
+    rel = os.path.relpath(store_run_dir, store)
+    if rel == os.curdir or rel.startswith(os.pardir + os.sep) or rel == os.pardir:
+        raise ValueError(f"refusing to use {store_run_dir!r}: not under {store!r}")
+    cur = store
+    for part in rel.split(os.sep):
+        cur = os.path.join(cur, part)
+        if os.path.islink(cur):
+            raise ValueError(f"refusing to use {store_run_dir!r}: {cur!r} is a symlink below the store root")
+    real_store = os.path.realpath(store)
+    real_run_dir = os.path.realpath(store_run_dir)
+    if real_run_dir == real_store or not real_run_dir.startswith(real_store + os.sep):
+        raise ValueError(f"refusing to use {store_run_dir!r}: resolves outside {store!r}")
+
+
 def _write_done(path: str) -> None:
     """Create `path` atomically (write to a tmp sibling, then rename) -- the resume check's one source of truth."""
     tmp = path + ".tmp"
@@ -338,6 +386,7 @@ def run_one(
     """
     _validate_stage(stage)
     store_run_dir = _store_run_dir(store, stage, p, seed)
+    _verify_safe_run_dir(store_run_dir, store)
     done_marker = os.path.join(store_run_dir, "DONE")
     if os.path.exists(done_marker):
         return RunOutcome(p=p, seed=seed, status="skipped")
