@@ -15,6 +15,12 @@ run's results.json, then prints one line per assertion and exits:
        propagating before a link_down actually fired -- so the protocol
        assertions below it were not meaningfully exercised)
 
+When a run has failures in BOTH categories, 1 wins: a protocol failure
+must never be hidden behind a precondition exit code just because a
+PRECOND-FAIL line also happened to print above it. A trailing SUMMARY
+line names that explicitly, so it is visible even to a reader who only
+looks at the end of the output.
+
 Every PRECONDITION/PROTOCOL check that ran is still printed either way
 (this module's own `_check`, like examples/two_host_sync/check_events.py's,
 never skips a later assertion just because an earlier one failed); only
@@ -725,10 +731,20 @@ def run_check(mode: str, experiment_path: str, run_dir: str) -> int:
         raw = json.load(f)
     spec = parse_experiment(raw)
     checker = _CHECKERS[mode](spec, run_dir)
-    if not checker.precondition_ok:
-        return 3
+    # 2026-10-22 fix: precondition was checked first, so a run with BOTH
+    # a PRECOND-FAIL and a FAIL line exited 3 outright -- reading as "this
+    # run's own timing/setup did not hold up," which can hide a real
+    # protocol failure sitting right above it in the same output. 1 now
+    # wins whenever both categories failed, and the SUMMARY line below
+    # names that explicitly so it is not just a changed exit code with
+    # nothing printed to explain it.
+    if not checker.protocol_ok and not checker.precondition_ok:
+        print("SUMMARY: a protocol failure occurred (see the FAIL line(s) above; some PRECOND-FAIL line(s) also printed)")
+        return 1
     if not checker.protocol_ok:
         return 1
+    if not checker.precondition_ok:
+        return 3
     return 0
 
 
@@ -748,6 +764,14 @@ def main(argv: list[str] | None = None) -> int:
         return run_check(args.mode, args.experiment, args.run_dir)
     except (ExperimentError, CheckUsageError) as exc:
         print(f"semindex.check: {exc}", file=sys.stderr)
+        return 2
+    except KeyError as exc:
+        # 2026-10-22 fix: a results.json row missing `ts` or an
+        # events.jsonl row missing a field a checker reads unconditionally
+        # (e.g. `seq`) used to raise an unhandled KeyError traceback
+        # instead of the same exit-2-with-a-message every other
+        # malformed-input case here gets.
+        print(f"semindex.check: missing required field: {exc}", file=sys.stderr)
         return 2
 
 

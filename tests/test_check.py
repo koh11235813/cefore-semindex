@@ -1050,6 +1050,43 @@ def test_check_t2c_protocol_fails_on_a_duplicate_far_stored_seq(tmp_path: Path, 
     assert "FAIL: h2 holds exactly 4 of h0's records, none duplicated: duplicates present: [1]" in out.splitlines()
 
 
+# -- exit code precedence -------------------------------------------------
+
+
+def test_run_check_exits_1_and_prints_a_summary_when_both_precondition_and_protocol_fail(tmp_path: Path, capsys):
+    """2026-10-22 fix: exit 1 (protocol) wins over exit 3 (precondition)
+    when a run has failures in both categories, so a protocol break is never hidden behind a
+    precondition exit code; the trailing SUMMARY line makes that explicit even to a reader who
+    only looks at the end of the output. Combines the two existing T1 failure fixtures
+    (late pre-outage convergence + an over-matching during-outage probe) in one run."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "record_stored" and event.get("seq") == 2:
+            event["ts_ms"] = _ts_ms(11)  # precondition: late pre-outage convergence
+        if event.get("event") == "probe_discovered" and event["ts_ms"] == _ts_ms(16):
+            event["matches"].append({"origin": "h0", "seq": 3, "content_name": "ccnx:/content/h0/body"})  # protocol break
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out.splitlines()
+    assert (
+        "PRECOND-FAIL: all 2 pre-outage records reached h2 before link_down actually fired: "
+        "1/2 stored before link_down (actual ts 1700000010000)"
+    ) in out
+    assert (
+        "FAIL: during-outage probe discovered exactly the pre-outage records, nothing more: "
+        "got [('h0', 1), ('h0', 2), ('h0', 3)]"
+    ) in out
+    assert "SUMMARY: a protocol failure occurred (see the FAIL line(s) above; some PRECOND-FAIL line(s) also printed)" in out
+
+
 # -- CLI / usage errors -------------------------------------------------
 
 
@@ -1067,3 +1104,49 @@ def test_main_exits_2_on_a_missing_run_dir(tmp_path: Path, capsys):
     assert capsys.readouterr().err == (
         f"semindex.check: {run_dir}/debug/node_dirs/h0/semindex/events.jsonl does not exist\n"
     )
+
+
+def test_main_exits_2_with_a_message_when_a_results_row_is_missing_ts(tmp_path: Path, capsys):
+    """2026-10-22 fix: a results.json row missing `ts` (e.g. a ReCefore
+    version mismatch, or a hand-edited fixture) used to raise an unhandled KeyError traceback
+    instead of exiting 2 with a message, like every other malformed-input case here."""
+    from semindex.check import main
+
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    results_path = run_dir / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    for row in results:
+        if row.get("event_type") == "link_down":
+            del row["ts"]
+    results_path.write_text(json.dumps(results), encoding="utf-8")
+
+    rc = main(["t1", str(experiment_path), str(run_dir)])
+
+    assert rc == 2
+    assert capsys.readouterr().err == "semindex.check: missing required field: 'ts'\n"
+
+
+def test_main_exits_2_with_a_message_when_an_event_is_missing_seq(tmp_path: Path, capsys):
+    """2026-10-22 fix: an events.jsonl row missing `seq` (e.g. a truncated
+    or hand-edited line) used to raise an unhandled KeyError traceback instead of exiting 2
+    with a message."""
+    from semindex.check import main
+
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h0_path = _node_events_path(run_dir, "h0")
+    events = [json.loads(line) for line in h0_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "record_created" and event.get("seq") == 3:
+            del event["seq"]
+    _write_jsonl(h0_path, events)
+
+    rc = main(["t1", str(experiment_path), str(run_dir)])
+
+    assert rc == 2
+    assert capsys.readouterr().err == "semindex.check: missing required field: 'seq'\n"
