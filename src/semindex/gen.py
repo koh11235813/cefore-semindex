@@ -464,8 +464,8 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
     # with no further sanitizing there -- an absolute path, an embedded
     # separator (e.g. "../escaped"), or "." / ".." lets a generated
     # experiment write outside the `outdir` its caller chose. Checked once
-    # here, at the one place every caller (semindex.check included) already
-    # goes through to get a validated ExperimentSpec.
+    # here, at the one validation boundary every path into an
+    # ExperimentSpec already goes through.
     if os.path.isabs(name) or "/" in name or os.sep in name or name in (".", ".."):
         raise ExperimentError(f"name must not be a path: {name!r}")
     num = _require_int(raw["num"], "num")
