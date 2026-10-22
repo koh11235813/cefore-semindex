@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from semindex.tracker import DEFAULT_MAX_IN_FLIGHT_PER_NEIGHBOR, Tracker
+from semindex.tracker import (
+    DEFAULT_MAX_IN_FLIGHT_PER_NEIGHBOR,
+    DEFAULT_MAX_MISSING_PER_ORIGIN,
+    Tracker,
+)
 
 
 def test_gaps_1_2_4_give_contiguous_2_and_missing_3():
@@ -34,6 +38,26 @@ def test_plan_fetches_only_targets_a_neighbor_that_advertised_the_seq():
     assert tracker.missing("h0") == [1, 2, 3]
     assert tracker.plan_fetches("n1", now=0.0) == [("h0", 1)]
     assert tracker.plan_fetches("n2", now=0.0) == [("h0", 2), ("h0", 3)]
+
+
+def test_missing_is_capped_at_max_missing_per_origin():
+    """map.md "origin ごとの未取得管理上限 1024": a huge gap must not make
+    missing() (or how many fetches plan_fetches hands out from it) grow
+    unbounded with the gap size.
+    """
+    tracker = Tracker()
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=5000, extra=())
+
+    missing = tracker.missing("h0")
+    assert len(missing) == DEFAULT_MAX_MISSING_PER_ORIGIN == 1024
+    assert missing == list(range(1, 1025))
+
+    # plan_fetches is capped independently, by max_in_flight_per_neighbor:
+    # only 8 of those 1024 missing seqs are handed out in one call, even
+    # though n1 advertised holding all the way up to seq 5000.
+    due = tracker.plan_fetches("n1", now=0.0)
+    assert due == [("h0", seq) for seq in range(1, 1 + DEFAULT_MAX_IN_FLIGHT_PER_NEIGHBOR)]
 
 
 def test_in_flight_cap_per_neighbor():
