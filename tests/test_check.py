@@ -234,8 +234,8 @@ def _write_t1_happy_path(run_dir: Path) -> None:
         run_dir,
         [
             {"op_type": "put", "uri": "ccnx:/content/h0/body", "success": True},
-            {"op_type": "event", "event_type": "link_down", "ts": _iso(10), "event": {"nodes": [0, 1]}},
-            {"op_type": "event", "event_type": "link_up", "ts": _iso(30), "event": {"nodes": [0, 1]}},
+            {"op_type": "event", "event_type": "link_down", "ts": _iso(10), "success": True, "event": {"nodes": [0, 1]}},
+            {"op_type": "event", "event_type": "link_up", "ts": _iso(30), "success": True, "event": {"nodes": [0, 1]}},
         ],
     )
 
@@ -296,6 +296,57 @@ def test_check_t1_protocol_fails_when_during_probe_discovers_too_much(tmp_path: 
         "FAIL: during-outage probe discovered exactly the pre-outage records, nothing more: "
         "got [('h0', 1), ('h0', 2), ('h0', 3)]"
     ) in out.splitlines()
+
+
+def test_check_t1_precondition_fails_when_post_outage_records_are_created_after_link_up(tmp_path: Path, capsys):
+    """2026-10-22 fix: a post-outage (M) record used to satisfy this
+    precondition as long as it was created any time after link_down -- including well after
+    link_up, once the network had already recovered. Moves both of h0's M records to offsets 31
+    and 33, after link_up (30s) instead of inside the outage window (10s, 30s)."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h0_path = _node_events_path(run_dir, "h0")
+    events = [json.loads(line) for line in h0_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "record_created" and event.get("seq") == 3:
+            event["ts_ms"] = _ts_ms(31)
+        if event.get("event") == "record_created" and event.get("seq") == 4:
+            event["ts_ms"] = _ts_ms(33)
+    _write_jsonl(h0_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out
+    assert (
+        "PRECOND-FAIL: all 2 post-outage records were actually created during the outage: "
+        "2 created with seq>2, 0 of those strictly between link_down (ts 1700000010000) and link_up (ts 1700000030000)"
+    ) in out.splitlines()
+
+
+def test_check_t1_precondition_fails_when_link_down_or_link_up_did_not_actually_succeed(tmp_path: Path, capsys):
+    """2026-10-22 fix: link_down/link_up rows' own `success` field was
+    never read, so ReCefore reporting the interface manipulation itself as FAILED still let
+    every timing check in this mode treat the outage window as real."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    results_path = run_dir / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    for row in results:
+        if row.get("event_type") in ("link_down", "link_up"):
+            row["success"] = False
+    results_path.write_text(json.dumps(results), encoding="utf-8")
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out.splitlines()
+    assert "PRECOND-FAIL: link_down actually succeeded: success=False" in out
+    assert "PRECOND-FAIL: link_up actually succeeded: success=False" in out
 
 
 # -- T2a --------------------------------------------------------------------

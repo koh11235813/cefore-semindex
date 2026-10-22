@@ -272,6 +272,16 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
     link_up_ts = results_ts_ms(link_up_record)
 
     c.precondition("publisher's put succeeded", put_record.get("success") is True, f"success={put_record.get('success')}")
+    # 2026-10-22 fix: these two rows' own `success` field was never read,
+    # so a link_down or link_up that ReCefore itself reported as FAILED
+    # (the interface manipulation it wraps did not actually happen) still
+    # let every timing check below treat the outage window as real.
+    c.precondition(
+        "link_down actually succeeded", link_down_record.get("success") is True, f"success={link_down_record.get('success')}"
+    )
+    c.precondition(
+        "link_up actually succeeded", link_up_record.get("success") is True, f"success={link_up_record.get('success')}"
+    )
 
     far_events = events_by_node[far_node]
     far_stored_before_outage = [
@@ -286,11 +296,17 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
     origin_events = events_by_node[origin]
     created = _events_of(origin_events, "record_created", origin=origin)
     post_outage_created = [e for e in created if e["seq"] > n]
-    late_enough = [e for e in post_outage_created if e["ts_ms"] > link_down_ts]
+    # 2026-10-22 fix: this used to only require ts_ms > link_down_ts, so an
+    # M record created at any point afterward -- including well after
+    # link_up, once the network had already recovered -- still satisfied
+    # it. map.md's own T1 scenario creates every M record strictly inside
+    # the outage window, not merely after it started.
+    during_outage = [e for e in post_outage_created if link_down_ts < e["ts_ms"] < link_up_ts]
     c.precondition(
-        f"all {m} post-outage records were actually created after link_down fired",
-        len(post_outage_created) == m and len(late_enough) == m,
-        f"{len(post_outage_created)} created with seq>{n}, {len(late_enough)} of those after link_down (actual ts {link_down_ts:.0f})",
+        f"all {m} post-outage records were actually created during the outage",
+        len(post_outage_created) == m and len(during_outage) == m,
+        f"{len(post_outage_created)} created with seq>{n}, {len(during_outage)} of those strictly between "
+        f"link_down (ts {link_down_ts:.0f}) and link_up (ts {link_up_ts:.0f})",
     )
 
     prober_events = events_by_node[prober]
