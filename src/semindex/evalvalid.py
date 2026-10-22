@@ -72,15 +72,15 @@ from semindex.check import (
 # records measured): record_created lateness vs schedule was median 91ms,
 # p90 140ms, max 533ms (one instant where h0 and h4 both stalled ~0.5s
 # together -- seed 2, seq 30) -- a healthy run, but one the old 0.5s slack
-# flagged outright. Widened to 2.0s, one state-poll period, the interval
-# the orchestrator itself polls run state on: a record landing within one
-# poll of its own schedule is not distinguishable from "on time" by
-# anything that reads this run's state at that granularity. `metrics`
-# (below, in `validate`'s return) reports the measured lateness as a
-# number regardless of whether this slack flags anything, so a run's
+# flagged outright. Widened to 1.5s: comfortably above the measured
+# stall, and kept strictly below the 2.0s record interval so a schedule
+# shifted by exactly one slot still shows up as off-schedule (a slack
+# equal to the interval would make that shift invisible to this check).
+# `metrics` (below, in `validate`'s return) reports the measured lateness
+# as a number regardless of whether this slack flags anything, so a run's
 # closeness to its schedule stays visible even when comfortably inside
 # tolerance.
-RECORD_SCHEDULE_SLACK_S = 2.0
+RECORD_SCHEDULE_SLACK_S = 1.5
 
 
 class ValidityUsageError(ValueError):

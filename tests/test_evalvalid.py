@@ -322,14 +322,10 @@ def test_validate_flags_every_record_collapsed_onto_one_instant(tmp_path: Path):
     events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
     events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
     _write_events(run_dir, node, events)
-    # Every seq except the last two is off schedule. Seq `len(schedule)` (the last) has its own
-    # at_s IS last_at_s, so it lands exactly on schedule by construction. Seq `len(schedule) - 1`
-    # (the second-to-last) is off by exactly one RECORD_INTERVAL_S (2.0s) -- which, since the
-    # 2026-10-23 orchestrator decision widened RECORD_SCHEDULE_SLACK_S to that same 2.0s, now also
-    # falls (just barely) inside tolerance: `abs(2.0) > RECORD_SCHEDULE_SLACK_S` is False. A slack
-    # equal to the record interval means a schedule shifted by exactly one slot is itself
-    # inherently invisible to this check; this is a real boundary, not a test artifact.
-    expected = sorted(f"record_off_schedule:h0:seq{i}" for i in range(1, len(schedule) - 1))
+    # Every seq except the last is off schedule: the last one's own at_s IS last_at_s, so it lands
+    # exactly on schedule by construction. The second-to-last is off by one RECORD_INTERVAL_S
+    # (2.0s), which must still be flagged -- the slack is kept below the interval for this reason.
+    expected = sorted(f"record_off_schedule:h0:seq{i}" for i in range(1, len(schedule)))
     assert validate(str(run_dir))["flags"] == expected
 
 
