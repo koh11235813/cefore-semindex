@@ -555,8 +555,47 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
         f"holders seen: {sorted(holders_seen)}",
     )
 
+    # 2026-10-23 fix: nothing here checked that the
+    # dropped seq's own record_stored actually landed AFTER its
+    # fetch_timeout(s) -- a store that predates every timeout logged for
+    # the same (origin, seq) means the "timeout" was never a real
+    # withheld reply at all (e.g. a stale re-fetch of a record already
+    # held), not evidence the retry protocol under test here ever fired.
+    dropped_store_ts = [e["ts_ms"] for e in stored if e["seq"] == drop.seq]
+    timeout_ts = [e["ts_ms"] for e in timeouts]
+    stored_before_timeout = bool(dropped_store_ts) and bool(timeout_ts) and min(dropped_store_ts) < max(timeout_ts)
+    c.protocol(
+        f"{requester}'s eventual store of ({drop.origin}, {drop.seq}) came after its fetch_timeout(s), not before",
+        not stored_before_timeout,
+        f"stored at {dropped_store_ts}, timed out at {timeout_ts}",
+    )
+
+    # 2026-10-23 fix: the fetch_timeout count
+    # check above only ever looked at (drop.origin, drop.seq) -- a timeout
+    # against any OTHER seq (the holder failing to serve a record it was
+    # never faulted to withhold) was invisible to this mode entirely.
+    other_timeouts = [
+        e for e in _events_of(requester_events, "fetch_timeout", origin=drop.origin) if e["seq"] != drop.seq
+    ]
+    c.protocol(
+        f"{requester} logged no fetch_timeout for any ({drop.origin}, seq) other than the one actually dropped",
+        other_timeouts == [],
+        f"unexpected timeout(s): {other_timeouts}",
+    )
+
     conflicts = _events_of(requester_events, "conflict")
     c.protocol(f"{requester} logged no conflict", conflicts == [], f"{len(conflicts)} conflict event(s)")
+
+    # 2026-10-23 fix: see check_t1's identical fix --
+    # a node SIGKILLed before its shutdown finished never writes a
+    # `counters` line, and T2(a) never checked for that either.
+    for node in (holder, requester):
+        has_counters = bool(_events_of(events_by_node[node], "counters"))
+        c.precondition(
+            f"{node} wrote a counters line before this run ended",
+            has_counters,
+            "" if has_counters else f"{node} wrote no counters line (shutdown did not finish)",
+        )
 
     return c
 

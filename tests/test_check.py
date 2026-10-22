@@ -644,7 +644,10 @@ def _t2a_experiment() -> dict:
 
 def _write_t2a_happy_path(run_dir: Path) -> None:
     """A full, consistent T2(a) run: 2 fetch_timeouts for seq 2, then a clean 1..3 convergence."""
-    _write_jsonl(_node_events_path(run_dir, "h0"), [])
+    _write_jsonl(
+        _node_events_path(run_dir, "h0"),
+        [{"ts_ms": _ts_ms(20), "event": "counters", "control_bytes_sent": 5, "control_bytes_received": 5}],
+    )
     _write_jsonl(
         _node_events_path(run_dir, "h1"),
         [
@@ -653,6 +656,7 @@ def _write_t2a_happy_path(run_dir: Path) -> None:
             {"ts_ms": _ts_ms(9), "event": "fetch_timeout", "origin": "h0", "seq": 2, "neighbor": "h0"},
             {"ts_ms": _ts_ms(14), "event": "record_stored", "origin": "h0", "seq": 2, "holder": "h0"},
             {"ts_ms": _ts_ms(16), "event": "record_stored", "origin": "h0", "seq": 3, "holder": "h0"},
+            {"ts_ms": _ts_ms(20), "event": "counters", "control_bytes_sent": 5, "control_bytes_received": 5},
         ],
     )
 
@@ -703,6 +707,78 @@ def test_check_t2a_protocol_fails_when_never_converges(tmp_path: Path, capsys):
     assert rc == 1
     out = capsys.readouterr().out
     assert "FAIL: h1 eventually stored all 3 of h0's records: got [1], expected 1..3" in out.splitlines()
+
+
+def test_check_t2a_protocol_fails_when_the_dropped_seq_was_stored_before_its_own_timeout(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix: nothing checked that the dropped seq's own store
+    landed AFTER its fetch_timeout(s). Moves it 3s BEFORE its only pair of timeouts, which means
+    the "timeout" was never real evidence the reply had actually been withheld."""
+    experiment_path = tmp_path / "t2a.json"
+    _write_experiment(experiment_path, _t2a_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2a_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "record_stored" and event.get("seq") == 2:
+            event["ts_ms"] = _ts_ms(6) - 3000
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2a", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's eventual store of (h0, 2) came after its fetch_timeout(s), not before: "
+        "stored at [1700000003000], timed out at [1700000006000, 1700000009000]"
+    ) in out.splitlines()
+
+
+def test_check_t2a_protocol_fails_on_a_fetch_timeout_for_a_seq_that_was_never_dropped(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix: the fetch_timeout-count check only ever looked at
+    (drop.origin, drop.seq) -- a timeout against any OTHER seq (the holder failing to serve a
+    record it was never faulted to withhold) was invisible to this mode entirely."""
+    experiment_path = tmp_path / "t2a.json"
+    _write_experiment(experiment_path, _t2a_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2a_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    events.append({"ts_ms": _ts_ms(12), "event": "fetch_timeout", "origin": "h0", "seq": 3, "neighbor": "h0"})
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2a", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1 logged no fetch_timeout for any (h0, seq) other than the one actually dropped: "
+        "unexpected timeout(s): [{'ts_ms': 1700000012000, 'event': 'fetch_timeout', 'origin': 'h0', "
+        "'seq': 3, 'neighbor': 'h0'}]"
+    ) in out.splitlines()
+
+
+def test_check_t2a_precondition_fails_when_the_holder_never_wrote_a_counters_line(tmp_path: Path, capsys):
+    """2026-10-23 fix: see check_t1's identical fix -- T2(a) never checked
+    that every node actually finished its shutdown (wrote a counters line) either."""
+    experiment_path = tmp_path / "t2a.json"
+    _write_experiment(experiment_path, _t2a_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2a_happy_path(run_dir)
+    _write_jsonl(_node_events_path(run_dir, "h0"), [])
+
+    rc = run_check("t2a", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out
+    assert (
+        "PRECOND-FAIL: h0 wrote a counters line before this run ended: "
+        "h0 wrote no counters line (shutdown did not finish)"
+    ) in out.splitlines()
 
 
 # -- T2b --------------------------------------------------------------------
