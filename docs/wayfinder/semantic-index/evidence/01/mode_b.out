@@ -1,0 +1,25 @@
+72:CS_MODE=0
+srwxr-xr-x 1 root root 0 Oct 22 19:32 /tmp/cef_9695.0
+Cache Mode       : None
+=== consumer
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.5oTEyF
+name=ccnx:/semidx/smoke/a/hello counter=0
+consumer exit: 0
+=== freshness
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.5oTEyF
+[state_freshness] PASS: 20 requests, counters strictly increasing
+state_freshness exit: 0
+=== same name twice
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.5oTEyF
+name=ccnx:/semidx/smoke/a/same counter=21
+exit 0
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.5oTEyF
+name=ccnx:/semidx/smoke/a/same counter=22
+exit 0
+--- producer log (tail)
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.5oTEyF
+[producer] registered ccnx:/semidx/smoke/a
+[producer] answered ccnx:/semidx/smoke/a/hello counter=0
+[producer] answered ccnx:/semidx/smoke/a/same counter=21
+[producer] answered ccnx:/semidx/smoke/a/same counter=22
+[producer] stopped

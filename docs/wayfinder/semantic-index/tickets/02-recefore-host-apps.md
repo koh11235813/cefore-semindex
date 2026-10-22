@@ -1,7 +1,7 @@
 ---
-status: open
+status: closed
 type: task
-claimed-by:
+claimed-by: orchestrator (worker: sonnet)
 blocked-by: []
 ---
 
@@ -12,3 +12,9 @@ ReCefore: add `host_apps:` — per-host long-running processes with argv/env/cwd
 ## Acceptance
 
 Unit tests with the recording fake runner; a smoke config in `config/examples/` whose app writes a marker file per host; `cefore-run-tests` stays green.
+
+## Resolution (2026-10-22)
+
+- ReCefore PR #37 で main に反映（merge `ab655e2`）。
+- smoke `min_host_apps` を cefore-run-tests に登録し、root で `[OK]`。3台の marker の t0_ms が同一（`1792661585524`）、停止後に `sleep 1000` が残らないことも確認。
+- unit 1670 passed / 8 skipped、mypy、ruff clean（PR 時点）。

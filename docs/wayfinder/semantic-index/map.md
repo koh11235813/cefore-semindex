@@ -17,13 +17,16 @@
 - 試験は mininet-debian 上の Mininet + ReCefore。hpc-debian（RTX PRO 5000）はモデル訓練専用で、この effort では使わない。
 - リポジトリは `/home/lab_shared/cefore-semindex`（remote `git@github.com:ss-lab-tut/cefore-semindex.git`）。最初の骨組みだけ org main に直接 push し、以後は個人フォークのブランチから PR。
 - 言語は Python 3.12、uv 管理。Cefore 束縛は cefpyco（上流最新 v0.10.1）を `/home/lab_shared/cefpyco` に clone し、v0.12.0 で失敗した箇所だけ個人フォークのブランチで直す。cmake は apt ではなく venv 内の PyPI wheel で賄う（システム変更を避ける）。
-- cefpyco の既知欠陥は使い方で避ける: `receive()` が GIL を握ったまま待つ・受信バッファが process-wide static なので、エージェントは単一スレッドのイベントループ（receive の timeout は 100ms 程度）。`send_data` はペイロード長を検査しないので、こちらの層で上限を検査してから渡す。
+- cefpyco の既知欠陥は使い方で避ける: 受信バッファが process-wide static なので、エージェントは1つのハンドルを1スレッドで使う単一スレッドのイベントループ（receive の timeout は 100ms 程度）。`send_data` はペイロード長を検査しないので、こちらの層で上限を検査してから渡す。（2026-10-22 訂正: `receive()` の待ちは `Py_BEGIN/END_ALLOW_THREADS` で囲まれていて GIL は解放される。単一スレッドにする理由は static バッファのほう。）
+- cefpyco の v0.12.0 対応は個人フォークのブランチ `v0.12-compat`（koh11235813/cefpyco）に置く。直したのは3点: `register_route()` が存在しない opcode 名を参照していた（ビルドが通らない）、Data の解析が `chunk_num_f` を見ず chunk 無しを chunk 0 と報告していた、`receive(timeout_ms)` が `cef_client_read`（1 秒固定の poll）を呼んで 1 秒単位でしか戻らなかった。直した後の実測は 100/250/2000 ms 指定でそれぞれ 101/250/2000 ms。venv への導入は wheel を `uv pip install` で入れ、`pyproject.toml` には書かない（`uv sync` で消えるため）。
 - `create_handle(ceforedir=<cefnetd.conf があるディレクトリそのもの>, portnum=0)` でノードごとの cefnetd を選ぶ。`register(prefix)` はプレフィックス一致（`cef_client.c:616-617`）。
 
 ### ReCefore 側に足す汎用機能（同期の知識は入れない、ADR-0001）
 - `host_apps:` ホストごとの長寿命プロセス。argv/env/cwd にプレースホルダ（ノード名、ノードディレクトリ、cefnetd.conf のディレクトリ、シナリオの t0 epoch ms）を展開する。cefnetd 起動後に `CommandRunner.start` で起動し、`shutdown_runtime_resources` の中で cefnetd を止める前に終了させる。
 - `links:` disaster シナリオでトポロジを明示する（無ければ従来の乱数 mesh）。
-- `prefix_routes: {prefix: host}` 既存の FIB 生成（`compute_fib_for_uris`）に足し込む。put/pubsub_pub があると既定プレフィックスが消える既存の性質とは独立に効く。
+- `prefix_routes: {prefix: host}` 既存の FIB 生成（`compute_fib_for_uris`）に足し込む。put/pubsub_pub があると既定プレフィックスが消える既存の性質とは独立に効く。経路は「指定ホスト以外 → 指定ホスト」の片方向だけ（Data は PIT で戻るので pull 同期にはこれで足りる）。`k > 1` だと直線の中間ホストに遠回りの next hop が入るので、試験では `k: 1` に固定する。
+- `host_app_restart` イベント `{at, type: host_app_restart, host, downtime_s}`: そのホストの host_apps を既存の停止経路（SIGTERM、2 秒後に SIGKILL）で止め、`downtime_s` 後に最初に展開したのと同じ argv/env/cwd と同じ `{t0_ms}` で起動し直す。T2 の「エージェントの停止・再起動」を YAML の時刻で再現するため（2026-10-22 決定、チケット 08）。
+- ReCefore の実行モードの性質（試験設計が依存する）: `no_cli` と `results_json` の両方を書くと autotest モードになり、put は `at:` に関係なく最初の seed 段階でまとめて実行され、続く warmup が put した全 URI をキャッシュノードに先取りし、その後に eval のイベントが走る。eval の `at:` は seed と同じ origin からの時刻なので、seed と warmup に時間がかかると eval のイベントは遅れて発火する。だから生成器は put を `at: 0` に置き、`warmup_gets` で先取りをパブリッシャ自身に限り、判定は名目の `at:` ではなく実際の発火時刻で行う。`hosts` は 3 以上でなければならない。
 
 ### 時刻の基準
 - ReCefore は scheduler の `at: 0` に当たる epoch ms を `host_apps` に渡す。エージェントの予定（レコード生成、probe）はすべてこの t0 からの相対秒で書く。
@@ -64,9 +67,10 @@
 ### 実装の構造
 - 同期の中身（レコード、ストア、Holder state、未取得の計算、再送とバックオフ）は transport に依存しない純粋な部品にし、in-memory の fake transport（分断も表現できる複数ノード網）で root なしの単体試験を回す。cefpyco の adapter が唯一の実 transport。
 - 試験用の故障注入: holder 側の設定 `fault.drop_rec` で、指定した (origin, seq) の応答を指定回数だけ返さない。本番の設定には現れない。
+- エージェントは `python -m semindex.agent --config <json>`。JSON は stdlib で読み、未知キーは拒否する。`--node` `--t0-ms` `--cefore-conf-dir` `--state-dir` の4つは CLI で上書きできる（host_apps のプレースホルダは argv の中でしか展開されないため）。`state_dir` には `index.db`（SQLite、`probe_progress` 表を含む）と `events.jsonl`（追記モード）を置く。再起動したときは、自分が作ったレコード数（`hi`）だけ予定の先頭を飛ばし、実行済みの probe 数も `probe_progress` から読んで飛ばす。probe の「最初の一致」は `(origin, seq)` が最小のもの。
 
 ### 評価の記録
-- 各ノードのエージェントが `hN/semindex/events.jsonl` に 1 行 1 イベントで書く: `record_created`、`state_rx`、`record_stored`（origin、seq、holder）、`fetch_timeout`、`conflict`、`probe_discovered`、`probe_retrieved`。時刻は壁時計（Mininet のホストは時計を共有）。送受信バイト数もエージェント側で数える。
+- 各ノードのエージェントが `hN/semindex/events.jsonl` に 1 行 1 イベントで書く: `record_created`、`state_rx`、`record_stored`（origin、seq、holder）、`fetch_timeout`、`conflict`、`probe_discovered`、`probe_retrieved`。どの行にも壁時計の `ts_ms` を付ける（Mininet のホストは時計を共有）。送受信バイト数もエージェント側で数え、終了時に `counters` 行（`bytes_sent`、`bytes_received`）を最後に書く。`hN/` は ReCefore の cleanup で消えるので、実験の YAML には `debug: {artifacts: ["node_dirs"]}` を必ず書く。
 - 解析スクリプト（このリポジトリ）が発見遅延（origin の record_created → 各ノードの record_stored）、全ノード一致時刻、制御通信量を出す。ReCefore の results.json には何も足さない。
 
 ### 受け入れ試験
@@ -80,9 +84,12 @@
 - sudo を要する Mininet の実行はオーケストレータ（メインスレッド）が行い、worker はコードと単体試験を渡す。
 - 進捗は `PLAN.md` とボード（非公開 Artifact）。5 時間の利用上限に備えて wakeup を用意する。
 
+### 実機で確かめたこと（2026-10-22）
+- プレフィックス登録したアプリに、それより長い名前の Interest が届く。CS_MODE=2（csmgrd あり）と CS_MODE=0 の1台構成、および h0（CS_MODE=1）と h1（CS_MODE=2）の2台構成の両方で確認した（チケット 01）。転送の設計は変えない。
+- `cache_time=0` を付けた Data でも、CS_MODE=2 のノードでは expiry（1 秒）のあいだ、同じ名前の2回目の Interest に CS が答えた（producer には届かない）。CS_MODE=0 では2回とも producer が答えた。状態確認の名前に requester と epoch_ms を入れて毎回変えているので、古い状態が返ることはない。
+- 2台同期（h0–h1–h2 の直線、h0 と h1 にエージェント）で、h0 の3件と h1 の2件が両方向に届き、h0 でレコードが作られてから h1 に保存されるまで 550〜943 ms、取得要求のタイムアウトと衝突は0件、h1 の probe は発見と本体取得（433,390 バイト）の両方に成功した。
+
 ## Fog
 
-- cefnetd の CS 分岐（`cef_netd.c:3673-3740`、CS_MODE=2 で csmgrd がいるノード）で、プレフィックス登録したアプリに Interest が届くか。ソースを読む限り、完全一致を要求するのは `from_pub_f` 付きの Interest だけに見えるが、実機では未確認。チケット 01 の疎通試験で、csmgrd があるノードと無いノードの両方で確かめる。ここが否定されたら、転送の設計（名前の付け方、登録の仕方）を見直す。
-- cefpyco v0.10.1 が Cefore v0.12.0 でそのまま動くか（チケット 01）。
 - ReCefore のテンプレートは h0〜h2 に別々の `LOCAL_SOCK_ID` を持つ。h3 以降でも衝突しないか（5 ノード評価のとき）。
 - 5 ノード評価の分母、反復数、切断率は T1/T2 の合格後に決める。
