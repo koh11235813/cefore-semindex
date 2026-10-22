@@ -970,6 +970,63 @@ def test_check_t2b_protocol_fails_on_a_duplicate_received_seq(tmp_path: Path, ca
     assert "FAIL: h1 holds exactly 4 of h0's records, none duplicated: duplicates present: [1]" in out.splitlines()
 
 
+def test_check_t2b_protocol_fails_when_a_receiver_stores_a_seq_before_the_origin_created_it(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix: nothing checked that a receiver's own record_stored
+    for one of the origin's seqs never predates that seq's record_created on the origin itself --
+    a receiver whose progress runs AHEAD of the origin. Moves both receivers' seq-3 store to
+    before h0's own life-2 creation of it (offset 15)."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    for node in ("h1", "h2"):
+        path = _node_events_path(run_dir, node)
+        events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        for event in events:
+            if event.get("event") == "record_stored" and event.get("seq") == 3:
+                event["ts_ms"] = _ts_ms(10)
+        _write_jsonl(path, events)
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out.splitlines()
+    assert "FAIL: no record h1 stored for h0 predates that seq's own record_created: seqs stored before being created: [3]" in out
+    assert "FAIL: no record h2 stored for h0 predates that seq's own record_created: seqs stored before being created: [3]" in out
+
+
+def test_check_t2b_protocol_fails_when_a_receiver_keeps_timing_out_on_the_origin_long_after_restart(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix: T2(b) had no grace-window check at all for
+    fetch_timeouts against the restarted origin -- an origin whose life 2 never actually answers
+    again, visible only as timeouts repeated well past the restart's grace window, passed
+    silently as long as every record eventually arrived some other way."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    for offset in (20, 24, 28):
+        events.append({"ts_ms": _ts_ms(offset), "event": "fetch_timeout", "origin": "h0", "seq": 4, "neighbor": "h0"})
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: "
+        "fetch_timeout(s) after grace: "
+        "[{'ts_ms': 1700000020000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
+        "{'ts_ms': 1700000024000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
+        "{'ts_ms': 1700000028000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}]"
+    ) in out.splitlines()
+
+
 # -- T2c --------------------------------------------------------------------
 
 

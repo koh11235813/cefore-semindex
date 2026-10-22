@@ -664,6 +664,25 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
             f"got {sorted(stored_seqs)}, expected 1..{n}",
         )
 
+    # 2026-10-23 fix: nothing here checked that a
+    # receiver's own record_stored for one of the origin's seqs never
+    # predates that seq's record_created on the origin itself -- a
+    # receiver whose progress runs AHEAD of the origin (e.g. a life-2 seq
+    # collision resolved by trusting the wrong side) was invisible unless
+    # it also happened to raise a `conflict` event.
+    created_ts_by_seq = {e["seq"]: e["ts_ms"] for e in created_events}
+    for node in other_nodes:
+        too_early = [
+            e["seq"]
+            for e in _record_stored(events_by_node[node], origin)
+            if e["seq"] in created_ts_by_seq and e["ts_ms"] < created_ts_by_seq[e["seq"]]
+        ]
+        c.protocol(
+            f"no record {node} stored for {origin} predates that seq's own record_created",
+            too_early == [],
+            f"seqs stored before being created: {too_early}",
+        )
+
     issue = _contiguous_unique(created_seqs, n)
     c.protocol(f"{origin}'s own seqs are contiguous and unique across both lives", issue is None, issue or "")
 
@@ -680,6 +699,26 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
     for node in other_nodes:
         issue = _contiguous_unique([e["seq"] for e in _record_stored(events_by_node[node], origin)], n)
         c.protocol(f"{node} holds exactly {n} of {origin}'s records, none duplicated", issue is None, issue or "")
+
+    # 2026-10-23 fix: T2(c) grants a grace window
+    # after a restart before a fetch_timeout against the restarted node
+    # counts as a real failure (interest_lifetime_ms plus slack for one
+    # retry sent just as the node comes back up); T2(b) had no equivalent
+    # at all, so an origin whose life 2 never actually answers again --
+    # visible only as timeouts repeated well past that window -- passed
+    # silently as long as every record eventually arrived some other way.
+    grace_deadline = restart_ts + 2500
+    late_timeouts = [
+        e
+        for node in other_nodes
+        for e in _events_of(events_by_node[node], "fetch_timeout", origin=origin, neighbor=origin)
+        if e["ts_ms"] > grace_deadline
+    ]
+    c.protocol(
+        f"{origin}'s life 2 left no fetch_timeout against it standing after the restart's grace window",
+        late_timeouts == [],
+        f"fetch_timeout(s) after grace: {late_timeouts}",
+    )
 
     for node in [origin] + other_nodes:
         conflicts = _events_of(events_by_node[node], "conflict")
