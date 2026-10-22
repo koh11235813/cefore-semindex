@@ -21,9 +21,13 @@ Run as:
 
     python -m semindex.evalvalid <run_dir>
 
-which prints `{"valid": bool, "flags": [...]}` to stdout and exits 0
-(valid), 1 (flagged) or 2 (run_dir itself could not be read at all --
-see ValidityUsageError below).
+which prints `{"valid": bool, "flags": [...], "metrics": {...}}` to
+stdout and exits 0 (valid), 1 (flagged) or 2 (run_dir itself could not
+be read at all -- see ValidityUsageError below). `metrics` reports
+measured record-schedule timing numbers (`record_late_max_s`,
+`record_early_count`) regardless of whether anything was flagged, so a
+run's own closeness to its schedule is visible even when it is
+comfortably inside tolerance.
 """
 
 from __future__ import annotations
@@ -63,7 +67,20 @@ from semindex.check import (
 # an origin's 30 records landed on the same single in-window instant
 # (instead of each at its own 2s-apart tick) still passed that looser
 # check outright. It now gates the per-record comparison below instead.
-RECORD_SCHEDULE_SLACK_S = 0.5
+#
+# 2026-10-23 orchestrator decision (live root trial, p=0.2 seeds 1-3, 180
+# records measured): record_created lateness vs schedule was median 91ms,
+# p90 140ms, max 533ms (one instant where h0 and h4 both stalled ~0.5s
+# together -- seed 2, seq 30) -- a healthy run, but one the old 0.5s slack
+# flagged outright. Widened to 2.0s, one state-poll period, the interval
+# the orchestrator itself polls run state on: a record landing within one
+# poll of its own schedule is not distinguishable from "on time" by
+# anything that reads this run's state at that granularity. `metrics`
+# (below, in `validate`'s return) reports the measured lateness as a
+# number regardless of whether this slack flags anything, so a run's
+# closeness to its schedule stays visible even when comfortably inside
+# tolerance.
+RECORD_SCHEDULE_SLACK_S = 2.0
 
 
 class ValidityUsageError(ValueError):
@@ -362,11 +379,20 @@ def _check_last_line(nodes_events: dict[str, list[dict]]) -> list[str]:
     return flags
 
 
-def _check_records(experiment: dict, nodes_events: dict[str, list[dict]], t0_ms: float | None) -> list[str]:
+def _check_records(
+    experiment: dict, nodes_events: dict[str, list[dict]], t0_ms: float | None
+) -> tuple[list[str], list[float]]:
     """Per origin host: record_created forms the exact expected seq set, and (once that holds)
     each record's own creation time lands within tolerance of its own scheduled `at_s`.
+
+    Also returns every record's own `elapsed - expected_at_s` residual (seconds, signed: positive
+    = late, negative = early) that was actually computed below, pooled across both origins -- the
+    raw numbers `validate` reports as `metrics` (`record_late_max_s`/`record_early_count`), so a
+    run's own closeness to its schedule is visible even when every residual stays comfortably
+    under `RECORD_SCHEDULE_SLACK_S` and nothing here gets flagged at all.
     """
     flags = []
+    deviations: list[float] = []
     schedule = experiment.get("schedule") or {}
     for host in evalgen.RECORD_ORIGIN_HOSTS:
         node = _node_name(host)
@@ -402,9 +428,11 @@ def _check_records(experiment: dict, nodes_events: dict[str, list[dict]], t0_ms:
             seq = event["seq"]
             expected_at_s = entries[seq - 1]["at_s"]
             elapsed = (event["ts_ms"] - t0_ms) / 1000.0
-            if abs(elapsed - expected_at_s) > RECORD_SCHEDULE_SLACK_S:
+            deviation = elapsed - expected_at_s
+            deviations.append(deviation)
+            if abs(deviation) > RECORD_SCHEDULE_SLACK_S:
                 flags.append(f"record_off_schedule:{node}:seq{seq}")
-    return flags
+    return flags, deviations
 
 
 def _check_put(results: list[dict], experiment: dict) -> list[str]:
@@ -485,13 +513,20 @@ def _check_tracebacks(run_dir: str, agents: list[int]) -> list[str]:
 
 
 def validate(run_dir: str) -> dict:
-    """Validate one stored run dir; returns `{"valid": bool, "flags": [sorted flag strings]}`.
+    """Validate one stored run dir; returns `{"valid": bool, "flags": [...], "metrics": {...}}`.
 
     Raises ValidityUsageError (exit 2 at the CLI) only when `run_dir`
     itself, or its `<name>.experiment.json`, cannot be read -- every
     other problem (a missing node, a failed put, a late link event, ...)
     is a flag, not a crash, per ticket 04's "印つきにすることを...作った
     反例で確かめる" contract.
+
+    `metrics` is always present, even on a fully valid run: `record_late_max_s` (the largest
+    signed record_created residual seen, in seconds; 0.0 when no residual was ever positive) and
+    `record_early_count` (how many residuals were negative) report the measured record-schedule
+    timing as numbers, not just whether `RECORD_SCHEDULE_SLACK_S` was crossed -- a run comfortably
+    inside tolerance still reports how close it actually ran, per the orchestrator's 2026-10-23
+    decision on `RECORD_SCHEDULE_SLACK_S` (see that constant's own comment).
     """
     if not os.path.isdir(run_dir):
         raise ValidityUsageError(f"{run_dir} is not a directory")
@@ -509,7 +544,8 @@ def validate(run_dir: str) -> dict:
     flags += _check_counters(nodes_events, t0_ms)
     flags += _check_agent_lives(nodes_events)
     flags += _check_counter_decrease(nodes_events)
-    flags += _check_records(experiment, nodes_events, t0_ms)
+    record_flags, record_deviations = _check_records(experiment, nodes_events, t0_ms)
+    flags += record_flags
     flags += _check_tracebacks(run_dir, agents)
 
     try:
@@ -521,7 +557,13 @@ def validate(run_dir: str) -> dict:
         flags += _check_link_events(experiment, results)
 
     flags.sort()
-    return {"valid": not flags, "flags": flags}
+    late = [d for d in record_deviations if d > 0]
+    early = [d for d in record_deviations if d < 0]
+    metrics = {
+        "record_late_max_s": max(late) if late else 0.0,
+        "record_early_count": len(early),
+    }
+    return {"valid": not flags, "flags": flags, "metrics": metrics}
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

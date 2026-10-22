@@ -550,7 +550,10 @@ def run_one(
             # missing) -- this is a bug in this pipeline, not a judgment
             # about the run, so it is recorded as a flag rather than
             # raised and left to abort the whole sweep.
-            verdict = {"valid": False, "flags": [f"evalvalid_usage_error:{exc}"]}
+            # "metrics": {} keeps this fallback's shape identical to evalvalid.validate's own
+            # return value (which always includes "metrics") -- a reader of meta.json's
+            # "validity" field should never need to branch on whether validate() itself ran.
+            verdict = {"valid": False, "flags": [f"evalvalid_usage_error:{exc}"], "metrics": {}}
 
         meta = _build_meta(
             p=p,

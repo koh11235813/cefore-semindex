@@ -125,14 +125,22 @@ def _build_happy_run(tmp_path: Path, *, p: float = 0.2, seed: int = 7, stage: st
 def test_validate_accepts_a_fully_consistent_run(tmp_path: Path):
     """Validate accepts a fully consistent run."""
     run_dir, _raw = _build_happy_run(tmp_path)
-    assert validate(str(run_dir)) == {"valid": True, "flags": []}
+    assert validate(str(run_dir)) == {
+        "valid": True,
+        "flags": [],
+        "metrics": {"record_late_max_s": 0.0, "record_early_count": 0},
+    }
 
 
 def test_validate_accepts_p0_with_no_link_events_at_all(tmp_path: Path):
     """Validate accepts p0 with no link events at all (t0 still derivable from record_created)."""
     run_dir, raw = _build_happy_run(tmp_path, p=0.0, seed=1)
     assert raw["events"] == []
-    assert validate(str(run_dir)) == {"valid": True, "flags": []}
+    assert validate(str(run_dir)) == {
+        "valid": True,
+        "flags": [],
+        "metrics": {"record_late_max_s": 0.0, "record_early_count": 0},
+    }
 
 
 # -- missing/unreadable run_dir itself (exit 2 path) ------------------------
@@ -314,9 +322,14 @@ def test_validate_flags_every_record_collapsed_onto_one_instant(tmp_path: Path):
     events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
     events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
     _write_events(run_dir, node, events)
-    # Every seq except the last one (whose own at_s IS last_at_s, so it
-    # lands exactly on schedule by construction) is now off schedule.
-    expected = sorted(f"record_off_schedule:h0:seq{i}" for i in range(1, len(schedule)))
+    # Every seq except the last two is off schedule. Seq `len(schedule)` (the last) has its own
+    # at_s IS last_at_s, so it lands exactly on schedule by construction. Seq `len(schedule) - 1`
+    # (the second-to-last) is off by exactly one RECORD_INTERVAL_S (2.0s) -- which, since the
+    # 2026-10-23 orchestrator decision widened RECORD_SCHEDULE_SLACK_S to that same 2.0s, now also
+    # falls (just barely) inside tolerance: `abs(2.0) > RECORD_SCHEDULE_SLACK_S` is False. A slack
+    # equal to the record interval means a schedule shifted by exactly one slot is itself
+    # inherently invisible to this check; this is a real boundary, not a test artifact.
+    expected = sorted(f"record_off_schedule:h0:seq{i}" for i in range(1, len(schedule) - 1))
     assert validate(str(run_dir))["flags"] == expected
 
 
@@ -415,20 +428,21 @@ def test_validate_flags_a_t0_agent_start_disagreement(tmp_path: Path):
 
 
 def test_validate_flags_a_uniformly_delayed_schedule_when_agent_start_is_present(tmp_path: Path):
-    """Validate flags every one of h0's records when its whole schedule is uniformly delayed by 0.8s,
-    even though agent_start is present and every node agrees on t0 exactly.
+    """Validate flags every one of h0's records when its whole schedule is uniformly delayed by
+    2.5s, even though agent_start is present and every node agrees on t0 exactly.
 
     A t0 estimate taken from the median of these same records (the OLD, and now fallback-only,
-    rung) shifts by that same 0.8s and the error cancels out of every
-    per-record residual -- a delay large enough to matter (the implementation's own 0.5s tolerance)
-    passed outright. agent_start.t0_ms is independent evidence the agent itself wrote at its real
-    launch time, unaffected by anything that happens to its records afterward, so comparing against it
-    exposes exactly this delay instead of absorbing it.
+    rung) shifts by that same 2.5s and the error cancels out of every per-record residual -- a
+    delay large enough to matter (beyond the implementation's own 2.0s tolerance, the orchestrator's
+    2026-10-23 widened `RECORD_SCHEDULE_SLACK_S`) passed outright. agent_start.t0_ms is independent
+    evidence the agent itself wrote at its real launch time, unaffected by anything that happens to
+    its records afterward, so comparing against it exposes exactly this delay instead of absorbing
+    it.
     """
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h0"
     schedule = raw["schedule"]["0"]
-    delayed = [{**e, "ts_ms": e["ts_ms"] + 800} for e in _record_events(0, schedule)]
+    delayed = [{**e, "ts_ms": e["ts_ms"] + 2500} for e in _record_events(0, schedule)]
     events = [_agent_start_event(node)] + delayed
     events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
     events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
@@ -437,7 +451,60 @@ def test_validate_flags_a_uniformly_delayed_schedule_when_agent_start_is_present
     result = validate(str(run_dir))
     expected = sorted(f"record_off_schedule:h0:seq{i}" for i in range(1, len(schedule) + 1))
     assert result["flags"] == expected
+    assert result["metrics"]["record_late_max_s"] == pytest.approx(2.5)
     assert result["valid"] is False
+
+
+# -- record-schedule metrics (orchestrator decision: report timing as numbers, not just flags) --
+
+
+def test_validate_reports_zero_record_metrics_on_an_exactly_on_schedule_run(tmp_path: Path):
+    """Validate reports record_late_max_s=0.0 and record_early_count=0 on a run whose records all
+    land exactly on their own scheduled at_s -- metrics are always present, not just when
+    something is flagged."""
+    run_dir, _raw = _build_happy_run(tmp_path)
+    metrics = validate(str(run_dir))["metrics"]
+    assert metrics == {"record_late_max_s": 0.0, "record_early_count": 0}
+
+
+def test_validate_reports_lateness_within_the_widened_tolerance_as_a_metric_while_staying_valid(
+    tmp_path: Path,
+):
+    """A record 1.5s late (inside the new 2.0s RECORD_SCHEDULE_SLACK_S, so not flagged) still
+    shows up in metrics -- the whole point of reporting these as numbers instead of only a flag is
+    that a run can be valid and still have its actual closeness to schedule visible."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h0"
+    schedule = raw["schedule"]["0"]
+    events = [_agent_start_event(node)] + _record_events(0, schedule)
+    events[-1] = {**events[-1], "ts_ms": events[-1]["ts_ms"] + 1500}
+    events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
+    events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
+    _write_events(run_dir, node, events)
+
+    result = validate(str(run_dir))
+    assert result["flags"] == []
+    assert result["valid"] is True
+    assert result["metrics"]["record_late_max_s"] == pytest.approx(1.5)
+    assert result["metrics"]["record_early_count"] == 0
+
+
+def test_validate_reports_an_early_record_in_record_early_count(tmp_path: Path):
+    """A record 1.5s EARLY (also inside tolerance) is counted in record_early_count, and does not
+    contribute to record_late_max_s (which stays 0.0 -- nothing was ever late)."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h0"
+    schedule = raw["schedule"]["0"]
+    events = [_agent_start_event(node)] + _record_events(0, schedule)
+    events[-1] = {**events[-1], "ts_ms": events[-1]["ts_ms"] - 1500}
+    events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
+    events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
+    _write_events(run_dir, node, events)
+
+    result = validate(str(run_dir))
+    assert result["flags"] == []
+    assert result["metrics"]["record_late_max_s"] == 0.0
+    assert result["metrics"]["record_early_count"] == 1
 
 
 # -- put -----------------------------------------------------------------------
