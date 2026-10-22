@@ -116,8 +116,17 @@ def default_run_subprocess(argv: list[str], *, cwd: str | None = None) -> int:
 
 
 def default_capture_subprocess(argv: list[str], *, cwd: str | None = None) -> str:
-    """Run `argv` to completion and return its stripped stdout (used only for one-line queries like `git rev-parse`)."""
-    proc = subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    """Run `argv` to completion and return its stripped stdout (used only for one-line queries like `git rev-parse`).
+
+    2026-10-23 fix: `stderr` used to be discarded (`DEVNULL`) and a non-zero exit was never
+    distinguished from a clean one that merely printed nothing -- `_git_commit`/`_git_dirty` need
+    the real failure reason (e.g. git's own "detected dubious ownership" message) to store, not an
+    empty string that looks identical to success. `stderr` is now captured, and a non-zero exit
+    raises `subprocess.CalledProcessError` carrying it.
+    """
+    proc = subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, argv, output=proc.stdout, stderr=proc.stderr)
     return proc.stdout.strip()
 
 
@@ -289,21 +298,54 @@ def _copy_run_outputs(staging_run_dir: str, recefore_run_dir: str, store_run_dir
             shutil.copy2(log_src, os.path.join(dest_node_dir, "semindex_agent.log"))
 
 
-def _git_commit(repo_dir: str, capture_subprocess: Callable[..., str]) -> str | None:
-    """`repo_dir`'s current HEAD commit, or None if it cannot be determined (not a git repo, git missing, ...)."""
-    try:
-        out = capture_subprocess(["git", "-C", repo_dir, "rev-parse", "HEAD"])
-    except OSError:
-        return None
-    return out or None
+def _git_run(repo_dir: str, args: list[str], capture_subprocess: Callable[..., str]) -> str:
+    """Run one git query against `repo_dir`, scoped so it is safe to call under `sudo`.
+
+    2026-10-23 orchestrator trial fix: the live trial's `recefore_git_commit` came back null
+    because `git -C <recefore> rev-parse HEAD`, run as root, refused a directory root does not own
+    ("detected dubious ownership") -- root's own gitconfig (in `/root`, not this invoking user's
+    home) has no `safe.directory` entry for it. `-c safe.directory=<repo_dir>` marks it safe for
+    just THIS one invocation (never `git config --global`, which would touch this process's own
+    git config persistently). `--no-optional-locks` matters specifically for the `status
+    --porcelain` dirty check below: without it, `git status` acquires `.git/index.lock` and
+    rewrites the index file, which -- run as root -- would flip that index's ownership out from
+    under the invoking user for their own, unrelated git use of the same tree afterward.
+    `os.path.realpath` is applied to BOTH `-C` and `safe.directory=` so a symlinked `--recefore`
+    checkout (or a path with a trailing slash) cannot slip past the exact-string match git does
+    between the two.
+    """
+    real_repo_dir = os.path.realpath(repo_dir)
+    argv = ["git", "--no-optional-locks", "-c", f"safe.directory={real_repo_dir}", "-C", real_repo_dir, *args]
+    return capture_subprocess(argv)
 
 
-def _git_dirty(repo_dir: str, capture_subprocess: Callable[..., str]) -> bool | None:
-    """Whether `repo_dir` has uncommitted changes, or None if that cannot be determined."""
+def _git_commit(repo_dir: str, capture_subprocess: Callable[..., str]) -> str:
+    """`repo_dir`'s current HEAD commit, or an `"error: ..."` string describing why it could not be
+    determined (not a git repo, git missing, sudo's dubious-ownership refusal, ...).
+
+    2026-10-23 fix: this used to return bare `None` on any failure, which `_build_meta` then stored
+    as an uninformative JSON `null` -- including the one failure mode the live trial actually hit
+    (see `_git_run`'s own docstring). The actual git/OSError message is stored instead, so a real
+    failure is visible in meta.json rather than indistinguishable from "produced no output".
+    """
     try:
-        out = capture_subprocess(["git", "-C", repo_dir, "status", "--porcelain"])
-    except OSError:
-        return None
+        out = _git_run(repo_dir, ["rev-parse", "HEAD"], capture_subprocess)
+    except OSError as exc:
+        return f"error: {exc}"
+    except subprocess.CalledProcessError as exc:
+        return f"error: {(exc.stderr or '').strip() or exc}"
+    return out or "error: git rev-parse HEAD produced no output"
+
+
+def _git_dirty(repo_dir: str, capture_subprocess: Callable[..., str]) -> bool | str:
+    """Whether `repo_dir` has uncommitted changes, or an `"error: ..."` string if that could not be
+    determined -- same never-silently-null rule as `_git_commit` above."""
+    try:
+        out = _git_run(repo_dir, ["status", "--porcelain"], capture_subprocess)
+    except OSError as exc:
+        return f"error: {exc}"
+    except subprocess.CalledProcessError as exc:
+        return f"error: {(exc.stderr or '').strip() or exc}"
     return bool(out)
 
 
@@ -339,6 +381,7 @@ def _build_meta(
         "semindex_git_commit": _git_commit(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "semindex_git_dirty": _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "recefore_git_commit": _git_commit(recefore, capture_subprocess),
+        "recefore_git_dirty": _git_dirty(recefore, capture_subprocess),
         "wall_clock_start": _iso(start_s),
         "wall_clock_end": _iso(end_s),
         "recefore_exit_code": recefore_rc,

@@ -411,6 +411,86 @@ def test_kill_after_actually_kills_a_term_ignoring_child():
     assert wall_s < 5.0
 
 
+# -- git lookups under sudo (orchestrator trial: recefore_git_commit came back null) -------------
+
+
+def test_default_capture_subprocess_raises_with_stderr_on_a_nonzero_exit():
+    """Default capture subprocess raises CalledProcessError carrying stderr (not a silently empty
+    stdout) when the command exits non-zero -- the real failure reason must survive to the caller."""
+    argv = [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(1)"]
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        evalrun.default_capture_subprocess(argv)
+    assert exc_info.value.stderr == "boom"
+
+
+def test_git_commit_scopes_safe_directory_and_no_optional_locks_to_the_repo(tmp_path: Path):
+    """_git_commit's own git invocation passes `-c safe.directory=<repo_dir>` (scoped to this one
+    call, never `git config --global`) and `--no-optional-locks` -- the orchestrator's live trial
+    found `recefore_git_commit` came back null because `git -C <recefore> rev-parse HEAD`, run as
+    root, refused a directory root does not own."""
+    calls: list = []
+
+    def _fake(argv, *, cwd=None):
+        calls.append(argv)
+        return "deadbeef"
+
+    real_repo = str(Path(tmp_path).resolve())
+    result = evalrun._git_commit(str(tmp_path), _fake)
+    assert result == "deadbeef"
+    assert calls[0][0] == "git"
+    assert "--no-optional-locks" in calls[0]
+    assert f"safe.directory={real_repo}" in calls[0]
+    assert calls[0][calls[0].index("-C") + 1] == real_repo
+
+
+def test_git_commit_stores_the_error_string_rather_than_a_bare_none_on_failure(tmp_path: Path):
+    """_git_commit never returns a bare null for the caller to store silently -- a failure (git
+    refusing the repo under sudo, a non-repo directory, ...) comes back as a readable
+    `"error: ..."` string instead, so it is visible in meta.json rather than indistinguishable from
+    "produced no output"."""
+
+    def _fails(argv, *, cwd=None):
+        raise subprocess.CalledProcessError(128, argv, output="", stderr="fatal: detected dubious ownership\n")
+
+    result = evalrun._git_commit(str(tmp_path), _fails)
+    assert result == "error: fatal: detected dubious ownership"
+
+
+def test_git_commit_stores_the_error_string_on_oserror_too(tmp_path: Path):
+    """_git_commit also stores an error string (not None) when git itself cannot even be run."""
+
+    def _missing(argv, *, cwd=None):
+        raise FileNotFoundError("git not found")
+
+    result = evalrun._git_commit(str(tmp_path), _missing)
+    assert result.startswith("error: ")
+
+
+def test_git_dirty_scopes_safe_directory_and_reports_true_false_or_an_error_string(tmp_path: Path):
+    """_git_dirty uses the same safe.directory/--no-optional-locks scoping as _git_commit, returns
+    a plain bool when git could be asked, and never returns None on failure."""
+    calls: list = []
+
+    def _clean(argv, *, cwd=None):
+        calls.append(argv)
+        return ""
+
+    assert evalrun._git_dirty(str(tmp_path), _clean) is False
+    real_repo = str(Path(tmp_path).resolve())
+    assert f"safe.directory={real_repo}" in calls[0]
+    assert "--no-optional-locks" in calls[0]
+
+    def _dirty(argv, *, cwd=None):
+        return "M some_file.py\n"
+
+    assert evalrun._git_dirty(str(tmp_path), _dirty) is True
+
+    def _fails(argv, *, cwd=None):
+        raise subprocess.CalledProcessError(128, argv, output="", stderr="fatal: boom\n")
+
+    assert evalrun._git_dirty(str(tmp_path), _fails) == "error: fatal: boom"
+
+
 # -- default_chown_tree --------------------------------------------------------
 
 
@@ -512,6 +592,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "semindex_git_commit",
         "semindex_git_dirty",
         "recefore_git_commit",
+        "recefore_git_dirty",
         "wall_clock_start",
         "wall_clock_end",
         "recefore_exit_code",
