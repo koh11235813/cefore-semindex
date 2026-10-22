@@ -1107,19 +1107,31 @@ def test_check_t2b_all_pass_when_a_late_timeout_falls_within_the_state_rx_based_
     when HostAppFleet.restart_host() RETURNS, not when the new life's cefnetd prefix
     registration actually finishes -- a retry sent during that registration lag can legitimately
     time out past the old restart_ts + 2500 deadline while life 2 is already healthy. Reproduces
-    an external reviewer's exact scenario: restart finishes at offset 11, h1 hears h0 again
-    (state_rx) at offset 12, and an in-flight retry sent just before that reply times out at
-    offset 13.6 -- 0.1s past the OLD deadline (11 + 2.5), but within 2500ms of the state_rx that
-    actually proves h0's life 2 is reachable again."""
+    an external reviewer's exact scenario: seq 2 is still outstanding across the restart
+    (created at offset 5, before it), retries sent at offsets 8.6 and 11.6 time out at 10.6 and
+    13.6 (their own 2s interest_lifetime later), h1 hears h0 again (state_rx) at offset 12, and
+    the eventual successful retry lands at 15.7 (h1) / 16.0 (h2, relayed) -- 13.6 is 0.1s past the
+    OLD deadline (restart at 11 + 2.5) but within 2500ms of the state_rx that actually proves
+    h0's life 2 is reachable again."""
     experiment_path = tmp_path / "t2b.json"
     _write_experiment(experiment_path, _t2b_experiment())
     run_dir = tmp_path / "run"
     _write_t2b_happy_path(run_dir)
     h1_path = _node_events_path(run_dir, "h1")
-    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
-    events.append({"ts_ms": _ts_ms(12), "event": "state_rx", "neighbor": "h0", "hi": {"h0": 2}})
-    events.append({"ts_ms": _ts_ms(13.6), "event": "fetch_timeout", "origin": "h0", "seq": 4, "neighbor": "h0"})
-    _write_jsonl(h1_path, events)
+    h1_events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    for event in h1_events:
+        if event.get("event") == "record_stored" and event.get("seq") == 2:
+            event["ts_ms"] = _ts_ms(15.7)  # the eventual successful retry, not the original offset 8
+    h1_events.append({"ts_ms": _ts_ms(10.6), "event": "fetch_timeout", "origin": "h0", "seq": 2, "neighbor": "h0"})
+    h1_events.append({"ts_ms": _ts_ms(12), "event": "state_rx", "neighbor": "h0", "hi": {"h0": 1}})
+    h1_events.append({"ts_ms": _ts_ms(13.6), "event": "fetch_timeout", "origin": "h0", "seq": 2, "neighbor": "h0"})
+    _write_jsonl(h1_path, h1_events)
+    h2_path = _node_events_path(run_dir, "h2")
+    h2_events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in h2_events:
+        if event.get("event") == "record_stored" and event.get("seq") == 2:
+            event["ts_ms"] = _ts_ms(16.0)  # relayed from h1 shortly after h1's own eventual store
+    _write_jsonl(h2_path, h2_events)
 
     assert run_check("t2b", str(experiment_path), str(run_dir)) == 0
 
