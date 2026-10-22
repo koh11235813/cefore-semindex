@@ -374,8 +374,10 @@ def test_check_t2a_protocol_fails_on_the_wrong_timeout_count(tmp_path: Path, cap
     assert "FAIL: h1 logged exactly 2 fetch_timeout(s) for (h0, 2): got 1" in out.splitlines()
 
 
-def test_check_t2a_precondition_fails_when_never_converged(tmp_path: Path, capsys):
-    """Check t2a precondition fails when never converged."""
+def test_check_t2a_protocol_fails_when_never_converges(tmp_path: Path, capsys):
+    """2026-10-22 fix: a requester that never converges past fault.drop_rec's
+    withheld replies is a protocol failure (exit 1), not a precondition failure (exit 3) --
+    the retry protocol itself is what T2(a) exists to test."""
     experiment_path = tmp_path / "t2a.json"
     _write_experiment(experiment_path, _t2a_experiment())
     run_dir = tmp_path / "run"
@@ -387,7 +389,9 @@ def test_check_t2a_precondition_fails_when_never_converged(tmp_path: Path, capsy
 
     rc = run_check("t2a", str(experiment_path), str(run_dir))
 
-    assert rc == 3
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: h1 eventually stored all 3 of h0's records: got [1], expected 1..3" in out.splitlines()
 
 
 # -- T2b --------------------------------------------------------------------
@@ -448,6 +452,22 @@ def _write_t2b_happy_path(run_dir: Path) -> None:
                 {"ts_ms": _ts_ms(35), "event": "counters", "bytes_sent": 40, "bytes_received": 60},
             ],
         )
+    # restart (at: 9, downtime_s: 3) actually finishes at offset 11 here --
+    # strictly between h0's two pre-restart creations (3, 5) and its two
+    # post-restart ones (15, 17), the window the "both sides" precondition
+    # needs.
+    _write_results(
+        run_dir,
+        [
+            {
+                "op_type": "event",
+                "event_type": "host_app_restart",
+                "ts": _iso(11),
+                "success": True,
+                "event": {"host": 0, "downtime_s": 3},
+            },
+        ],
+    )
 
 
 def test_check_t2b_all_pass(tmp_path: Path):
@@ -478,8 +498,10 @@ def test_check_t2b_protocol_fails_on_a_duplicate_own_seq(tmp_path: Path, capsys)
     assert "FAIL: h0's own seqs are contiguous and unique across both lives: duplicates present: [2]" in out.splitlines()
 
 
-def test_check_t2b_precondition_fails_when_a_receiver_never_converges(tmp_path: Path):
-    """Check t2b precondition fails when a receiver never converges."""
+def test_check_t2b_protocol_fails_when_a_receiver_never_converges(tmp_path: Path, capsys):
+    """2026-10-22 fix: a receiver losing a record across the restart is a
+    protocol failure (exit 1), not a precondition failure (exit 3) -- convergence past a
+    restart is exactly what T2(b) exists to test."""
     experiment_path = tmp_path / "t2b.json"
     _write_experiment(experiment_path, _t2b_experiment())
     run_dir = tmp_path / "run"
@@ -491,7 +513,53 @@ def test_check_t2b_precondition_fails_when_a_receiver_never_converges(tmp_path: 
 
     rc = run_check("t2b", str(experiment_path), str(run_dir))
 
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: h2 eventually received all 4 of h0's records: got [1, 2, 3], expected 1..4" in out.splitlines()
+
+
+def test_check_t2b_precondition_fails_when_the_restart_did_not_succeed(tmp_path: Path, capsys):
+    """2026-10-22 fix: a host_app_restart results.json row with success=False
+    means ReCefore's own stop/relaunch mechanism failed -- nothing about the sync protocol
+    was meaningfully exercised, so this is a precondition failure, not a protocol one."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    results_path = run_dir / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    results[0]["success"] = False
+    results_path.write_text(json.dumps(results), encoding="utf-8")
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
     assert rc == 3
+    out = capsys.readouterr().out
+    assert "PRECOND-FAIL: host_app_restart on h0 succeeded: success=False" in out.splitlines()
+
+
+def test_check_t2b_precondition_fails_on_an_overdue_restart(tmp_path: Path, capsys):
+    """2026-10-22 fix: the restart must actually interrupt the schedule. If its
+    actual fire time (from results.json, not its nominal `at:`) is overdue -- after every one
+    of h0's own records had already been created -- life 2 never creates anything, and the
+    scenario never tested a restart mid-schedule at all."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    results_path = run_dir / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    results[0]["ts"] = _iso(25)  # after h0's last record_created (17)
+    results_path.write_text(json.dumps(results), encoding="utf-8")
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out
+    assert (
+        "PRECOND-FAIL: h0 created records on both sides of the actual restart (life 1 and life 2): "
+        "4 before, 0 after (restart finished at ts 1700000025000)"
+    ) in out.splitlines()
 
 
 # -- T2c --------------------------------------------------------------------
@@ -521,6 +589,7 @@ def _t2c_experiment() -> dict:
                 {"at_s": 3, "zone": "zone1", "disaster": "flood", "media": "image"},
                 {"at_s": 5, "zone": "zone1", "disaster": "flood", "media": "image"},
                 {"at_s": 7, "zone": "zone1", "disaster": "flood", "media": "image"},
+                {"at_s": 9, "zone": "zone1", "disaster": "flood", "media": "image"},
             ]
         },
         "events": [{"at": 8, "type": "host_app_restart", "host": 1, "downtime_s": 3}],
@@ -528,13 +597,17 @@ def _t2c_experiment() -> dict:
 
 
 def _write_t2c_happy_path(run_dir: Path) -> None:
-    """A full, consistent T2(c) run: h1 restarts mid-sync, never serving to h2 ahead of its own store."""
+    """A full, consistent T2(c) run: h1 restarts mid-sync (actually finishing at offset 11,
+    results.json), with two of h0's records reaching h1 before that and two after -- never
+    serving either to h2 ahead of its own store, and never advertising (state_rx) a seq it
+    had not yet actually stored."""
     _write_jsonl(
         _node_events_path(run_dir, "h0"),
         [
             {"ts_ms": _ts_ms(3), "event": "record_created", "origin": "h0", "seq": 1},
             {"ts_ms": _ts_ms(5), "event": "record_created", "origin": "h0", "seq": 2},
             {"ts_ms": _ts_ms(7), "event": "record_created", "origin": "h0", "seq": 3},
+            {"ts_ms": _ts_ms(9), "event": "record_created", "origin": "h0", "seq": 4},
             {"ts_ms": _ts_ms(30), "event": "counters", "bytes_sent": 10, "bytes_received": 0},
         ],
     )
@@ -545,7 +618,8 @@ def _write_t2c_happy_path(run_dir: Path) -> None:
             {"ts_ms": _ts_ms(6), "event": "record_stored", "origin": "h0", "seq": 2, "holder": "h0"},
             {"ts_ms": _ts_ms(8), "event": "counters", "bytes_sent": 5, "bytes_received": 5},
             {"ts_ms": _ts_ms(20), "event": "record_stored", "origin": "h0", "seq": 3, "holder": "h0"},
-            {"ts_ms": _ts_ms(25), "event": "counters", "bytes_sent": 5, "bytes_received": 5},
+            {"ts_ms": _ts_ms(26), "event": "record_stored", "origin": "h0", "seq": 4, "holder": "h0"},
+            {"ts_ms": _ts_ms(32), "event": "counters", "bytes_sent": 5, "bytes_received": 5},
         ],
     )
     _write_jsonl(
@@ -557,9 +631,29 @@ def _write_t2c_happy_path(run_dir: Path) -> None:
             # this is h2 hearing from it again (state_rx), before h2 asks
             # for and gets seq 3 -- the anchor the "progress not ahead"
             # check measures its late-fetch_timeout grace window from.
-            {"ts_ms": _ts_ms(19), "event": "state_rx", "neighbor": "h1"},
+            # hi: {"h0": 2} is an honest advertisement -- h1 had actually
+            # stored exactly seqs 1-2 by this point (ts offset 19, between
+            # its own seq-2 store at 6 and seq-3 store at 20).
+            {"ts_ms": _ts_ms(19), "event": "state_rx", "neighbor": "h1", "hi": {"h0": 2}},
             {"ts_ms": _ts_ms(22), "event": "record_stored", "origin": "h0", "seq": 3, "holder": "h1"},
+            {"ts_ms": _ts_ms(28), "event": "record_stored", "origin": "h0", "seq": 4, "holder": "h1"},
             {"ts_ms": _ts_ms(35), "event": "counters", "bytes_sent": 3, "bytes_received": 3},
+        ],
+    )
+    # host_app_restart (at: 8, downtime_s: 3) actually finishes at offset
+    # 11 here: strictly between h1's two pre-restart stores (4, 6) and its
+    # two post-restart ones (20, 26), and while h2 (far) still lacks seq 3
+    # and 4 -- the window the two new timing preconditions need.
+    _write_results(
+        run_dir,
+        [
+            {
+                "op_type": "event",
+                "event_type": "host_app_restart",
+                "ts": _iso(11),
+                "success": True,
+                "event": {"host": 1, "downtime_s": 3},
+            },
         ],
     )
 
@@ -622,20 +716,142 @@ def test_check_t2c_protocol_fails_when_holder_keeps_timing_out_long_after_its_re
     ) in out.splitlines()
 
 
-def test_check_t2c_precondition_fails_when_holder_never_converges(tmp_path: Path):
-    """Check t2c precondition fails when holder never converges."""
+def test_check_t2c_protocol_fails_when_holder_never_converges(tmp_path: Path, capsys):
+    """2026-10-22 fix: a restarted holder that loses one of the origin's records
+    for good is a protocol failure (exit 1), not a precondition failure (exit 3) -- convergence
+    past the restart is exactly T2(c)'s own protocol property. Drops h1's seq 4 (not seq 3, the
+    only one of its post-restart records that remains) so the "both sides of the restart"
+    timing precondition this scenario also depends on keeps passing."""
     experiment_path = tmp_path / "t2c.json"
     _write_experiment(experiment_path, _t2c_experiment())
     run_dir = tmp_path / "run"
     _write_t2c_happy_path(run_dir)
     h1_path = _node_events_path(run_dir, "h1")
     events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
-    events = [e for e in events if not (e.get("event") == "record_stored" and e.get("seq") == 3)]
+    events = [e for e in events if not (e.get("event") == "record_stored" and e.get("seq") == 4)]
     _write_jsonl(h1_path, events)
 
     rc = run_check("t2c", str(experiment_path), str(run_dir))
 
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1 eventually received all 4 of h0's records (across both lives): "
+        "got [1, 2, 3], expected 1..4"
+    ) in out.splitlines()
+
+
+def test_check_t2c_protocol_fails_when_far_never_converges(tmp_path: Path, capsys):
+    """The same precondition/protocol reclassification for the far node's own convergence
+    check -- a separate code path from the holder one above, so it needs its own test. Drops
+    h2's seq 4, the opposite choice from the holder test above."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    events = [e for e in events if not (e.get("event") == "record_stored" and e.get("seq") == 4)]
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: h2 eventually received all 4 of h0's records: got [1, 2, 3], expected 1..4" in out.splitlines()
+
+
+def test_check_t2c_precondition_fails_when_the_restart_did_not_succeed(tmp_path: Path, capsys):
+    """2026-10-22 fix: success=False in the host_app_restart results.json row
+    means ReCefore's own stop/relaunch mechanism failed, so nothing about the sync protocol
+    across a restart was meaningfully exercised -- a precondition failure, not a protocol one."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    results_path = run_dir / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    results[0]["success"] = False
+    results_path.write_text(json.dumps(results), encoding="utf-8")
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
     assert rc == 3
+    out = capsys.readouterr().out
+    assert "PRECOND-FAIL: host_app_restart on h1 succeeded: success=False" in out.splitlines()
+
+
+def test_check_t2c_precondition_fails_on_an_overdue_restart(tmp_path: Path, capsys):
+    """2026-10-22 fix: an overdue restart (its actual results.json fire time,
+    not its nominal `at:`, lands after h1 had already stored every one of h0's records) never
+    actually interrupted anything, so T2(c)'s own restart-safety property went untested."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    results_path = run_dir / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    results[0]["ts"] = _iso(27)  # after h1's own last record_stored (seq 4 at offset 26)
+    results_path.write_text(json.dumps(results), encoding="utf-8")
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out
+    assert (
+        "PRECOND-FAIL: h1 received records from h0 on both sides of the actual restart: "
+        "4 before, 0 after (restart finished at ts 1700000027000)"
+    ) in out.splitlines()
+
+
+def test_check_t2c_protocol_fails_when_holder_advertises_a_seq_it_had_not_yet_stored(tmp_path: Path, capsys):
+    """2026-10-22 fix: the false-advertisement bug this check now catches
+    directly -- h1's life 2 claims hi=3 in its first post-restart state_rx to h2, but by that
+    reply's own ts (offset 19) h1's events.jsonl shows it had actually stored only seqs 1-2 (its
+    seq-3 store does not land until offset 20). The old checks alone would miss this: h2's own
+    seq-3 record_stored still lands after h1's (not "served early"), and no fetch_timeout
+    follows at all, let alone a late one -- only the advertised-vs-stored comparison added for
+    this finding sees the false claim."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "state_rx":
+            event["hi"] = {"h0": 3}
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's advertised hi for h0 at its first post-restart state_rx never exceeds what "
+        "it had actually stored by then: advertised hi=3, holder's own contiguous progress at "
+        "ts 1700000019000 was 2"
+    ) in out.splitlines()
+
+
+def test_check_t2c_protocol_fails_on_a_duplicate_far_stored_seq(tmp_path: Path, capsys):
+    """2026-10-22 fix: record_stored events must be kept as a list, not collapsed
+    into a {seq: event} dict, before _contiguous_unique runs -- a dict silently drops a
+    duplicate by key, which is exactly the thing this check exists to catch."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    events.append({"ts_ms": _ts_ms(29), "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h1"})
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: h2 holds exactly 4 of h0's records, none duplicated: duplicates present: [1]" in out.splitlines()
 
 
 # -- CLI / usage errors -------------------------------------------------
@@ -648,7 +864,10 @@ def test_main_exits_2_on_a_missing_run_dir(tmp_path: Path, capsys):
     experiment_path = tmp_path / "t1.json"
     _write_experiment(experiment_path, _t1_experiment())
 
-    rc = main(["t1", str(experiment_path), str(tmp_path / "no-such-run")])
+    run_dir = tmp_path / "no-such-run"
+    rc = main(["t1", str(experiment_path), str(run_dir)])
 
     assert rc == 2
-    assert "does not exist" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        f"semindex.check: {run_dir}/debug/node_dirs/h0/semindex/events.jsonl does not exist\n"
+    )

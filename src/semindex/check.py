@@ -142,17 +142,29 @@ def find_one_put_record(results: list[dict], uri: str) -> dict:
     return matches[0]
 
 
+def restart_record_and_ts(results: list[dict], host: int) -> tuple[dict, float]:
+    """The one results.json host_app_restart row for `host`, and its actual ts as epoch ms.
+
+    2026-10-22 fix: T2(b)/(c) used to never read this
+    row at all, so an overdue host_app_restart (one that only fires after
+    every record the scenario cared about had already been created/
+    stored) could still pass -- the restart was never actually exercised.
+    This row's `ts` is sampled inside ReCefore's ResultsSink.record_event,
+    called only after the scheduler's own handler returns; restart_host()
+    itself blocks that handler for its whole stop + downtime_s + start
+    sequence, so this ts marks when the restart actually FINISHED (the
+    node's new life had already started), not when SIGTERM was sent.
+    """
+    record = find_one_event_record(results, "host_app_restart", host=host)
+    return record, results_ts_ms(record)
+
+
 # -- small query helpers over one node's event list ---------------------------
 
 
 def _events_of(events: list[dict], event_type: str, **field_filters) -> list[dict]:
     """Every event in `events` whose `event` field is `event_type` and matches every `field_filters` item."""
     return [e for e in events if e.get("event") == event_type and all(e.get(k) == v for k, v in field_filters.items())]
-
-
-def _record_created_seqs(events: list[dict], origin: str) -> list[int]:
-    """Every seq this node's own record_created events reported for `origin`, in file order (duplicates kept)."""
-    return [e["seq"] for e in _events_of(events, "record_created", origin=origin)]
 
 
 def _record_stored(events: list[dict], origin: str) -> list[dict]:
@@ -169,6 +181,15 @@ def _contiguous_unique(seqs: list[int], n: int) -> str | None:
     if seq_set != set(range(1, n + 1)):
         return f"got {sorted(seq_set)}, expected 1..{n}"
     return None
+
+
+def _contiguous_hi(seqs: list[int]) -> int:
+    """The highest N such that every seq in 1..N is present in `seqs` (map.md's own "hi" definition)."""
+    seq_set = set(seqs)
+    hi = 0
+    while (hi + 1) in seq_set:
+        hi += 1
+    return hi
 
 
 # -- PASS/FAIL/PRECOND printing -----------------------------------------------
@@ -351,7 +372,16 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
 
     stored = _record_stored(requester_events, drop.origin)
     seen_seqs = {e["seq"] for e in stored}
-    c.precondition(
+    # 2026-10-22 fix: this used to be a PRECONDITION,
+    # so a retry bug that lost (origin, seq) forever exited 3 ("this
+    # run's own setup/timing didn't hold up") instead of 1 ("the sync
+    # protocol itself is wrong"). fault.drop_rec withholds a reply a
+    # fixed `times` count, not for a timing window this checker could
+    # separately verify "landed" or not -- whether the requester ever
+    # converges past that withholding *is* the retry protocol under
+    # test here, so it is a protocol assertion like every other check
+    # in this function, not a precondition.
+    c.protocol(
         f"{requester} eventually stored all {n} of {drop.origin}'s records",
         seen_seqs == set(range(1, n + 1)),
         f"got {sorted(seen_seqs)}, expected 1..{n}",
@@ -401,15 +431,44 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
     origin_events = events_by_node[origin]
     other_nodes = [f"h{h}" for h in spec.agents if h != origin_host]
 
-    created_seqs = _record_created_seqs(origin_events, origin)
+    # 2026-10-22 fix: this mode used to never read
+    # results.json at all, so an overdue host_app_restart (firing only
+    # after every own-record had already been created in life 1) could
+    # still pass -- life 2 would then never create anything, and nothing
+    # here would have told the difference. restart_record_and_ts's own
+    # docstring explains why its ts marks the restart's actual finish.
+    results = read_results(run_dir)
+    restart_record, restart_ts = restart_record_and_ts(results, origin_host)
     c.precondition(
+        f"host_app_restart on {origin} succeeded",
+        restart_record.get("success") is True,
+        f"success={restart_record.get('success')}",
+    )
+
+    created_events = _events_of(origin_events, "record_created", origin=origin)
+    created_seqs = [e["seq"] for e in created_events]
+    before_restart = [e for e in created_events if e["ts_ms"] < restart_ts]
+    after_restart = [e for e in created_events if e["ts_ms"] > restart_ts]
+    c.precondition(
+        f"{origin} created records on both sides of the actual restart (life 1 and life 2)",
+        bool(before_restart) and bool(after_restart),
+        f"{len(before_restart)} before, {len(after_restart)} after (restart finished at ts {restart_ts:.0f})",
+    )
+
+    # 2026-10-22 fix: these two were PRECONDITIONs, so
+    # a restart that duplicated or dropped the origin's own records
+    # exited 3 ("didn't get a fair run") instead of 1 ("broke"). Whether
+    # every node eventually converges past a restart is exactly the
+    # restart-safety property T2(b) exists to test, so it is a protocol
+    # assertion like the contiguity/uniqueness checks right below it.
+    c.protocol(
         f"{origin} eventually created all {n} of its own records (across both lives)",
         set(created_seqs) == set(range(1, n + 1)),
         f"got {sorted(set(created_seqs))}, expected 1..{n}",
     )
     for node in other_nodes:
         stored_seqs = {e["seq"] for e in _record_stored(events_by_node[node], origin)}
-        c.precondition(
+        c.protocol(
             f"{node} eventually received all {n} of {origin}'s records",
             stored_seqs == set(range(1, n + 1)),
             f"got {sorted(stored_seqs)}, expected 1..{n}",
@@ -468,37 +527,83 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
     events_by_node = {f"h{h}": read_events(_node_events_path(run_dir, f"h{h}")) for h in spec.agents}
     holder_events, far_events = events_by_node[holder], events_by_node[far]
 
-    holder_stored = {e["seq"]: e for e in _record_stored(holder_events, origin)}
-    far_stored = {e["seq"]: e for e in _record_stored(far_events, origin)}
+    # 2026-10-22 fix: this mode used to never read
+    # results.json, so an overdue host_app_restart (firing only after
+    # everything had already propagated) could still pass; see
+    # restart_record_and_ts's own docstring for why its ts marks the
+    # restart's actual finish, not the moment SIGTERM was sent.
+    results = read_results(run_dir)
+    restart_record, restart_ts = restart_record_and_ts(results, holder_host)
     c.precondition(
-        f"{holder} eventually received all {n} of {origin}'s records (across both lives)",
-        set(holder_stored) == set(range(1, n + 1)),
-        f"got {sorted(holder_stored)}, expected 1..{n}",
-    )
-    c.precondition(
-        f"{far} eventually received all {n} of {origin}'s records",
-        set(far_stored) == set(range(1, n + 1)),
-        f"got {sorted(far_stored)}, expected 1..{n}",
+        f"host_app_restart on {holder} succeeded",
+        restart_record.get("success") is True,
+        f"success={restart_record.get('success')}",
     )
 
-    issue = _contiguous_unique(list(holder_stored), n)
+    # 2026-10-22 fix: kept as the full event list, not
+    # collapsed into a {seq: event} dict -- a dict silently drops a
+    # duplicate record_stored for the same seq before _contiguous_unique
+    # ever sees it, defeating the one check whose entire job is finding
+    # duplicates.
+    holder_stored_events = _record_stored(holder_events, origin)
+    far_stored_events = _record_stored(far_events, origin)
+    holder_stored_seqs = {e["seq"] for e in holder_stored_events}
+    far_stored_seqs = {e["seq"] for e in far_stored_events}
+
+    holder_before_restart = [e for e in holder_stored_events if e["ts_ms"] < restart_ts]
+    holder_after_restart = [e for e in holder_stored_events if e["ts_ms"] > restart_ts]
+    c.precondition(
+        f"{holder} received records from {origin} on both sides of the actual restart",
+        bool(holder_before_restart) and bool(holder_after_restart),
+        f"{len(holder_before_restart)} before, {len(holder_after_restart)} after (restart finished at ts {restart_ts:.0f})",
+    )
+    far_stored_at_restart = {e["seq"] for e in far_stored_events if e["ts_ms"] < restart_ts}
+    c.precondition(
+        f"{far} had not yet received all of {origin}'s records when the restart actually fired",
+        far_stored_at_restart != set(range(1, n + 1)),
+        f"{far} already held {sorted(far_stored_at_restart)} of 1..{n} at restart (ts {restart_ts:.0f})",
+    )
+
+    # 2026-10-22 fix: these two used to be
+    # PRECONDITIONs, so a restarted holder that lost or stalled a record
+    # exited 3 instead of 1. Whether holder/far ever converge past the
+    # restart is exactly T2(c)'s own protocol property, not scenario setup.
+    c.protocol(
+        f"{holder} eventually received all {n} of {origin}'s records (across both lives)",
+        holder_stored_seqs == set(range(1, n + 1)),
+        f"got {sorted(holder_stored_seqs)}, expected 1..{n}",
+    )
+    c.protocol(
+        f"{far} eventually received all {n} of {origin}'s records",
+        far_stored_seqs == set(range(1, n + 1)),
+        f"got {sorted(far_stored_seqs)}, expected 1..{n}",
+    )
+
+    issue = _contiguous_unique([e["seq"] for e in holder_stored_events], n)
     c.protocol(f"{holder} holds exactly {n} of {origin}'s records, none duplicated", issue is None, issue or "")
-    issue = _contiguous_unique(list(far_stored), n)
+    issue = _contiguous_unique([e["seq"] for e in far_stored_events], n)
     c.protocol(f"{far} holds exactly {n} of {origin}'s records, none duplicated", issue is None, issue or "")
 
     # "progress not ahead", first cut: far can only have gotten a record
     # from holder (its only neighbor, so every far_stored row's holder is
-    # already holder by construction) at or after the moment holder
-    # itself actually stored that same seq -- never before, restart or
-    # not. This is necessary but not sufficient: it would not catch a
-    # life-2 holder advertising a seq it does not actually hold, since
-    # handle_interest only ever answers with a record it actually has --
-    # that bug shows up as a fetch_timeout against holder, never as a bad
-    # record_stored. The second check below closes that gap.
+    # already holder by construction) at or after the EARLIEST moment
+    # holder itself actually stored that same seq -- never before,
+    # restart or not. Earliest, not last: a seq holder stored twice (a
+    # duplicate, already flagged above) must not let its later timestamp
+    # excuse an early serve that happened between the two. This is
+    # necessary but not sufficient: it would not catch a life-2 holder
+    # advertising a seq it does not actually hold, since handle_interest
+    # only ever answers with a record it actually has -- that bug shows
+    # up as a fetch_timeout against holder, never as a bad record_stored.
+    # The checks below close that gap.
+    holder_first_ts_by_seq: dict[int, float] = {}
+    for e in holder_stored_events:
+        if e["seq"] not in holder_first_ts_by_seq or e["ts_ms"] < holder_first_ts_by_seq[e["seq"]]:
+            holder_first_ts_by_seq[e["seq"]] = e["ts_ms"]
     late = [
-        seq
-        for seq, far_row in far_stored.items()
-        if seq in holder_stored and far_row["ts_ms"] < holder_stored[seq]["ts_ms"]
+        e["seq"]
+        for e in far_stored_events
+        if e["seq"] in holder_first_ts_by_seq and e["ts_ms"] < holder_first_ts_by_seq[e["seq"]]
     ]
     c.protocol(
         f"{holder} never served a record to {far} before {holder} itself had stored it",
@@ -510,22 +615,42 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
     life1_end = counters_holder[0]["ts_ms"] if counters_holder else None
     c.precondition(f"{holder} wrote at least one counters line (its life 1 shut down cleanly)", life1_end is not None)
 
-    post_restart_state_rx_ts = [
-        e["ts_ms"] for e in _events_of(far_events, "state_rx", neighbor=holder) if life1_end is not None and e["ts_ms"] > life1_end
-    ]
-    first_post_restart_state_rx = min(post_restart_state_rx_ts, default=None)
+    post_restart_state_rx = sorted(
+        (e for e in _events_of(far_events, "state_rx", neighbor=holder) if life1_end is not None and e["ts_ms"] > life1_end),
+        key=lambda e: e["ts_ms"],
+    )
+    first_post_restart_state_rx = post_restart_state_rx[0] if post_restart_state_rx else None
     c.precondition(f"{far} heard from {holder} again after its restart (state_rx)", first_post_restart_state_rx is not None)
 
     if first_post_restart_state_rx is not None:
-        # "progress not ahead", the actual bug shape: if holder's life 2
-        # ever advertised a higher hi than it actually held, far keeps
-        # re-asking for that seq and keeps getting a fetch_timeout against
-        # holder (handle_interest returning None), never a stored record.
-        # 2500ms grace (interest_lifetime_ms's own 2000ms default, plus
-        # slack for one retry sent just as holder came back up) excludes
-        # timeouts that only mean holder was still down, not yet evidence
-        # of a false advertisement.
-        grace_deadline = first_post_restart_state_rx + 2500
+        state_rx_ts = first_post_restart_state_rx["ts_ms"]
+
+        # 2026-10-22 fix: the actual bug shape -- a
+        # life-2 holder advertising a higher hi than it has actually
+        # stored -- is now checked directly against what the holder's own
+        # events.jsonl shows it had stored as of this same reply, instead
+        # of only inferred indirectly through a fetch_timeout that may or
+        # may not follow. `hi` defaults to 0 for an origin the reply never
+        # mentioned at all (see engine.py's own on_state for why).
+        advertised_hi = first_post_restart_state_rx.get("hi", {}).get(origin, 0)
+        holder_contiguous_as_of = _contiguous_hi(
+            [e["seq"] for e in holder_stored_events if e["ts_ms"] <= state_rx_ts]
+        )
+        c.protocol(
+            f"{holder}'s advertised hi for {origin} at its first post-restart state_rx never exceeds what it had actually stored by then",
+            advertised_hi <= holder_contiguous_as_of,
+            f"advertised hi={advertised_hi}, holder's own contiguous progress at ts {state_rx_ts:.0f} was {holder_contiguous_as_of}",
+        )
+
+        # "progress not ahead", the second-order case: a false
+        # advertisement whose seq the holder (now caught up) manages to
+        # serve correctly before the check above's own ts snapshot would
+        # still show up here too, through the retries it costs -- 2500ms
+        # grace (interest_lifetime_ms's own 2000ms default, plus slack for
+        # one retry sent just as holder came back up) excludes timeouts
+        # that only mean holder was still down, not yet evidence of a
+        # false advertisement.
+        grace_deadline = state_rx_ts + 2500
         late_timeouts = [
             e
             for e in _events_of(far_events, "fetch_timeout", origin=origin, neighbor=holder)
