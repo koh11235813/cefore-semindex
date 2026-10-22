@@ -250,6 +250,33 @@ def test_check_t1_all_pass(tmp_path: Path):
     assert run_check("t1", str(experiment_path), str(run_dir)) == 0
 
 
+def test_check_t1_protocol_fails_when_the_only_surviving_retrieval_is_the_during_outage_one(
+    tmp_path: Path, capsys
+):
+    """2026-10-22 fix: a stale during-outage probe_retrieved row, if it happens
+    to be the chronologically last one on file, used to satisfy the after-recovery check all by
+    itself once its own `success` was true -- even with the real after-recovery retrieval (offset
+    46 in the happy path) missing entirely. Drops that row and flips the during-outage one
+    (offset 18, whose own body fetch map.md says must never count toward PASS/FAIL) to success."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    events = [e for e in events if not (e.get("event") == "probe_retrieved" and e["ts_ms"] == _ts_ms(46))]
+    for event in events:
+        if event.get("event") == "probe_retrieved" and event["ts_ms"] == _ts_ms(18):
+            event["success"] = True
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: after-recovery probe retrieves the content body: []" in out.splitlines()
+
+
 def test_check_t1_precondition_fails_when_far_node_has_not_converged_before_link_down(tmp_path: Path, capsys):
     """Check t1 precondition fails when far node has not converged before link down."""
     experiment_path = tmp_path / "t1.json"

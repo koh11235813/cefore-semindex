@@ -352,14 +352,22 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
         f"got {sorted(after_matches)}",
     )
 
+    # 2026-10-22 fix: this used to judge whichever probe_retrieved row
+    # happened to be LAST in the file, with no tie to after_discovered at
+    # all. A run whose after-recovery retrieval never fires (or never
+    # arrives) still passed on the strength of a leftover during-outage
+    # row, once that row's own `success` happened to be true -- exactly
+    # the row map.md says "本体取得の結果は記録するが合否に使わない"
+    # (recorded, but never judged) about. Requiring ts_ms strictly after
+    # after_discovered's own ts (itself already required > link_up_ts by
+    # the precondition above) ties this check to the SAME after-recovery
+    # probe the two checks above it are about, not to file order.
     retrieved_after = _events_of(prober_events, "probe_retrieved")
-    # The during-outage retrieval attempt (if any) is expected to fail --
-    # map.md: "本体取得の結果は記録するが合否に使わない" -- so only the
-    # LAST probe_retrieved (the after-recovery one) is judged.
+    post_recovery_retrieved = [r for r in retrieved_after if r["ts_ms"] > after_discovered["ts_ms"]]
     c.protocol(
         "after-recovery probe retrieves the content body",
-        bool(retrieved_after) and retrieved_after[-1].get("success") is True,
-        f"{[r.get('success') for r in retrieved_after]}",
+        any(r.get("success") is True for r in post_recovery_retrieved),
+        f"{[r.get('success') for r in post_recovery_retrieved]}",
     )
 
     for node in [origin] + non_origin_nodes:
