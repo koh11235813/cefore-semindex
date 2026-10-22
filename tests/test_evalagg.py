@@ -32,8 +32,11 @@ from semindex.evalagg import (
     read_meta,
     run_has_done_marker,
     wilson_interval,
+    _node_window_control_bytes,
     _parse_p_dirname,
     _percentile,
+    _row_to_sample,
+    _split_lives,
 )
 
 WINDOW_START_MS = evalgen.WINDOW_START_S * 1000.0
@@ -214,6 +217,21 @@ def test_wilson_interval_is_symmetric_around_one_half_at_x_equals_half_n():
     lo, hi = wilson_interval(5, 10)
     assert lo == pytest.approx(1 - hi)
     assert 0.0 < lo < 0.5 < hi < 1.0
+
+
+# -- _row_to_sample (shared by survival.csv and summary.csv's own pooling) --
+
+
+def test_row_to_sample_delivered_uses_the_given_key():
+    """Row to sample delivered uses the given key."""
+    row = {"latency_ms": 1500, "follow_up_ms": 9999, "censored": False}
+    assert _row_to_sample(row, "latency_ms") == Sample(1.5, delivered=True)
+
+
+def test_row_to_sample_censored_uses_follow_up_ms_regardless_of_key():
+    """Row to sample censored uses follow up ms regardless of key."""
+    row = {"time_ms": None, "follow_up_ms": 4500, "censored": True}
+    assert _row_to_sample(row, "time_ms") == Sample(4.5, delivered=False)
 
 
 # -- Kaplan-Meier ----------------------------------------------------------
@@ -460,7 +478,11 @@ def synthetic_store(tmp_path: Path) -> Path:
                         "in_flight": 1,
                         "last_timeout_s": None,
                         "truncated": False,
-                        "origins": {"h0": {"hi": 0, "missing": 1, "advertised": {}}},
+                        "origins": {
+                            # advertised h2's notified_max (5) runs 2 ahead
+                            # of its own hi (3) -- advertised_gap = 2.
+                            "h0": {"hi": 0, "missing": 1, "advertised": {"h2": {"hi": 3, "notified_max": 5}}}
+                        },
                     },
                     "action": {"neighbor": "h0", "fetched": [["h0", 1]]},
                     "action_prob": 1.0,
@@ -471,7 +493,10 @@ def synthetic_store(tmp_path: Path) -> Path:
                     "ts_ms": t0_a + 13_000,
                     "state": {
                         "in_flight": 0,
-                        "last_timeout_s": 12.5,
+                        # Epoch seconds (map.md "last_timeout_s ... 壁時計の
+                        # エポック秒"), 1s before this decision's own
+                        # ts_ms (t0_a + 13_000) -- age = 1.0 exactly.
+                        "last_timeout_s": (t0_a + 12_000) / 1000.0,
                         "truncated": False,
                         "origins": {"h0": {"hi": 0, "missing": 1, "advertised": {}}},
                     },
@@ -637,6 +662,81 @@ def test_analyze_run_run_a_control_bytes_window_subtraction(synthetic_store: Pat
     assert run.control_bytes_received_window == {"h0": 200, "h1": 140}
 
 
+def test_node_window_control_bytes_excludes_a_prior_lifes_traffic_before_the_window_opened():
+    """2026-10-23 (external review): a restart before the window even opens must not
+
+    inflate the in-window total with that prior life's own full traffic.
+    The exact counterexample from review: a life ending at elapsed 5s
+    (control_bytes_sent/received=40) restarts into a second life that
+    holds the window-start snapshot (elapsed 10s, value=10) and the
+    window-close counters (elapsed 130s, value=100). Summing every
+    life's own final counters line (40 + 100) and subtracting only the
+    snapshot (-10) gives a wrong 130; the correct in-window total is
+    100 - 10 = 90 -- life 1's 40 was never inside the window at all.
+    """
+    t0 = 1_000_000_000_000.0
+    events = [
+        {"event": "counters", "ts_ms": t0 + 5_000, "control_bytes_sent": 40, "control_bytes_received": 40},
+        {
+            "event": "counters_snapshot",
+            "ts_ms": t0 + 10_000,
+            "control_bytes_sent": 10,
+            "control_bytes_received": 10,
+        },
+        {"event": "counters", "ts_ms": t0 + 130_000, "control_bytes_sent": 100, "control_bytes_received": 100},
+    ]
+    sent, received = _node_window_control_bytes(events, window_start_ms=t0 + 10_000, window_end_ms=t0 + 130_000)
+    assert (sent, received) == (90, 90)
+
+
+def test_node_window_control_bytes_sums_a_middle_life_entirely_inside_the_window():
+    """A life with no snapshot that starts and ends entirely inside the window (a second
+
+    restart, after the snapshot-holding life, before the window's close)
+    contributes its own FULL final value, since it started fresh at 0.
+    """
+    t0 = 1_000_000_000_000.0
+    events = [
+        {
+            "event": "counters_snapshot",
+            "ts_ms": t0 + 10_000,
+            "control_bytes_sent": 5,
+            "control_bytes_received": 5,
+        },
+        # Life holding the snapshot ends (restarts) at elapsed 50s.
+        {"event": "counters", "ts_ms": t0 + 50_000, "control_bytes_sent": 25, "control_bytes_received": 25},
+        # A fresh middle life, entirely inside the window, ends at elapsed 90s.
+        {"event": "counters", "ts_ms": t0 + 90_000, "control_bytes_sent": 7, "control_bytes_received": 7},
+        # A third life, also fresh, is the one active when the window closes.
+        {"event": "counters", "ts_ms": t0 + 130_000, "control_bytes_sent": 3, "control_bytes_received": 3},
+    ]
+    sent, received = _node_window_control_bytes(events, window_start_ms=t0 + 10_000, window_end_ms=t0 + 130_000)
+    # (25 - 5) + 7 + 3 = 30
+    assert (sent, received) == (30, 30)
+
+
+def test_node_window_control_bytes_no_snapshot_anywhere_is_no_data():
+    """A node with no counters_snapshot line at all returns None (no data), not 0."""
+    t0 = 1_000_000_000_000.0
+    events = [{"event": "counters", "ts_ms": t0 + 130_000, "control_bytes_sent": 100, "control_bytes_received": 100}]
+    assert _node_window_control_bytes(events, window_start_ms=t0 + 10_000, window_end_ms=t0 + 130_000) == (
+        None,
+        None,
+    )
+
+
+def test_split_lives_drops_a_trailing_life_with_no_terminating_counters_line():
+    """A life that never cleanly shut down (no final `counters` line) is dropped, not treated as complete."""
+    events = [
+        {"event": "record_created", "ts_ms": 1},
+        {"event": "counters", "ts_ms": 2},
+        {"event": "record_created", "ts_ms": 3},  # never followed by a counters line
+    ]
+    lives = _split_lives(events)
+    assert len(lives) == 1
+    assert lives[0] == events[:2]
+
+
 def test_analyze_run_run_a_probes_are_window_filtered(synthetic_store: Path):
     """Analyze run run a probes are window filtered."""
     run_dir = synthetic_store / "test" / "p0" / "1"
@@ -716,10 +816,15 @@ def test_aggregate_writes_all_six_csvs_with_expected_rows(synthetic_store: Path,
     assert by_p["1.0"]["n_unknown"] == "1"
 
     decisions = _read_csv(outdir / "decisions.csv")
-    by_kind = {(r["p"], r["kind"]): r for r in decisions}
-    assert by_kind[("0.0", "state_poll")]["count"] == "1"
-    assert by_kind[("0.0", "fetch_backoff")]["wait_s_median"] == "2.0"
-    assert by_kind[("0.0", "fetch_plan")]["missing_median"] == "1"
+    by_field = {(r["p"], r["kind"], r["field"]): r for r in decisions}
+    assert by_field[("0.0", "state_poll", "interval_s")]["median"] == "2.0"
+    assert by_field[("0.0", "state_poll", "truncated")]["frequency"] == "0.0"
+    assert by_field[("0.0", "fetch_plan", "missing")]["median"] == "1"
+    assert by_field[("0.0", "fetch_plan", "advertised_gap")]["median"] == "2"  # notified_max(5) - hi(3)
+    assert by_field[("0.0", "fetch_plan", "fetched_count")]["median"] == "1"
+    assert by_field[("0.0", "fetch_backoff", "wait_s")]["median"] == "2.0"
+    assert by_field[("0.0", "fetch_backoff", "last_timeout_age_s")]["median"] == "1.0"
+    assert by_field[("0.0", "fetch_backoff", "last_timeout_age_s")]["decision_count"] == "1"
 
     survival = _read_csv(outdir / "survival.csv")
     # (p=0.0, hop=1): run a's two pairs, one delivered at 1s, one censored
@@ -732,6 +837,13 @@ def test_aggregate_writes_all_six_csvs_with_expected_rows(synthetic_store: Path,
     at_t1 = next(r for r in group if r["t_s"] == "1.0")
     assert at_t1["delivered_fraction"] == "0.5"
     assert at_t1["n_pairs"] == "2"
+    assert at_t1["n_censored"] == "1"
+    assert at_t1["censored_fraction"] == "0.5"
+
+    summary_p0 = by_p["0.0"]
+    assert summary_p0["n_pairs"] == "2"
+    assert summary_p0["n_censored_pairs"] == "1"
+    assert summary_p0["pairs_censored_fraction"] == "0.5"
 
 
 def test_aggregate_excludes_unknown_runs_from_pooling_by_default(synthetic_store: Path, tmp_path: Path):
@@ -835,17 +947,45 @@ def test_aggregate_include_undone_processes_runs_without_done_marker(tmp_path: P
     assert len(analyses) == 1
 
 
-def test_aggregate_skips_a_run_whose_files_are_unreadable_without_crashing_the_batch(tmp_path: Path):
-    """Aggregate skips a run whose files are unreadable without crashing the batch."""
+def test_aggregate_keeps_an_unreadable_run_counted_rather_than_dropping_it(tmp_path: Path):
+    """2026-10-23: a run with DONE and a `meta.json` verdict, but no events.jsonl
+
+    anywhere, used to simply vanish from every output (analyze_run raised
+    CheckUsageError, and aggregate()'s own try/except at the time dropped
+    it outright) -- not even counted in n_flagged/n_unknown, silently
+    under-reporting a condition's own failure rate. It must now stay in
+    `analyses` (and runs.csv), with its real status/flags and
+    `analysis_error` set, every metric column empty.
+    """
     store = tmp_path / "store"
     broken_dir = store / "test" / "p0" / "1"
     broken_dir.mkdir(parents=True)
     (broken_dir / "DONE").touch()
+    (broken_dir / "meta.json").write_text(json.dumps({"valid": False, "flags": ["agents_missing"]}))
     # No events.jsonl anywhere under broken_dir -- discover_node_events
-    # (and therefore analyze_run) raises CheckUsageError for it.
+    # (and therefore _analyze_run_metrics) raises CheckUsageError for it.
     outdir = tmp_path / "out"
     analyses = aggregate(str(store), "test", str(outdir), include_undone=False)
-    assert analyses == []
+
+    assert len(analyses) == 1
+    run = analyses[0]
+    assert run.status == "flagged"
+    assert run.flags == ["agents_missing"]
+    assert run.analysis_error is not None
+    assert run.n_records_created is None
+
+    runs = _read_csv(outdir / "runs.csv")
+    assert len(runs) == 1
+    assert runs[0]["valid"] == "flagged"
+    assert runs[0]["flags"] == "agents_missing"
+    assert runs[0]["analysis_error"] != ""
+    assert runs[0]["n_records_created"] == ""  # empty, not a misleading 0
+
+    summary = _read_csv(outdir / "summary.csv")
+    assert len(summary) == 1
+    assert summary[0]["n_flagged"] == "1"
+    assert summary[0]["n_valid"] == "0"
+    assert summary[0]["n_unknown"] == "0"
 
 
 # -- real-sample smoke test ------------------------------------------------
