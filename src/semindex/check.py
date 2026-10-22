@@ -776,13 +776,27 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # reachable again. Falls back to restart_ts itself when no such reply
     # ever arrives: that is the strict case this check exists for, where a
     # fetch_timeout past the old deadline should still fail.
-    post_restart_state_rx_ts = [
+    #
+    # 2026-10-23 fix (review finding): the deadline
+    # above was unbounded -- a state_rx that happens to arrive very late
+    # for reasons unrelated to origin's own readiness (e.g. that
+    # neighbor's own poll cadence) dragged the deadline out with it, even
+    # when a successful post-restart record delivery (direct proof origin
+    # had already answered) landed much earlier. Readiness evidence is
+    # now the EARLIEST of either signal -- state_rx or an actual record
+    # delivery -- never just the first state_rx seen.
+    post_restart_readiness_ts = [
         e["ts_ms"]
         for node in other_nodes
         for e in _events_of(events_by_node[node], "state_rx", neighbor=origin)
         if e["ts_ms"] > restart_ts
+    ] + [
+        e["ts_ms"]
+        for node in other_nodes
+        for e in _record_stored(events_by_node[node], origin)
+        if e["ts_ms"] > restart_ts
     ]
-    grace_deadline = min(post_restart_state_rx_ts, default=restart_ts) + 2500
+    grace_deadline = min(post_restart_readiness_ts, default=restart_ts) + 2500
     late_timeouts = [
         e
         for node in other_nodes

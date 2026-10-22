@@ -1141,14 +1141,21 @@ def test_check_t2b_protocol_fails_when_a_receiver_keeps_timing_out_on_the_origin
     """2026-10-23 fix: T2(b) had no grace-window check at all for
     fetch_timeouts against the restarted origin -- an origin whose life 2 never actually answers
     again, visible only as timeouts repeated well past the restart's grace window, passed
-    silently as long as every record eventually arrived some other way."""
+    silently as long as every record eventually arrived some other way.
+
+    2026-10-23 fix (review finding): the grace
+    deadline below also folds in post-restart record-delivery evidence (not just state_rx), which
+    legitimately moves this run's own deadline to offset 20.5 (seq 3's happy-path delivery at 18
+    is the earliest readiness evidence here, with no state_rx present) -- offsets shifted from
+    (20, 24, 28) to (22, 26, 30) so this still demonstrates persistent timeouts well past grace,
+    not one sitting right at the old boundary."""
     experiment_path = tmp_path / "t2b.json"
     _write_experiment(experiment_path, _t2b_experiment())
     run_dir = tmp_path / "run"
     _write_t2b_happy_path(run_dir)
     h1_path = _node_events_path(run_dir, "h1")
     events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
-    for offset in (20, 24, 28):
+    for offset in (22, 26, 30):
         events.append({"ts_ms": _ts_ms(offset), "event": "fetch_timeout", "origin": "h0", "seq": 4, "neighbor": "h0"})
     _write_jsonl(h1_path, events)
 
@@ -1159,9 +1166,9 @@ def test_check_t2b_protocol_fails_when_a_receiver_keeps_timing_out_on_the_origin
     assert (
         "FAIL: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: "
         "fetch_timeout(s) after grace: "
-        "[{'ts_ms': 1700000020000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
-        "{'ts_ms': 1700000024000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
-        "{'ts_ms': 1700000028000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}]"
+        "[{'ts_ms': 1700000022000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
+        "{'ts_ms': 1700000026000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
+        "{'ts_ms': 1700000030000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}]"
     ) in out.splitlines()
 
 
@@ -1228,6 +1235,52 @@ def test_check_t2b_protocol_still_fails_when_timeouts_persist_well_past_the_stat
         "fetch_timeout(s) after grace: "
         "[{'ts_ms': 1700000020000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
         "{'ts_ms': 1700000024000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
+        "{'ts_ms': 1700000028000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}]"
+    ) in out.splitlines()
+
+
+def test_check_t2b_protocol_fails_even_when_a_very_late_first_state_rx_would_otherwise_mask_it(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix (review finding): the
+    grace deadline above used to be anchored on the first post-restart state_rx alone, with no
+    bound -- a state_rx arriving very late for reasons unrelated to h0's own readiness (e.g. that
+    neighbor's own poll cadence) drags the deadline out with it, even when an earlier successful
+    delivery already proves h0 was reachable long before. Reproduces the reviewer's exact
+    scenario: h0 restarts at offset 11, seq 3 is delivered at 18 (proving readiness by then), seq
+    4 times out at 20/24/28 before finally landing at 31, and the first post-restart state_rx h1
+    hears doesn't arrive until 29 -- which would move the deadline to 31.5 and hide every one of
+    those timeouts if state_rx were the only readiness evidence consulted. Folding in the seq-3
+    delivery (the earliest readiness evidence available, even though it is not a state_rx) keeps
+    the deadline at offset 20.5, so 24 and 28 still read as genuinely late."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    h1_events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    for event in h1_events:
+        if event.get("event") == "record_stored" and event.get("seq") == 4:
+            event["ts_ms"] = _ts_ms(31)  # eventual arrival, after the persistent timeouts below
+    for offset in (20, 24, 28):
+        h1_events.append({"ts_ms": _ts_ms(offset), "event": "fetch_timeout", "origin": "h0", "seq": 4, "neighbor": "h0"})
+    h1_events.append({"ts_ms": _ts_ms(29), "event": "state_rx", "neighbor": "h0", "hi": {"h0": 3}})
+    _write_jsonl(h1_path, h1_events)
+    h2_path = _node_events_path(run_dir, "h2")
+    h2_events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in h2_events:
+        if event.get("event") == "record_stored" and event.get("seq") == 4:
+            event["ts_ms"] = _ts_ms(32)  # relayed from h1 shortly after h1's own eventual store
+    _write_jsonl(h2_path, h2_events)
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: "
+        "fetch_timeout(s) after grace: "
+        "[{'ts_ms': 1700000024000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
         "{'ts_ms': 1700000028000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}]"
     ) in out.splitlines()
 
