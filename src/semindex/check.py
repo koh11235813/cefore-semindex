@@ -840,6 +840,18 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
         f"seqs served early: {late}",
     )
 
+    # 2026-10-23 fix: the comment above this
+    # block already assumed far's every record_stored row names `holder`
+    # "by construction" (far's only sync neighbor) and never actually
+    # checked it -- a relay bypass (far's rows claiming origin as their
+    # own holder, in whole or in part) would have passed silently.
+    far_holders_seen = {e["holder"] for e in far_stored_events}
+    c.protocol(
+        f"every record {far} stored for {origin} came from holder {holder}",
+        far_holders_seen <= {holder},
+        f"holders seen: {sorted(far_holders_seen)}",
+    )
+
     counters_holder = _events_of(holder_events, "counters")
 
     # 2026-10-22 fix: "post-restart" used to be decided against holder's

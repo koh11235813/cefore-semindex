@@ -1466,6 +1466,53 @@ def test_check_t2c_protocol_fails_on_a_duplicate_far_stored_seq(tmp_path: Path, 
     assert "FAIL: h2 holds exactly 4 of h0's records, none duplicated: duplicates present: [1]" in out.splitlines()
 
 
+def test_check_t2c_protocol_fails_when_far_claims_every_record_came_straight_from_the_origin(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix: far's holder label was assumed correct "by
+    construction" (its only sync neighbor is the restarted relay) and never actually checked.
+    Every one of h2's record_stored rows here claims holder=h0, as if the restarted relay (h1)
+    never served anything."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "record_stored":
+            event["holder"] = "h0"
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: every record h2 stored for h0 came from holder h1: holders seen: ['h0']" in out.splitlines()
+
+
+def test_check_t2c_protocol_fails_when_far_mixes_holder_labels(tmp_path: Path, capsys):
+    """2026-10-23 fix: a relay PARTLY bypassed (only some of far's rows
+    mislabeled) is just as real a protocol break as every row being wrong; the fix checks the
+    whole set of holders seen on far, not a single sampled row."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "record_stored" and event.get("seq") == 3:
+            event["holder"] = "h0"
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: every record h2 stored for h0 came from holder h1: holders seen: ['h0', 'h1']" in out.splitlines()
+
+
 # -- exit code precedence -------------------------------------------------
 
 
