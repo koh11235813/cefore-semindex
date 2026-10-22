@@ -349,6 +349,51 @@ def test_analyze_output_is_unchanged_by_counters_snapshot_lines(tmp_path: Path):
     assert analyze(str(with_dir)) == analyze(str(without_dir))
 
 
+def test_analyze_output_is_unchanged_by_a_leading_agent_start_line(tmp_path: Path):
+    """2026-10-23: agent.py now writes one `agent_start` line before anything
+
+    else in every life (Agent.__init__). Every section here keys off a
+    specific event name of its own (`record_created`, `record_stored`,
+    `counters`, `probe_discovered`/`probe_retrieved`) -- `agent_start`
+    matches none of them, so prepending it to every node's own events
+    must change nothing analyze() reports.
+    """
+    base_events = {
+        "h0": [
+            {"ts_ms": 100, "event": "record_created", "origin": "h0", "seq": 1},
+            {
+                "ts_ms": 900,
+                "event": "counters",
+                "bytes_sent": 10,
+                "bytes_received": 0,
+                "control_bytes_sent": 10,
+                "control_bytes_received": 0,
+            },
+        ],
+        "h1": [
+            {"ts_ms": 150, "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h0"},
+            {
+                "ts_ms": 900,
+                "event": "counters",
+                "bytes_sent": 5,
+                "bytes_received": 5,
+                "control_bytes_sent": 5,
+                "control_bytes_received": 5,
+            },
+        ],
+    }
+    without_dir = tmp_path / "without"
+    for node, events in base_events.items():
+        _write_jsonl(_node_events_path(without_dir, node), events)
+
+    with_dir = tmp_path / "with"
+    for node, events in base_events.items():
+        agent_start = {"ts_ms": 0, "event": "agent_start", "node": node, "t0_ms": 0}
+        _write_jsonl(_node_events_path(with_dir, node), [agent_start, *events])
+
+    assert analyze(str(with_dir)) == analyze(str(without_dir))
+
+
 def test_main_prints_json_and_exits_0(tmp_path: Path, capsys):
     """Main prints json and exits 0."""
     _write_jsonl(
