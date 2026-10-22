@@ -383,7 +383,7 @@ def test_default_fetch_backoff_initial_clears_cefores_pit_grace_window(tmp_path:
     assert fetch_name in [n for n, _ in transport.sent]
 
 
-# -- decision events (ticket 02: map.md "判断の記録") -----------------------------
+# -- decision events (map.md "判断の記録") -----------------------------------------
 
 
 def test_on_tick_emits_a_state_poll_decision_per_due_neighbor(tmp_path: Path):
@@ -441,7 +441,6 @@ def test_send_fetch_plan_emits_a_fetch_plan_decision_only_when_something_is_due(
     # due, so a second on_tick at the same instant logs and sends nothing at all.
     engine.on_tick(now=0.0)
     assert engine.drain_events() == []
-    assert transport.sent == [(n, lt) for n, lt in transport.sent]  # unchanged shape; no duplicate sends
     assert len(transport.sent) == 3  # 1 state request + 2 fetch Interests, from the first on_tick only
 
 
@@ -533,8 +532,8 @@ def test_on_record_name_payload_mismatch_emits_a_fetch_backoff_decision(tmp_path
 
 
 def test_log_decisions_false_emits_no_decision_events(tmp_path: Path):
-    """SyncConfig(log_decisions=False) -- off by default True; this effort's live configs
-    leave it at the default -- drops every `decision` event while every other event and
+    """SyncConfig(log_decisions=False) -- the default is True, and this effort's live
+    configs leave it there -- drops every `decision` event while every other event and
     every sent Interest stays exactly as it would with logging on (see the fuller proof
     below)."""
     engine, transport, _ = _engine(tmp_path, neighbors=("h1", "h2"), log_decisions=False)
@@ -547,12 +546,13 @@ def test_log_decisions_false_emits_no_decision_events(tmp_path: Path):
 
 
 def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: Path):
-    """The "do NOT change behaviour" proof for ticket 02: with log_decisions True vs False,
-    an otherwise identical engine sends the exact same Interests at the exact same times
-    and emits the exact same non-`decision` events. Counting jitter/backoff callables also
-    confirm logging draws neither rng a second time -- a silent double-draw would shift
-    every later poll/backoff and could pass the Interest/event comparison undetected if
-    both runs happened to double-draw identically, which these counts rule out directly.
+    """The "do NOT change behaviour" proof (map.md "判断の記録"): with log_decisions
+    True vs False, an otherwise identical engine sends the exact same Interests at the
+    exact same times and emits the exact same non-`decision` events. Counting
+    jitter/backoff callables also confirm logging draws neither rng a second time -- a
+    silent double-draw would shift every later poll/backoff and could pass the
+    Interest/event comparison undetected if both runs happened to double-draw
+    identically, which these counts rule out directly.
     """
 
     def _run(label: str, log_decisions: bool):

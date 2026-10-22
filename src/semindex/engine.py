@@ -55,11 +55,11 @@ class SyncConfig:
     record_data_expiry_s: float = 3600.0
     record_data_cache_time_s: float = 300.0
     fault_drop_rec: dict[tuple[str, int], int] = field(default_factory=dict)
-    # 2026-10-23 ticket 02 ("判断の記録"): emit a `decision` event at each of the three
+    # 2026-10-23 (map.md "判断の記録"): emit a `decision` event at each of the three
     # points SyncEngine actually chooses something (state-poll target/time, fetch
     # backoff wait, fetch-plan target/count). True in every production config; a test
-    # (test_engine.py's "leaves Interests and other events unchanged") sets it False
-    # on an otherwise-identical engine to prove logging adds no behavior of its own.
+    # sets it False on an otherwise-identical engine to prove logging adds no
+    # behavior of its own.
     log_decisions: bool = True
 
 
@@ -195,7 +195,7 @@ class SyncEngine:
         # value below, it never draws its own.
         offset = self._config.state_poll_jitter_frac * (2 * self._poll_jitter_rng() - 1)
         interval = self._config.state_poll_interval_s * (1 + offset)
-        # ticket 02 ("判断の記録", kind 1): this *is* the decision -- which
+        # map.md "判断の記録", kind 1: this *is* the decision -- which
         # neighbor, and the interval chosen for its next poll. Always made
         # (a neighbor due for a poll is always polled in stage 1), so
         # always logged when log_decisions is on.
@@ -207,7 +207,7 @@ class SyncEngine:
     def _send_fetch_plan(self, neighbor: str, now: float) -> None:
         """Send a fetch Interest for every due, not-in-flight missing record on `neighbor`.
 
-        2026-10-23 ticket 02 ("判断の記録", kind 3): the state snapshot is taken
+        2026-10-23 (map.md "判断の記録", kind 3): the state snapshot is taken
         *before* plan_fetches, which mutates the Tracker's own in-flight count for
         `neighbor` -- the snapshot must show the headroom that was actually available
         when this decision was made, not what is left after it. on_tick calls this
@@ -338,7 +338,7 @@ class SyncEngine:
     def _fail_fetch(self, origin: str, seq: int, neighbor: str, now: float, *, cause: str = "rejected") -> None:
         """Resolve one failed fetch (timeout or rejected reply) against the Tracker and,
         only if it actually resolved a real in-flight fetch, log the matching
-        `fetch_backoff` decision (ticket 02, map.md "判断の記録", kind 2).
+        `fetch_backoff` decision (map.md "判断の記録", kind 2).
 
         The state snapshot is taken *before* the Tracker call, which decrements its
         in-flight count for `neighbor` and sets its last_fail_at -- the snapshot must

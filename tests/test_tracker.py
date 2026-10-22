@@ -242,7 +242,7 @@ def test_default_backoff_initial_clears_cefores_pit_grace_window():
     assert tracker.plan_fetches("n1", now=2.0) == [("h0", 1)]
 
 
-# -- decision-event support (ticket 02: "判断の記録") -----------------------------
+# -- decision-event support (map.md "判断の記録") ---------------------------------
 
 
 def test_on_fetch_timeout_returns_the_chosen_wait():

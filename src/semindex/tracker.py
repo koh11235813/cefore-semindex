@@ -40,7 +40,7 @@ DEFAULT_BACKOFF_MAX_S = 16.0
 DEFAULT_MAX_MISSING_PER_ORIGIN = 1024
 DEFAULT_MAX_IN_FLIGHT_PER_NEIGHBOR = 8
 
-# 2026-10-23 ticket 02 ("判断の記録"): Tracker.decision_state reports at most this many
+# 2026-10-23 (map.md "判断の記録"): Tracker.decision_state reports at most this many
 # origins (lowest name first) so one `decision` event's size cannot grow with how many
 # origins a run tracks -- a run config is expected to have a handful of origins (this
 # effort's own baseline has 2), so the cap is generous headroom, not a tuned limit.
@@ -113,7 +113,7 @@ class Tracker:
         self._jitter = jitter
         self._origins: dict[str, _OriginState] = {}
         self._in_flight_count: dict[str, int] = {}  # neighbor -> count, across all origins
-        # 2026-10-23 ticket 02 ("判断の記録"): the `now` of the most recent fetch
+        # 2026-10-23 (map.md "判断の記録"): the `now` of the most recent fetch
         # failure (timeout or rejected reply) _fail actually resolved on this
         # neighbor, across any origin/seq -- read-only bookkeeping for
         # Tracker.decision_state; never consulted by any scheduling decision.
@@ -185,7 +185,7 @@ class Tracker:
     def in_flight_count(self, neighbor: str) -> int:
         """How many fetches are currently outstanding on `neighbor`, across every origin.
 
-        2026-10-23 ticket 02 ("判断の記録"): read-only accessor onto the same counter
+        2026-10-23 (map.md "判断の記録"): read-only accessor onto the same counter
         plan_fetches/_fail already maintain, for SyncEngine to log in a `decision`
         event; it changes no scheduling behavior.
         """
@@ -347,7 +347,7 @@ class Tracker:
         Resetting instead restarts the round-robin over the same
         advertisers for as long as they all keep failing.
 
-        2026-10-23 ticket 02 ("判断の記録"): returns the chosen wait
+        2026-10-23 (map.md "判断の記録"): returns the chosen wait
         (seconds), or None on the stale early-return below, so
         SyncEngine can tell a real decision from a no-op and log a
         `fetch_backoff` decision event only for the former. Also
