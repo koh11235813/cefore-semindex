@@ -1100,6 +1100,61 @@ def test_check_t2b_protocol_fails_when_a_receiver_keeps_timing_out_on_the_origin
     ) in out.splitlines()
 
 
+def test_check_t2b_all_pass_when_a_late_timeout_falls_within_the_state_rx_based_grace_window(
+    tmp_path: Path,
+):
+    """2026-10-23 fix (review finding): restart_ts marks
+    when HostAppFleet.restart_host() RETURNS, not when the new life's cefnetd prefix
+    registration actually finishes -- a retry sent during that registration lag can legitimately
+    time out past the old restart_ts + 2500 deadline while life 2 is already healthy. Reproduces
+    an external reviewer's exact scenario: restart finishes at offset 11, h1 hears h0 again
+    (state_rx) at offset 12, and an in-flight retry sent just before that reply times out at
+    offset 13.6 -- 0.1s past the OLD deadline (11 + 2.5), but within 2500ms of the state_rx that
+    actually proves h0's life 2 is reachable again."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    events.append({"ts_ms": _ts_ms(12), "event": "state_rx", "neighbor": "h0", "hi": {"h0": 2}})
+    events.append({"ts_ms": _ts_ms(13.6), "event": "fetch_timeout", "origin": "h0", "seq": 4, "neighbor": "h0"})
+    _write_jsonl(h1_path, events)
+
+    assert run_check("t2b", str(experiment_path), str(run_dir)) == 0
+
+
+def test_check_t2b_protocol_still_fails_when_timeouts_persist_well_past_the_state_rx_too(
+    tmp_path: Path, capsys
+):
+    """Companion to the healthy-startup case above: proves the
+    state_rx-based grace window still rejects a genuine persistent failure, not just slow
+    registration -- h1 hears h0 again at offset 12 (so life 2 IS reachable), yet keeps timing out
+    on it for seq 4 far past that reply's own 2500ms grace, same as the un-anchored case above."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    events.append({"ts_ms": _ts_ms(12), "event": "state_rx", "neighbor": "h0", "hi": {"h0": 2}})
+    for offset in (20, 24, 28):
+        events.append({"ts_ms": _ts_ms(offset), "event": "fetch_timeout", "origin": "h0", "seq": 4, "neighbor": "h0"})
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: "
+        "fetch_timeout(s) after grace: "
+        "[{'ts_ms': 1700000020000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
+        "{'ts_ms': 1700000024000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}, "
+        "{'ts_ms': 1700000028000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 4, 'neighbor': 'h0'}]"
+    ) in out.splitlines()
+
+
 # -- T2c --------------------------------------------------------------------
 
 

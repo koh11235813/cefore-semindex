@@ -731,7 +731,31 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # at all, so an origin whose life 2 never actually answers again --
     # visible only as timeouts repeated well past that window -- passed
     # silently as long as every record eventually arrived some other way.
-    grace_deadline = restart_ts + 2500
+    #
+    # 2026-10-23 fix (review finding): restart_ts
+    # marks when HostAppFleet.restart_host() RETURNS -- right after
+    # calling runner.start() -- not when cefnetd prefix registration for
+    # the new life actually finishes, so a retry sent during that
+    # registration lag can legitimately still time out past
+    # restart_ts + 2500 even though life 2 is already healthy. Anchoring
+    # the window on restart_ts alone then misreads ordinary startup
+    # latency as a protocol failure. state_poll_interval_s keeps every
+    # neighbor polling origin's own state roughly every 2s regardless of
+    # record-fetch activity, and a timed-out state request emits no event
+    # at all (SyncEngine.on_fetch_timeout only ever handles a RecordName),
+    # so the first post-restart state_rx any neighbor actually receives
+    # FROM origin is independent evidence -- origin's own observed
+    # behavior, not the process-launch timestamp -- that life 2 is
+    # reachable again. Falls back to restart_ts itself when no such reply
+    # ever arrives: that is the strict case this check exists for, where a
+    # fetch_timeout past the old deadline should still fail.
+    post_restart_state_rx_ts = [
+        e["ts_ms"]
+        for node in other_nodes
+        for e in _events_of(events_by_node[node], "state_rx", neighbor=origin)
+        if e["ts_ms"] > restart_ts
+    ]
+    grace_deadline = min(post_restart_state_rx_ts, default=restart_ts) + 2500
     late_timeouts = [
         e
         for node in other_nodes
@@ -941,6 +965,22 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # not on the first state_rx row (which may arrive late, or not at
     # all), so this check still runs even when the precondition above
     # already failed.
+    #
+    # 2026-10-23 (considered, not applied): T2(b)'s
+    # grace window got the same restart_ts + 2500 anchor widened to use
+    # the first post-restart state_rx as independent readiness evidence
+    # (an external reviewer found restart_ts alone -- process launch, not
+    # prefix-registration-ready -- misreads ordinary startup lag as a
+    # protocol failure there). The SAME widening here would undo this
+    # check's own 2026-10-22 fix just above: this mode's failure signal IS
+    # a state_rx (a holder dishonestly advertising progress it cannot
+    # serve), so a late-arriving state_rx can itself be a symptom, not
+    # independent evidence of readiness --
+    # test_check_t2c_protocol_fails_on_a_timeout_the_first_state_rx_as_anchor_would_have_missed
+    # already pins a real run (first post-restart state_rx at offset 19,
+    # 8s after restart_ts at offset 11) where anchoring on it instead of
+    # restart_ts would turn a genuine FAIL into a false PASS. Left on
+    # restart_ts.
     grace_deadline = restart_ts + 2500
     late_timeouts = [
         e
