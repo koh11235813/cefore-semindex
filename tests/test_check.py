@@ -809,6 +809,39 @@ def test_check_t2a_protocol_fails_when_the_dropped_seq_is_stored_immediately_bef
     ) in out.splitlines()
 
 
+def test_check_t2a_protocol_fails_when_the_dropped_seqs_store_ts_contradicts_its_later_file_position(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix (review finding): the check
+    above switched from ts_ms to file-position ordering (see the 2026-10-23 fix comment right
+    above it) because EventWriter rounds ts_ms to whole milliseconds, which can make a store and
+    its final timeout tie even when file order disagreed. But file position alone then missed the
+    opposite contradiction: a store row whose own ts_ms is unambiguously EARLIER than its
+    fetch_timeout(s) (no rounding tie at all) still read as "after" just because it happened to
+    sit later in the file. events.jsonl's seq-2 store keeps its real, unmoved file position (after
+    both fetch_timeouts, same as the happy path) but its ts_ms is rewritten to 3s -- 3s before the
+    first of those timeouts -- which the old index-only check waved through as a real withheld
+    reply, even though no genuine run could log a store before its own timeout."""
+    experiment_path = tmp_path / "t2a.json"
+    _write_experiment(experiment_path, _t2a_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2a_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    store_event = next(e for e in events if e.get("event") == "record_stored" and e.get("seq") == 2)
+    store_event["ts_ms"] = _ts_ms(3)  # contradicts file order: this is BEFORE both timeouts (6, 9)
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2a", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's eventual store of (h0, 2) came after its fetch_timeout(s), not before: "
+        "stored at [1700000003000], timed out at [1700000006000, 1700000009000]"
+    ) in out.splitlines()
+
+
 def test_check_t2a_protocol_fails_on_a_fetch_timeout_for_a_seq_that_was_never_dropped(
     tmp_path: Path, capsys
 ):

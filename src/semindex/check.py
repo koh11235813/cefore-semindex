@@ -587,7 +587,24 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
     ]
     dropped_store_ts = [e["ts_ms"] for e in stored if e["seq"] == drop.seq]
     timeout_ts = [e["ts_ms"] for e in timeouts]
-    stored_before_timeout = bool(dropped_store_idx) and bool(timeout_idx) and min(dropped_store_idx) < max(timeout_idx)
+    # 2026-10-23 fix (review finding): file position
+    # alone missed the opposite contradiction -- a store whose own ts_ms
+    # is unambiguously EARLIER than its fetch_timeout(s) (no rounding tie
+    # at all) still read as "after" just because it happened to sit later
+    # in the file. ts_ms is now the primary signal; file position is used
+    # only to break a genuine rounding tie (equal ts_ms), which is the one
+    # case ts_ms alone cannot order.
+    if dropped_store_ts and timeout_ts:
+        min_store_ts = min(dropped_store_ts)
+        max_timeout_ts = max(timeout_ts)
+        if min_store_ts < max_timeout_ts:
+            stored_before_timeout = True
+        elif min_store_ts > max_timeout_ts:
+            stored_before_timeout = False
+        else:
+            stored_before_timeout = min(dropped_store_idx) < max(timeout_idx)
+    else:
+        stored_before_timeout = False
     c.protocol(
         f"{requester}'s eventual store of ({drop.origin}, {drop.seq}) came after its fetch_timeout(s), not before",
         not stored_before_timeout,
