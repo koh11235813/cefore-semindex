@@ -1443,6 +1443,89 @@ def test_check_t2b_rejects_a_cached_pre_restart_delivery_as_readiness_evidence_i
     ) in out.splitlines()
 
 
+def test_check_t2b_protocol_fails_when_the_only_readiness_evidence_is_very_late(tmp_path: Path, capsys):
+    """2026-10-23 fix (review finding): the
+    grace deadline above was still unbounded even after excluding cached pre-restart deliveries --
+    if the only QUALIFYING readiness evidence (post-restart record delivery or state_rx) happened
+    to arrive very late, the deadline moved out with it and could mask any number of real
+    fetch_timeouts that landed before that late arrival. Reproduces the reviewer's exact
+    counterexample: h0 restarts at offset 11; a cached pre-restart seq 1 (created at offset 3)
+    arrives at h1 at offset 12, holder h0 (excluded, same as the test above); seq 2 (created at
+    offset 5, also pre-restart) times out three times at offsets 14, 18, 24 while still
+    unretrieved; h1's first state_rx from h0 doesn't arrive until offset 29; h0 then creates its
+    post-restart seq 3 and seq 4 at offsets 30 and 32, which h1 and h2 go on to receive and
+    everything converges. Readiness evidence here is the offset-29 state_rx -- 18s after the
+    restart -- which would move the deadline to 31.5 and accept all three timeouts if nothing
+    capped how late evidence may anchor the window. Capping the anchor at
+    restart_ts + _T2B_MAX_READINESS_LAG_MS (10s) keeps the deadline at 23.5 instead, so the
+    offset-24 timeout still reads as genuinely late and rc must be 1."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_jsonl(
+        _node_events_path(run_dir, "h0"),
+        [
+            {"ts_ms": _ts_ms(3), "event": "record_created", "origin": "h0", "seq": 1},
+            {"ts_ms": _ts_ms(5), "event": "record_created", "origin": "h0", "seq": 2},
+            {"ts_ms": _ts_ms(7), "event": "counters", "bytes_sent": 100, "bytes_received": 50},
+            {"ts_ms": _ts_ms(30), "event": "record_created", "origin": "h0", "seq": 3},
+            {"ts_ms": _ts_ms(32), "event": "record_created", "origin": "h0", "seq": 4},
+            {"ts_ms": _ts_ms(40), "event": "counters", "bytes_sent": 80, "bytes_received": 40},
+        ],
+    )
+    _write_jsonl(
+        _node_events_path(run_dir, "h1"),
+        [
+            # life 1's own seq 1 (created at offset 3), served again from
+            # cache after the restart -- excluded as readiness evidence
+            # the same way the test above excludes it.
+            {"ts_ms": _ts_ms(12), "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h0"},
+            {"ts_ms": _ts_ms(14), "event": "fetch_timeout", "origin": "h0", "seq": 2, "neighbor": "h0"},
+            {"ts_ms": _ts_ms(18), "event": "fetch_timeout", "origin": "h0", "seq": 2, "neighbor": "h0"},
+            {"ts_ms": _ts_ms(24), "event": "fetch_timeout", "origin": "h0", "seq": 2, "neighbor": "h0"},
+            # the only state_rx h1 ever gets from h0 -- 18s after the
+            # restart, well past _T2B_MAX_READINESS_LAG_MS.
+            {"ts_ms": _ts_ms(29), "event": "state_rx", "neighbor": "h0", "hi": {"h0": 2}},
+            {"ts_ms": _ts_ms(30.5), "event": "record_stored", "origin": "h0", "seq": 2, "holder": "h0"},
+            {"ts_ms": _ts_ms(30.8), "event": "record_stored", "origin": "h0", "seq": 3, "holder": "h0"},
+            {"ts_ms": _ts_ms(32.5), "event": "record_stored", "origin": "h0", "seq": 4, "holder": "h0"},
+            {"ts_ms": _ts_ms(40), "event": "counters", "bytes_sent": 40, "bytes_received": 60},
+        ],
+    )
+    _write_jsonl(
+        _node_events_path(run_dir, "h2"),
+        [
+            {"ts_ms": _ts_ms(13), "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h1"},
+            {"ts_ms": _ts_ms(31), "event": "record_stored", "origin": "h0", "seq": 2, "holder": "h1"},
+            {"ts_ms": _ts_ms(31.5), "event": "record_stored", "origin": "h0", "seq": 3, "holder": "h1"},
+            {"ts_ms": _ts_ms(33), "event": "record_stored", "origin": "h0", "seq": 4, "holder": "h1"},
+            {"ts_ms": _ts_ms(40), "event": "counters", "bytes_sent": 40, "bytes_received": 60},
+        ],
+    )
+    _write_results(
+        run_dir,
+        [
+            {
+                "op_type": "event",
+                "event_type": "host_app_restart",
+                "ts": _iso(11),
+                "success": True,
+                "event": {"host": 0, "downtime_s": 3},
+            },
+        ],
+    )
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: "
+        "fetch_timeout(s) after grace: "
+        "[{'ts_ms': 1700000024000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 2, 'neighbor': 'h0'}]"
+    ) in out.splitlines()
+
+
 # -- T2c --------------------------------------------------------------------
 
 

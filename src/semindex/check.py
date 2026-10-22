@@ -657,6 +657,18 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
 
 # -- T2b: host_app_restart of the origin ----------------------------------
 
+# 2026-10-23 fix (review finding): how far past
+# restart_ts a piece of readiness evidence (state_rx or a post-restart
+# record delivery) is still allowed to anchor the grace deadline below.
+# Real runs (ex9913/ex9923/ex9914/ex9924) show readiness evidence landing
+# roughly 2-4s after the restart finishes -- state_poll_interval_s polls
+# every 2s +-20% on top of the restart itself -- so 10s is five poll
+# periods of slack. Evidence arriving later than that is not independent
+# proof the origin just became reachable; it stops extending the window,
+# and the grace deadline falls back to restart_ts + MAX_LAG + 2500 instead
+# of chasing however late that evidence happened to be.
+_T2B_MAX_READINESS_LAG_MS = 10_000
+
 
 def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
     """map.md T2(b): restarting the Index origin mid-schedule must not duplicate or skip its own seqs."""
@@ -811,6 +823,20 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # the "both lives" precondition above already reads -- since only
     # those seqs could not possibly have been served from a pre-restart
     # cache entry.
+    # 2026-10-23 fix (review finding): the deadline
+    # just below used to be anchored on whichever readiness evidence
+    # happened to be EARLIEST, with no bound at all on how late that could
+    # be -- if the only qualifying evidence (after the cache-exclusion
+    # above) arrived very late, the deadline moved out with it and masked
+    # however many real fetch_timeouts happened to land before that late
+    # arrival (an external reviewer demonstrated 18 and 168 accepted
+    # timeouts this way). The anchor is now capped at
+    # restart_ts + _T2B_MAX_READINESS_LAG_MS: readiness evidence later than
+    # that no longer extends the window, so a run whose origin never
+    # really comes back (or comes back only long after the cap) still
+    # fails on its genuine late timeouts instead of being rescued by the
+    # late evidence itself. With no qualifying evidence at all, the anchor
+    # stays restart_ts, same strict fallback as before.
     post_restart_seqs = {e["seq"] for e in after_restart}
     post_restart_readiness_ts = [
         e["ts_ms"]
@@ -823,7 +849,8 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
         for e in _record_stored(events_by_node[node], origin)
         if e["ts_ms"] > restart_ts and e.get("holder") == origin and e.get("seq") in post_restart_seqs
     ]
-    grace_deadline = min(post_restart_readiness_ts, default=restart_ts) + 2500
+    grace_anchor = min(min(post_restart_readiness_ts, default=restart_ts), restart_ts + _T2B_MAX_READINESS_LAG_MS)
+    grace_deadline = grace_anchor + 2500
     late_timeouts = [
         e
         for node in other_nodes
