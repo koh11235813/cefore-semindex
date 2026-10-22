@@ -17,10 +17,11 @@ observation, never one column per value) so a plotting tool -- whichever
 one a later effort picks -- can read a table directly, no reshaping:
 
 - runs.csv: one row per (p, seed) run. Status (`valid`/`flagged`/
-  `unknown`, see `read_meta`) and `flags` are always present even when
-  `analysis_error` is set (this run's events/t0 evidence could not be
-  read at all) -- every other column is empty in that case, never a
-  misleading 0. Otherwise: counts (`n_records_created`, `n_pairs`,
+  `unknown`, see `read_meta` -- or `incomplete`, which never goes
+  through `read_meta` at all, see `aggregate`) and `flags` are always
+  present even when `analysis_error` is set (this run's events/t0
+  evidence could not be read at all) -- every other column is empty in
+  that case, never a misleading 0. Otherwise: counts (`n_records_created`, `n_pairs`,
   `n_delivered_in_window`, `n_censored`), control bytes strictly inside
   the window (per-node as a JSON cell, plus the total and the per-record
   figure), probe counts, and which t0 rung won (`t0_source`) plus its
@@ -35,7 +36,8 @@ one a later effort picks -- can read a table directly, no reshaping:
   group and immediately have everything needed to plot and annotate it).
 - consistency.csv: one row per (run, origin, seq) -- time until every
   non-origin node held that record, or censored.
-- summary.csv: one row per p -- run-status counts, pooled discovery-pair
+- summary.csv: one row per p -- run-status counts (including
+  `n_incomplete`), pooled discovery-pair
   counts/censoring, KM-quantile latency/consistency medians, control
   bytes per record, and probe discovery rate with its Wilson interval.
 - decisions.csv: one row per (p, kind, field) -- see `build_decisions_rows`
@@ -164,12 +166,18 @@ def discover_runs(store: str, stage: str) -> list[RunRef]:
 def run_has_done_marker(run_dir: str) -> bool:
     """Whether `<run_dir>/DONE` exists.
 
-    DONE is meant to be a run's own sentinel for "this run finished and
-    its retained files are complete" -- no committed code writes it yet
-    (the runner that would is not written), so this is this module's own
-    interface expectation of a file that does not exist on disk today. A
-    run missing it is skipped by default; `--include-undone` overrides
-    that for exactly the hand-stored trial-manual sample, which has
+    2026-10-23: `semindex.evalrun.run_one` writes DONE unconditionally,
+    after a run reaches the end of its own pipeline -- flagged or not
+    (only the verdict inside meta.json records pass/fail; DONE only ever
+    means "this run finished and its retained files are complete"). A
+    run dir missing it is therefore never a run whose preconditions
+    failed -- it is one that never finished at all (orchestrator
+    restart, machine reboot, a crash partway through `run_one`), which
+    `run_one` itself deletes and redoes from scratch the next time it
+    sees that dir. `aggregate` counts such a run as "incomplete", never
+    "flagged" or "unknown" (see its own docstring). `--include-undone`
+    overrides that for the one case with no DONE by construction that is
+    NOT awaiting a redo: a hand-stored trial-manual sample, which has
     neither DONE nor meta.json.
     """
     return os.path.isfile(os.path.join(run_dir, "DONE"))
@@ -489,13 +497,16 @@ class RunAnalysis:
 
     p: float
     seed: int
-    status: str  # "valid" | "flagged" | "unknown"
+    status: str  # "valid" | "flagged" | "unknown" | "incomplete"
     flags: list[str]
     # Set (and every metric field below left at its default/None) iff
     # this run's own files could not be analyzed at all -- status/flags
     # above are still real, read independently via read_meta before any
     # of this is attempted (see `analyze_run`), so an unreadable run is
-    # still counted by validity, just with nothing else to report.
+    # still counted by validity, just with nothing else to report. Never
+    # set for an "incomplete" run (see `aggregate`): there, every metric
+    # field is left at its default for a different reason -- the run was
+    # never analyzed at all, not analyzed-and-found-unreadable.
     analysis_error: str | None = None
     t0_ms: float | None = None
     t0_source: str | None = None
@@ -535,6 +546,19 @@ def _split_lives(events: list[dict]) -> list[list[dict]]:
     return lives
 
 
+# 2026-10-23 fix: the agent detects crossing stop_at_s on its own poll
+# tick, then writes the final `counters` line a few ms after that --
+# wall-clock lateness in the WRITE, not evidence the life itself started
+# or ran outside the window. The life structurally active when the
+# window closes (the last life in `_split_lives`'s own order, whenever
+# it carries no snapshot of its own -- see `_node_window_control_bytes`)
+# is still entirely inside the window even when its own final line's
+# ts_ms lands a hair past window_end_ms. This slack absorbs exactly that
+# lateness, nothing more -- the same 1.0s margin semindex.evalvalid's own
+# counters_timing check already allows around this identical boundary.
+_STOP_DETECTION_LATE_SLACK_MS = 1000.0
+
+
 def _node_window_control_bytes(
     events: list[dict], window_start_ms: float, window_end_ms: float
 ) -> tuple[int | None, int | None]:
@@ -556,21 +580,32 @@ def _node_window_control_bytes(
       (evalgen's own counters_snapshot_at_s is always a single entry, at
       WINDOW_START_S, so at most one life ever has it) contributes its
       own final `counters` line minus that snapshot.
-    - a life with no snapshot, whose own final `counters` line lands at
-      or after the window's open (it necessarily started fresh at 0, and
-      a life before the snapshot-life cannot satisfy this -- it ended
-      before the window opened) and at or before the window's close,
-      contributes its FULL final value.
+    - the LAST life in this node's history, if it carries no snapshot
+      (a restart happened after the window opened): it is, by
+      structural position, the life active when the window closes --
+      every evalgen-generated config sets stop_at_s == WINDOW_END_S for
+      every node, so there is always exactly one life still running at
+      that instant, and it is always the last one in `_split_lives`'s
+      order. 2026-10-23 review fix: this used to be decided from that
+      life's own final-line ts_ms (`<= window_end_ms`) instead of this
+      structural position, which a few ms of stop-detection lateness
+      (see `_STOP_DETECTION_LATE_SLACK_MS` above) could push past
+      window_end_ms and drop entirely (reviewer's counterexample: window
+      [10000, 130000] ms, a restart mid-window, final counters stamped
+      130001 ms -- 1ms late -- dropped that whole life, undercounting a
+      true total of 100 as 40). Deciding by position instead means the
+      explicit slack constant only ever has to absorb logging lateness,
+      never decide "is this even the right life" on its own.
+    - any OTHER life with no snapshot, whose own final `counters` line
+      lands at or after the window's open (it necessarily started fresh
+      at 0, and a life before the snapshot-life cannot satisfy this --
+      it ended before the window opened) and at or before the window's
+      close, contributes its FULL final value.
     - any other life (one that ended before the window opened, with no
       snapshot in it) contributes nothing.
 
-    Assumes no life's own final `counters` line lands strictly after the
-    window's close with no snapshot inside it to split at that close --
-    true whenever stop_at_s == WINDOW_END_S, which every evalgen-
-    generated config sets (the life active at the window's close always
-    terminates exactly there). None (not 0) for a node with no
-    counters_snapshot evidence anywhere, the same "no data" convention
-    as before this fix.
+    None (not 0) for a node with no counters_snapshot evidence anywhere,
+    the same "no data" convention as before this fix.
     """
     lives = _split_lives(events)
     if not any(any(e.get("event") == "counters_snapshot" for e in life) for life in lives):
@@ -579,7 +614,8 @@ def _node_window_control_bytes(
     total_sent = 0
     total_received = 0
     any_life_counted = False
-    for life in lives:
+    last_idx = len(lives) - 1
+    for idx, life in enumerate(lives):
         final = next((e for e in reversed(life) if e.get("event") == "counters"), None)
         if final is None:
             continue
@@ -587,6 +623,10 @@ def _node_window_control_bytes(
         if snapshot is not None:
             total_sent += final["control_bytes_sent"] - snapshot["control_bytes_sent"]
             total_received += final["control_bytes_received"] - snapshot["control_bytes_received"]
+            any_life_counted = True
+        elif idx == last_idx and final["ts_ms"] <= window_end_ms + _STOP_DETECTION_LATE_SLACK_MS:
+            total_sent += final["control_bytes_sent"]
+            total_received += final["control_bytes_received"]
             any_life_counted = True
         elif window_start_ms <= final["ts_ms"] <= window_end_ms:
             total_sent += final["control_bytes_sent"]
@@ -638,11 +678,11 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
 
 
 def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: list[str]) -> RunAnalysis:
-    """Every metric `analyze_run` computes, given this run's already-read validity (status/flags).
+    """Every metric this module computes from one run's events, given its already-read validity (status/flags).
 
     Raises CheckUsageError (propagated from discover_node_events/derive_t0_ms)
-    if this run's own files are too broken to analyze at all; `analyze_run`
-    is the only caller, and it is the one that decides what that means.
+    when this run's own files are too broken to analyze at all -- an
+    unreadable or missing events.jsonl, or no t0 evidence on any rung.
     """
     nodes = discover_node_events(run_dir)
     results_path = os.path.join(run_dir, "results.json")
@@ -747,6 +787,15 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
             # progress runs ahead of its contiguous hold (map.md's own
             # "origins" docstring: notified_max can exceed hi via a sparse
             # `extra`), the comparison this field exists for.
+            # 2026-10-23 fix: `advertised_gap` alone loses the underlying
+            # values -- two decision sets with (hi=3, notified_max=5) and
+            # (hi=30, notified_max=32) both have gap=2 and, with every
+            # other state field equal, produce an IDENTICAL decisions.csv
+            # even though the neighbor's own advertised state is nowhere
+            # close to the same. `advertised_hi`/`advertised_notified_max`
+            # report those two raw distributions alongside the gap, so a
+            # reader comparing two runs' state is not told they match when
+            # they do not.
             last_timeout_s = state.get("last_timeout_s")
             decision_rows.append(
                 {
@@ -760,6 +809,18 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
                         for info in origins.values()
                         for adv in info.get("advertised", {}).values()
                         if adv.get("notified_max") is not None and adv.get("hi") is not None
+                    ],
+                    "advertised_hi": [
+                        adv["hi"]
+                        for info in origins.values()
+                        for adv in info.get("advertised", {}).values()
+                        if adv.get("hi") is not None
+                    ],
+                    "advertised_notified_max": [
+                        adv["notified_max"]
+                        for info in origins.values()
+                        for adv in info.get("advertised", {}).values()
+                        if adv.get("notified_max") is not None
                     ],
                     # Age, not the raw epoch seconds: last_timeout_s is "壁
                     # 時計のエポック秒" (map.md), not meaningfully poolable
@@ -830,11 +891,14 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
     `read_meta` actually found, every metric column left empty rather
     than a misleading 0. Dropping the row entirely (the previous
     behavior) silently removed exactly the runs most likely to be the
-    ones a condition's own failure-rate judgment needs to see.
+    ones a condition's own failure-rate judgment needs to see. An
+    "incomplete" run (see `aggregate`) gets the identical empty-metrics
+    row shape, minus `analysis_error` (left empty too -- there is
+    nothing to analyze at all, let alone an error from trying).
     """
     rows = []
     for run in analyses:
-        if run.analysis_error is not None:
+        if run.analysis_error is not None or run.status == "incomplete":
             rows.append(
                 {
                     "p": run.p,
@@ -969,7 +1033,7 @@ CONSISTENCY_FIELDS = ["p", "seed", "origin", "seq", "time_ms", "censored"]
 
 
 def _included(analyses: list[RunAnalysis], include_unknown: bool) -> list[RunAnalysis]:
-    """Every run except flagged ones, and -- unless `include_unknown` -- except unknown ones too.
+    """Every run except flagged and incomplete ones, and -- unless `include_unknown` -- except unknown ones too.
 
     2026-10-23 (revised): flagged runs (map.md "印つきの run は集計から外
     す") are always excluded. "Unknown" runs (no meta.json at all -- its
@@ -980,8 +1044,11 @@ def _included(analyses: list[RunAnalysis], include_unknown: bool) -> list[RunAna
     (summary.csv's own n_unknown). `--include-unknown` overrides that for
     a manual trial run that has no meta.json by construction (e.g.
     trial-manual) and still needs a real number out the other end.
+    "Incomplete" runs (see `aggregate`) are ALWAYS excluded, regardless
+    of `include_unknown` -- there is no verdict to include even under
+    that flag, since the run never finished and has no metrics at all.
     """
-    excluded_statuses = {"flagged"} if include_unknown else {"flagged", "unknown"}
+    excluded_statuses = {"flagged", "incomplete"} if include_unknown else {"flagged", "unknown", "incomplete"}
     return [run for run in analyses if run.status not in excluded_statuses]
 
 
@@ -1050,7 +1117,7 @@ SURVIVAL_FIELDS = [
 
 
 def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> list[dict]:
-    """summary.csv: per p, run-status counts, discovery/consistency/control-byte summaries, probe discovery rate."""
+    """summary.csv: per p, run-status counts (including n_incomplete), discovery/consistency/control-byte summaries, probe discovery rate."""
     by_p: dict[float, list[RunAnalysis]] = {}
     for run in analyses:
         by_p.setdefault(run.p, []).append(run)
@@ -1062,6 +1129,12 @@ def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> li
         n_valid = sum(1 for r in runs if r.status == "valid")
         n_flagged = sum(1 for r in runs if r.status == "flagged")
         n_unknown = sum(1 for r in runs if r.status == "unknown")
+        # 2026-10-23: a run with no DONE marker (see `aggregate`) never
+        # finished at all -- counted separately from n_flagged/n_unknown
+        # so map.md's own ">5% flagged" threshold is judged against a
+        # condition's actually-finished runs, never silently inflated or
+        # deflated by ones still awaiting a redo.
+        n_incomplete = sum(1 for r in runs if r.status == "incomplete")
 
         latency_samples = [
             _row_to_sample(row, "latency_ms") for run in included for row in run.discovery_rows
@@ -1100,6 +1173,7 @@ def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> li
                 "n_valid": n_valid,
                 "n_flagged": n_flagged,
                 "n_unknown": n_unknown,
+                "n_incomplete": n_incomplete,
                 "n_pairs": n_pairs,
                 "n_censored_pairs": n_censored_pairs,
                 "pairs_censored_fraction": pairs_censored_fraction,
@@ -1135,6 +1209,7 @@ SUMMARY_FIELDS = [
     "n_valid",
     "n_flagged",
     "n_unknown",
+    "n_incomplete",
     "n_pairs",
     "n_censored_pairs",
     "pairs_censored_fraction",
@@ -1160,10 +1235,22 @@ SUMMARY_FIELDS = [
 
 # Every numeric decision field this module reports a distribution for,
 # regardless of `kind` -- `state` is recorded on every decision
-# (map.md's own "判断の記録" shape), so these five are never kind-
+# (map.md's own "判断の記録" shape), so these seven are never kind-
 # specific. `action`'s own fields differ by kind instead (_ACTION_FIELDS
 # below), since map.md's own `action` shape differs by kind too.
-_STATE_NUMERIC_FIELDS = ("in_flight", "hi", "missing", "advertised_gap", "last_timeout_age_s")
+# `advertised_hi`/`advertised_notified_max` (2026-10-23) sit alongside
+# `advertised_gap` rather than replacing it: the gap is the comparison
+# map.md asks for, but reporting only the gap loses the two values that
+# produced it (see analyze_run's own decision_rows construction).
+_STATE_NUMERIC_FIELDS = (
+    "in_flight",
+    "hi",
+    "missing",
+    "advertised_gap",
+    "advertised_hi",
+    "advertised_notified_max",
+    "last_timeout_age_s",
+)
 
 # Which action field each kind's own `action` shape carries (map.md
 # "action は種類ごとに違う"): state_poll -> interval_s, fetch_plan ->
@@ -1263,24 +1350,43 @@ def aggregate(
 ) -> list[RunAnalysis]:
     """Discover every run, analyze the ones this call will process, write all six CSVs into `outdir`.
 
-    Returns every run's RunAnalysis actually processed (DONE, or
-    `include_undone`) -- `analyze_run` itself no longer raises for a run
-    whose events/t0 evidence is unreadable (see its own docstring and
-    RunAnalysis.analysis_error), so every such run still gets a row here
-    too, not just the ones with clean data. A run skipped for lacking
-    DONE is reported to stderr and left out of every output table
-    entirely (not even a row -- "not processed" is a different thing
-    from "processed, but unreadable"). `include_unknown` only changes
-    which runs `survival.csv`/`summary.csv`/`decisions.csv` POOL (see
-    `_included`) -- runs.csv and discovery.csv always carry every
-    processed run, flagged and unknown included, regardless of either
-    flag.
+    Returns every run's RunAnalysis -- every discovered run gets one now,
+    including a run missing its DONE marker. `analyze_run` itself no
+    longer raises for a run whose events/t0 evidence is unreadable (see
+    its own docstring and RunAnalysis.analysis_error), so every such run
+    still gets a row too, not just the ones with clean data.
+
+    2026-10-23 fix: a run dir missing DONE used to be skipped outright
+    (no row anywhere) under the assumption that DONE marks "this run's
+    own preconditions passed" -- but `semindex.evalrun.run_one` writes
+    DONE unconditionally, after a run reaches the end of its own
+    pipeline, flagged or not (see `run_has_done_marker`'s own docstring).
+    A missing DONE therefore means the run never finished at all (an
+    interrupted sweep, not a failed one), and silently dropping it from
+    every table under-reported the OPPOSITE of what map.md's own
+    ">5% flagged" threshold needs: a condition cannot be judged against
+    a count that already excluded the runs most likely to still need a
+    redo. Such a run now gets a status="incomplete" row (p/seed only,
+    every metric column and status empty -- there is nothing stored yet
+    to analyze), counted in summary.csv's own n_incomplete, and always
+    excluded from pooling (see `_included`) regardless of
+    `include_unknown` -- there is no verdict to pool either way.
+    `--include-undone` keeps its own prior meaning unchanged: it is for
+    the one case that has no DONE by construction and is NOT awaiting a
+    redo (a hand-stored manual trial run), and routes straight into
+    `analyze_run` as before, with whatever status its own meta.json (or
+    lack of one) gives it.
+
+    `include_unknown` only changes which runs `survival.csv`/
+    `summary.csv`/`decisions.csv` POOL (see `_included`) -- runs.csv and
+    discovery.csv always carry every discovered run, regardless of
+    either flag.
     """
     refs = discover_runs(store, stage)
     analyses: list[RunAnalysis] = []
     for ref in refs:
         if not include_undone and not run_has_done_marker(ref.run_dir):
-            print(f"semindex.evalagg: skipping {ref.run_dir} (no DONE marker)", file=sys.stderr)
+            analyses.append(RunAnalysis(p=ref.p, seed=ref.seed, status="incomplete", flags=[]))
             continue
         try:
             analyses.append(analyze_run(ref.p, ref.seed, ref.run_dir))
@@ -1290,9 +1396,9 @@ def aggregate(
             # analysis_error set rather than raising, so reaching this
             # clause means something unanticipated broke even reading
             # meta.json/DONE -- still skip only this one run (not the
-            # whole batch), with the same "not processed at all" shape
-            # the no-DONE case above gets, since there is no status/flags
-            # to attach a row to here either.
+            # whole batch), with the same "not processed at all" shape,
+            # since there is no status/flags to attach a row to here
+            # either.
             print(f"semindex.evalagg: skipping {ref.run_dir}: {exc}", file=sys.stderr)
             continue
 

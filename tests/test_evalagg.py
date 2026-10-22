@@ -17,12 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from semindex import evalgen
+from semindex import evalgen, evalrun
 from semindex.check import CheckUsageError
 from semindex.evalagg import (
+    RunAnalysis,
     Sample,
     aggregate,
     analyze_run,
+    build_decisions_rows,
     derive_t0_ms,
     discover_runs,
     kaplan_meier_steps,
@@ -101,6 +103,7 @@ def _event_result_row(ts_ms: float, scheduled_at: float, actual_at: float, event
 
 
 def _read_csv(path: Path) -> list[dict]:
+    """Read one of evalagg's own output CSVs at `path` into a list of {column_name: cell_string} dicts, one per row."""
     with open(path, "r", encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
 
@@ -168,6 +171,33 @@ def test_read_meta_shape_without_valid_and_flags_is_unknown(tmp_path: Path):
     """Read meta shape without valid and flags is unknown."""
     (tmp_path / "meta.json").write_text(json.dumps({"something": "else"}))
     assert read_meta(str(tmp_path)) == ("unknown", [])
+
+
+def test_read_meta_reads_evalruns_own_meta_json_shape(tmp_path: Path):
+    """read_meta must handle `semindex.evalrun`'s own meta.json shape directly, written by its
+
+    own `_build_meta`/`_write_json` -- not a hand-rolled guess at it.
+    `_build_meta` nests the verdict one level down, under a top-level
+    "validity" key, never at the top level itself. The verdict used here
+    (`agent_lives`) is exactly what `semindex.evalvalid._check_agent_lives`
+    now flags for a node whose life count is not exactly one (more than
+    one `agent_start` line, or none at all) -- a future change to either
+    producer's own shape breaks this test first, not silently inside
+    read_meta.
+    """
+    meta = evalrun._build_meta(
+        p=0.2,
+        seed=1,
+        stage="test",
+        recefore="/fake/recefore",
+        recefore_rc=0,
+        start_s=0.0,
+        end_s=1.0,
+        verdict={"valid": False, "flags": ["agent_lives:h0"]},
+        capture_subprocess=lambda argv, cwd=None: "",
+    )
+    evalrun._write_json(str(tmp_path / "meta.json"), meta)
+    assert read_meta(str(tmp_path)) == ("flagged", ["agent_lives:h0"])
 
 
 # -- numeric helpers ------------------------------------------------------
@@ -725,6 +755,59 @@ def test_node_window_control_bytes_no_snapshot_anywhere_is_no_data():
     )
 
 
+def test_node_window_control_bytes_last_life_counts_despite_a_few_ms_of_late_stop_detection():
+    """2026-10-23 (external review): the agent detects crossing stop_at_s on its own poll
+
+    tick and only then writes the final `counters` line -- a few ms of
+    wall-clock lateness in the WRITE, not evidence that life started or
+    ran outside the window. The reviewer's own counterexample: window
+    [10000, 130000] ms, a restart mid-window (life 1 holds the snapshot
+    and ends at elapsed 60s with value 50; life 2 is fresh, with no
+    snapshot of its own, and is the LAST life -- the one structurally
+    active when the window closes), whose own final counters line is
+    stamped 130001 ms -- 1ms past window_end_ms. Comparing that
+    timestamp against window_end_ms with no slack dropped life 2's whole
+    60 outright (a wrong total of 40 instead of the correct 100).
+    """
+    t0 = 1_000_000_000_000.0
+    events = [
+        {
+            "event": "counters_snapshot",
+            "ts_ms": t0 + 10_000,
+            "control_bytes_sent": 10,
+            "control_bytes_received": 10,
+        },
+        {"event": "counters", "ts_ms": t0 + 60_000, "control_bytes_sent": 50, "control_bytes_received": 50},
+        {"event": "counters", "ts_ms": t0 + 130_001, "control_bytes_sent": 60, "control_bytes_received": 60},
+    ]
+    sent, received = _node_window_control_bytes(events, window_start_ms=t0 + 10_000, window_end_ms=t0 + 130_000)
+    # (50 - 10) + 60 = 100
+    assert (sent, received) == (100, 100)
+
+
+def test_node_window_control_bytes_last_life_slack_is_bounded_not_unlimited():
+    """The late-stop-detection slack absorbs a few ms of logging lateness, not an
+
+    unbounded one -- a last life whose final counters line lands well
+    past window_end_ms (here, 1 full minute late) is too far from the
+    window's close to be explained by stop-detection jitter, so it is
+    not counted at all; only the snapshot life's own 40 contributes.
+    """
+    t0 = 1_000_000_000_000.0
+    events = [
+        {
+            "event": "counters_snapshot",
+            "ts_ms": t0 + 10_000,
+            "control_bytes_sent": 10,
+            "control_bytes_received": 10,
+        },
+        {"event": "counters", "ts_ms": t0 + 60_000, "control_bytes_sent": 50, "control_bytes_received": 50},
+        {"event": "counters", "ts_ms": t0 + 190_000, "control_bytes_sent": 60, "control_bytes_received": 60},
+    ]
+    sent, received = _node_window_control_bytes(events, window_start_ms=t0 + 10_000, window_end_ms=t0 + 130_000)
+    assert (sent, received) == (40, 40)
+
+
 def test_split_lives_drops_a_trailing_life_with_no_terminating_counters_line():
     """A life that never cleanly shut down (no final `counters` line) is dropped, not treated as complete."""
     events = [
@@ -755,6 +838,43 @@ def test_analyze_run_run_a_decisions_are_window_filtered(synthetic_store: Path):
     fetch_backoff = next(d for d in run.decision_rows if d["kind"] == "fetch_backoff")
     assert fetch_backoff["wait_s"] == 2.0
     assert fetch_backoff["missing"] == [1]
+
+
+def test_build_decisions_rows_advertised_hi_and_notified_max_distinguish_same_gap():
+    """2026-10-23 (external review): `advertised_gap` alone cannot tell (hi=3,
+
+    notified_max=5) apart from (hi=30, notified_max=32) -- both have
+    gap=2, so a decisions.csv built from only the gap reports an
+    IDENTICAL state distribution for two runs whose neighbors are
+    advertising wildly different progress. `advertised_hi`/
+    `advertised_notified_max` report the two raw values too.
+    """
+    base_row = {
+        "kind": "fetch_plan",
+        "in_flight": 0,
+        "truncated": False,
+        "hi": [],
+        "missing": [],
+        "last_timeout_age_s": None,
+        "wait_s": None,
+        "interval_s": None,
+        "fetched_count": None,
+    }
+    run = RunAnalysis(
+        p=0.0,
+        seed=1,
+        status="valid",
+        flags=[],
+        decision_rows=[
+            {**base_row, "advertised_gap": [2], "advertised_hi": [3], "advertised_notified_max": [5]},
+            {**base_row, "advertised_gap": [2], "advertised_hi": [30], "advertised_notified_max": [32]},
+        ],
+    )
+    rows = build_decisions_rows([run], include_unknown=False)
+    by_field = {r["field"]: r for r in rows}
+    assert by_field["advertised_gap"]["median"] == 2.0
+    assert by_field["advertised_hi"]["median"] == 16.5  # (3 + 30) / 2
+    assert by_field["advertised_notified_max"]["median"] == 18.5  # (5 + 32) / 2
 
 
 def test_analyze_run_run_c_derives_t0_via_scheduler_and_hop_distance_two(synthetic_store: Path):
@@ -821,6 +941,8 @@ def test_aggregate_writes_all_six_csvs_with_expected_rows(synthetic_store: Path,
     assert by_field[("0.0", "state_poll", "truncated")]["frequency"] == "0.0"
     assert by_field[("0.0", "fetch_plan", "missing")]["median"] == "1"
     assert by_field[("0.0", "fetch_plan", "advertised_gap")]["median"] == "2"  # notified_max(5) - hi(3)
+    assert by_field[("0.0", "fetch_plan", "advertised_hi")]["median"] == "3"
+    assert by_field[("0.0", "fetch_plan", "advertised_notified_max")]["median"] == "5"
     assert by_field[("0.0", "fetch_plan", "fetched_count")]["median"] == "1"
     assert by_field[("0.0", "fetch_backoff", "wait_s")]["median"] == "2.0"
     assert by_field[("0.0", "fetch_backoff", "last_timeout_age_s")]["median"] == "1.0"
@@ -911,23 +1033,90 @@ def test_discovery_csv_includes_flagged_runs_rows_but_survival_excludes_them(tmp
 # -- DONE marker / --include-undone --------------------------------------
 
 
-def test_aggregate_skips_runs_without_done_marker_by_default(tmp_path: Path):
-    """Aggregate skips runs without done marker by default."""
+def test_aggregate_counts_runs_without_done_marker_as_incomplete_by_default(tmp_path: Path):
+    """2026-10-23: `semindex.evalrun.run_one` writes DONE unconditionally after a run
+
+    finishes its own pipeline, flagged or not -- a run dir missing DONE
+    is therefore an INTERRUPTED run awaiting a redo, not a flagged one,
+    and `meta.json`, if any happens to be left over from that
+    interrupted attempt, is never consulted for it (its own verdict is
+    not this run's real one). It must get an "incomplete" row with every
+    metric column empty, never vanish from the output entirely (the
+    previous behavior silently excluded exactly the runs most likely to
+    need a redo from map.md's own >5%-flagged judgment).
+    """
     store = tmp_path / "store"
     t0 = 1_000_000_000_000.0
     run_dir = store / "test" / "p0" / "1"
     _write_run(
         run_dir,
         {"h0": [{"event": "counters_snapshot", "ts_ms": t0 + WINDOW_START_MS, "control_bytes_sent": 1, "control_bytes_received": 1}]},
-        results=None,
-        meta=None,
+        # A leftover meta.json from the interrupted attempt, deliberately
+        # saying "flagged" -- proves this verdict is never read for an
+        # incomplete run.
+        meta={"valid": False, "flags": ["agents_missing"]},
         done=False,
     )
     outdir = tmp_path / "out"
     analyses = aggregate(str(store), "test", str(outdir), include_undone=False)
-    assert analyses == []
+    assert len(analyses) == 1
+    assert analyses[0].status == "incomplete"
+    assert analyses[0].flags == []
+    assert analyses[0].analysis_error is None
+
     runs = _read_csv(outdir / "runs.csv")
-    assert runs == []
+    assert len(runs) == 1
+    assert runs[0]["valid"] == "incomplete"
+    assert runs[0]["flags"] == ""
+    assert runs[0]["n_records_created"] == ""  # empty, not a misleading 0
+
+    summary = _read_csv(outdir / "summary.csv")
+    assert len(summary) == 1
+    assert summary[0]["n_incomplete"] == "1"
+    assert summary[0]["n_valid"] == "0"
+    assert summary[0]["n_flagged"] == "0"
+    assert summary[0]["n_unknown"] == "0"
+
+
+def test_aggregate_94_valid_plus_6_incomplete_counterexample(tmp_path: Path):
+    """The reviewer's own counterexample: 94 finished, valid runs (DONE present)
+
+    alongside 6 runs an earlier, interrupted sweep never finished (no
+    DONE -- regardless of whatever meta.json a half-finished attempt
+    happened to leave behind). Before this fix, the 6 no-DONE runs were
+    skipped outright: n_valid=94, n_flagged=0, 94 rows in runs.csv --
+    silently dropping exactly the runs a redo-rate judgment needs to
+    see. They must now show up as n_incomplete=6, never pooled into any
+    metric, with 100 rows total.
+    """
+    store = tmp_path / "store"
+    for seed in range(94):
+        run_dir = store / "test" / "p0" / str(seed)
+        _write_run(run_dir, {}, results=None, meta={"valid": True, "flags": []}, done=True)
+    for seed in range(94, 100):
+        run_dir = store / "test" / "p0" / str(seed)
+        _write_run(
+            run_dir,
+            {},
+            results=None,
+            meta={"valid": False, "flags": ["agents_missing"]},
+            done=False,
+        )
+    outdir = tmp_path / "out"
+    analyses = aggregate(str(store), "test", str(outdir), include_undone=False)
+
+    assert len(analyses) == 100
+    assert sum(1 for r in analyses if r.status == "valid") == 94
+    assert sum(1 for r in analyses if r.status == "incomplete") == 6
+
+    runs = _read_csv(outdir / "runs.csv")
+    assert len(runs) == 100
+
+    summary = _read_csv(outdir / "summary.csv")
+    assert len(summary) == 1
+    assert summary[0]["n_valid"] == "94"
+    assert summary[0]["n_incomplete"] == "6"
+    assert summary[0]["n_flagged"] == "0"
 
 
 def test_aggregate_include_undone_processes_runs_without_done_marker(tmp_path: Path):
@@ -967,18 +1156,26 @@ def test_aggregate_keeps_an_unreadable_run_counted_rather_than_dropping_it(tmp_p
     outdir = tmp_path / "out"
     analyses = aggregate(str(store), "test", str(outdir), include_undone=False)
 
+    # Exact match, not merely non-empty: this run's events.jsonl is
+    # missing for every node, so discover_node_events's own diagnostic
+    # ("no events.jsonl found under ...") is the ONE error CheckUsageError
+    # can raise here -- a substring/non-empty check would also pass for
+    # an unrelated error (e.g. a crash elsewhere in this pipeline), which
+    # is not evidence this specific precondition failure was caught.
+    expected_diagnostic = f"no events.jsonl found under {broken_dir}/debug/node_dirs/h*/semindex/"
+
     assert len(analyses) == 1
     run = analyses[0]
     assert run.status == "flagged"
     assert run.flags == ["agents_missing"]
-    assert run.analysis_error is not None
+    assert run.analysis_error == expected_diagnostic
     assert run.n_records_created is None
 
     runs = _read_csv(outdir / "runs.csv")
     assert len(runs) == 1
     assert runs[0]["valid"] == "flagged"
     assert runs[0]["flags"] == "agents_missing"
-    assert runs[0]["analysis_error"] != ""
+    assert runs[0]["analysis_error"] == expected_diagnostic
     assert runs[0]["n_records_created"] == ""  # empty, not a misleading 0
 
     summary = _read_csv(outdir / "summary.csv")
