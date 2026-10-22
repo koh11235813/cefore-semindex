@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-from semindex import schema
+from semindex import gen, schema
 from semindex.gen import (
     ExperimentError,
     generate,
@@ -371,9 +372,17 @@ def test_generate_recefore_config_has_every_required_shape():
                 "--state-dir",
                 "{node_dir}/semindex",
             ],
+            "env": {"PYTHONPATH": gen.SEMINDEX_SRC_DIR},
             "log": "{node_dir}/semindex_agent.log",
         }
     ]
+
+
+def test_host_apps_pythonpath_points_at_the_generating_package_src():
+    """The agent is launched against the same src/ tree as the generator that wrote its config."""
+    import semindex
+
+    assert gen.SEMINDEX_SRC_DIR == os.path.dirname(os.path.dirname(os.path.abspath(semindex.__file__)))
 
 
 def test_generate_agent_configs_fill_in_content_name_and_derive_neighbors():

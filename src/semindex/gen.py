@@ -44,6 +44,15 @@ from semindex import schema
 # host_apps entry.
 SEMINDEX_VENV_PYTHON = "/home/lab_shared/cefore-semindex/.venv/bin/python3"
 
+# 2026-10-23 fix: that venv's editable install resolves `semindex` to the
+# main checkout's src/, so an agent launched from it ran whatever branch
+# that checkout had out, not the code that generated its config (a
+# generator on a feature worktree emitted agent keys the main checkout's
+# agent rejected at startup). Pinning PYTHONPATH to the src/ directory of
+# the package doing the generating keeps generator and agent the same
+# code; PYTHONPATH precedes the editable install's path entry.
+SEMINDEX_SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # map.md has no readiness hook between a host_apps process starting and
 # cefnetd being reachable from it; the two-host kit budgets a few seconds
 # for that gap before any node tries to register a prefix or send
@@ -597,6 +606,7 @@ def _build_recefore_config(spec: ExperimentSpec, config_dir_abspath: str) -> dic
                 "--state-dir",
                 "{node_dir}/semindex",
             ],
+            "env": {"PYTHONPATH": SEMINDEX_SRC_DIR},
             "log": "{node_dir}/semindex_agent.log",
         }
     ]
