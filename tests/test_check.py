@@ -842,6 +842,41 @@ def test_check_t2a_protocol_fails_when_the_dropped_seqs_store_ts_contradicts_its
     ) in out.splitlines()
 
 
+def test_check_t2a_protocol_fails_when_the_dropped_seqs_file_position_contradicts_its_later_ts(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix (review finding): the check
+    above treated ts_ms as authoritative whenever it was unambiguous (not a rounding tie),
+    falling back to file position only on an exact-ts_ms tie -- so a store row that sits BEFORE
+    both fetch_timeout rows in h1's own events.jsonl (events.jsonl is appended by one process per
+    life in true execution order, so file order is authoritative for when things actually
+    happened) but carries a ts_ms that reads as "after" still passed as a genuine withheld reply.
+    A contradicting ts_ms is not evidence of health either way: this moves the seq-2 store row to
+    sit ahead of both timeouts in file order (same as the "stored_before_its_own_timeout" test
+    above) while giving it a ts_ms that is unambiguously AFTER both timeouts, so only file order
+    objects to it."""
+    experiment_path = tmp_path / "t2a.json"
+    _write_experiment(experiment_path, _t2a_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2a_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    store_event = next(e for e in events if e.get("event") == "record_stored" and e.get("seq") == 2)
+    store_event["ts_ms"] = _ts_ms(14)  # unambiguously AFTER both timeouts (6, 9) -- ts_ms alone reads "healthy"
+    events.remove(store_event)
+    events.insert(1, store_event)  # but file order still says it landed ahead of both fetch_timeout rows
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2a", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's eventual store of (h0, 2) came after its fetch_timeout(s), not before: "
+        "stored at [1700000014000], timed out at [1700000006000, 1700000009000]"
+    ) in out.splitlines()
+
+
 def test_check_t2a_protocol_fails_on_a_fetch_timeout_for_a_seq_that_was_never_dropped(
     tmp_path: Path, capsys
 ):

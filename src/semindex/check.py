@@ -564,16 +564,23 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # withheld reply at all (e.g. a stale re-fetch of a record already
     # held), not evidence the retry protocol under test here ever fired.
     #
-    # 2026-10-23 fix (review finding): the
-    # comparison above used to be on ts_ms (`min(...) < max(...)`), so a
-    # store and its final timeout sharing one rounded millisecond --
-    # EventWriter rounds to whole milliseconds, the same rounding the
-    # after-recovery-retrieval fix above accounts for -- read as "not
-    # before" even when the store's row had actually been written first.
-    # events.jsonl is one process's own log, appended in true execution
-    # order as events happen, so file position (not ts_ms) is the
-    # authoritative ordering here: a store at an earlier INDEX than every
-    # matching timeout is real evidence the "timeout" was never genuine.
+    # 2026-10-23 fix (review finding): neither
+    # signal alone is trustworthy, and trusting one over the other opens a
+    # hole the other can't see. events.jsonl is one process's own log,
+    # appended in true execution order as events happen, so file position
+    # IS the authoritative ordering for "did this actually happen before
+    # or after that" -- but ts_ms still catches the one thing file
+    # position can't: EventWriter rounds ts_ms to whole milliseconds, so a
+    # store and its final timeout sharing one rounded millisecond need
+    # ts_ms's own strict inequality (when it has one) to resolve as
+    # "before" even though they're not a file-position tie. Neither
+    # signal is allowed to overrule the other into silence: a store is
+    # only accepted as "after its timeouts" when BOTH file position and
+    # ts_ms agree on that -- a contradiction between them (ts_ms says
+    # after, file order says before, or vice versa) is rejected outright,
+    # because a contradicting timestamp in a single-process append-only
+    # log is not evidence of health, it's evidence something is wrong
+    # with the run or the check's assumptions.
     indexed_requester_events = list(enumerate(requester_events))
     dropped_store_idx = [
         i
@@ -587,22 +594,10 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
     ]
     dropped_store_ts = [e["ts_ms"] for e in stored if e["seq"] == drop.seq]
     timeout_ts = [e["ts_ms"] for e in timeouts]
-    # 2026-10-23 fix (review finding): file position
-    # alone missed the opposite contradiction -- a store whose own ts_ms
-    # is unambiguously EARLIER than its fetch_timeout(s) (no rounding tie
-    # at all) still read as "after" just because it happened to sit later
-    # in the file. ts_ms is now the primary signal; file position is used
-    # only to break a genuine rounding tie (equal ts_ms), which is the one
-    # case ts_ms alone cannot order.
     if dropped_store_ts and timeout_ts:
-        min_store_ts = min(dropped_store_ts)
-        max_timeout_ts = max(timeout_ts)
-        if min_store_ts < max_timeout_ts:
-            stored_before_timeout = True
-        elif min_store_ts > max_timeout_ts:
-            stored_before_timeout = False
-        else:
-            stored_before_timeout = min(dropped_store_idx) < max(timeout_idx)
+        ts_says_before = min(dropped_store_ts) < max(timeout_ts)
+        order_says_before = min(dropped_store_idx) < max(timeout_idx)
+        stored_before_timeout = ts_says_before or order_says_before
     else:
         stored_before_timeout = False
     c.protocol(
