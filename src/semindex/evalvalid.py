@@ -50,10 +50,11 @@ from semindex.check import (
 # per-record tolerance is not something the ticket specifies explicitly
 # (unlike the ±0.5s/±1s margins on the counters_snapshot/counters/
 # link-event checks, which map.md and ticket 04 give directly) -- this
-# slack only absorbs this module's own t0 estimation jitter (see
-# _derive_t0_ms) and the agent's ~10Hz tick granularity, so a record that
-# is in truth exactly on its own scheduled tick is not flagged for jitter
-# that has nothing to do with the record itself.
+# slack absorbs the agent's own ~10Hz tick granularity (and, on a run with
+# no agent_start evidence at all, _derive_t0_ms's record-median fallback
+# estimation jitter too -- see that function), so a record that is in
+# truth exactly on its own scheduled tick is not flagged for jitter that
+# has nothing to do with the record itself.
 #
 # 2026-10-23 review fix: this constant used to gate a much looser check
 # -- only whether a record's elapsed time fell anywhere inside the whole
