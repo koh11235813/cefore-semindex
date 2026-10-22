@@ -810,8 +810,8 @@ def test_check_t2c_protocol_fails_when_holder_advertises_a_seq_it_had_not_yet_st
     reply's own ts (offset 19) h1's events.jsonl shows it had actually stored only seqs 1-2 (its
     seq-3 store does not land until offset 20). The old checks alone would miss this: h2's own
     seq-3 record_stored still lands after h1's (not "served early"), and no fetch_timeout
-    follows at all, let alone a late one -- only the advertised-vs-stored comparison added for
-    this finding sees the false claim."""
+    follows at all, let alone a late one -- only the advertised-vs-stored comparison below
+    sees the false claim."""
     experiment_path = tmp_path / "t2c.json"
     _write_experiment(experiment_path, _t2c_experiment())
     run_dir = tmp_path / "run"
@@ -831,6 +831,31 @@ def test_check_t2c_protocol_fails_when_holder_advertises_a_seq_it_had_not_yet_st
         "FAIL: h1's advertised hi for h0 at its first post-restart state_rx never exceeds what "
         "it had actually stored by then: advertised hi=3, holder's own contiguous progress at "
         "ts 1700000019000 was 2"
+    ) in out.splitlines()
+
+
+def test_check_t2c_precondition_fails_when_the_state_rx_never_mentions_the_origin(tmp_path: Path, capsys):
+    """2026-10-22 fix: a state_rx reply that never mentions `origin` at all (a malformed/empty
+    reply right as h1 comes back up, or holder_state.decode failing and leaving `hi: {}`) must
+    not silently default to advertised_hi=0 and pass -- that would make the advertised-vs-stored
+    check above a no-op for exactly the replies it most needs to catch."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "state_rx":
+            event["hi"] = {}
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out
+    assert (
+        "PRECOND-FAIL: h2's first post-restart state_rx from h1 actually advertised a hi for h0: hi={}"
     ) in out.splitlines()
 
 

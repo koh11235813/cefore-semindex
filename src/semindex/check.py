@@ -625,22 +625,32 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
     if first_post_restart_state_rx is not None:
         state_rx_ts = first_post_restart_state_rx["ts_ms"]
 
-        # 2026-10-22 fix: the actual bug shape -- a
-        # life-2 holder advertising a higher hi than it has actually
-        # stored -- is now checked directly against what the holder's own
-        # events.jsonl shows it had stored as of this same reply, instead
-        # of only inferred indirectly through a fetch_timeout that may or
-        # may not follow. `hi` defaults to 0 for an origin the reply never
-        # mentioned at all (see engine.py's own on_state for why).
-        advertised_hi = first_post_restart_state_rx.get("hi", {}).get(origin, 0)
-        holder_contiguous_as_of = _contiguous_hi(
-            [e["seq"] for e in holder_stored_events if e["ts_ms"] <= state_rx_ts]
+        # 2026-10-22 fix: the actual bug shape -- a life-2 holder
+        # advertising a higher hi than it has actually stored -- is now
+        # checked directly against what the holder's own events.jsonl
+        # shows it had stored as of this same reply, instead of only
+        # inferred indirectly through a fetch_timeout that may or may not
+        # follow. A reply that never mentions `origin` at all (decode
+        # failure -> `{}`, or a reply sent before any progress existed to
+        # advertise) is a PRECONDITION gap, not a passing advertised_hi=0:
+        # defaulting silently would make this whole check a no-op for
+        # exactly the malformed/empty-reply runs it most needs to catch.
+        advertised = first_post_restart_state_rx.get("hi", {})
+        have_advertised_hi = c.precondition(
+            f"{far}'s first post-restart state_rx from {holder} actually advertised a hi for {origin}",
+            origin in advertised,
+            f"hi={advertised!r}",
         )
-        c.protocol(
-            f"{holder}'s advertised hi for {origin} at its first post-restart state_rx never exceeds what it had actually stored by then",
-            advertised_hi <= holder_contiguous_as_of,
-            f"advertised hi={advertised_hi}, holder's own contiguous progress at ts {state_rx_ts:.0f} was {holder_contiguous_as_of}",
-        )
+        if have_advertised_hi:
+            advertised_hi = advertised[origin]
+            holder_contiguous_as_of = _contiguous_hi(
+                [e["seq"] for e in holder_stored_events if e["ts_ms"] <= state_rx_ts]
+            )
+            c.protocol(
+                f"{holder}'s advertised hi for {origin} at its first post-restart state_rx never exceeds what it had actually stored by then",
+                advertised_hi <= holder_contiguous_as_of,
+                f"advertised hi={advertised_hi}, holder's own contiguous progress at ts {state_rx_ts:.0f} was {holder_contiguous_as_of}",
+            )
 
         # "progress not ahead", the second-order case: a false
         # advertisement whose seq the holder (now caught up) manages to
