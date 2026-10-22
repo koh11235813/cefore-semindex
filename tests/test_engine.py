@@ -548,14 +548,27 @@ def test_log_decisions_false_emits_no_decision_events(tmp_path: Path):
 def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: Path):
     """The "do NOT change behaviour" proof (map.md "判断の記録"): with log_decisions
     True vs False, an otherwise identical engine sends the exact same Interests at the
-    exact same times and emits the exact same non-`decision` events. Counting
-    jitter/backoff callables also confirm logging draws neither rng a second time -- a
-    silent double-draw would shift every later poll/backoff and could pass the
-    Interest/event comparison undetected if both runs happened to double-draw
-    identically, which these counts rule out directly.
+    exact same times and emits the exact same non-`decision` events. Exact-count
+    assertions on the jitter/backoff callables (poll=2, backoff=1 -- see the two
+    on_tick calls and the one timeout below) confirm logging draws neither rng a
+    second time, and ticking once strictly before the backoff deadline and once at
+    it directly shows a retry is not sent early.
+
+    2026-10-23 bug fix: the prior version of this test returned a *constant* from
+    both jitter callables and only compared call counts between the True/False
+    runs, never against a fixed expected count. A constant jitter makes a hidden
+    double-draw invisible here: calling it twice instead of once still returns the
+    same value both times, so scheduling comes out identical either way and the
+    comparison passes even with the bug. Cycling through distinct values makes an
+    extra draw shift every value drawn after it, in only the buggy run.
     """
 
     def _run(label: str, log_decisions: bool):
+        """Build one engine (log_decisions True or False) and drive it through a
+        state poll, a fetch timeout, a tick strictly before the resulting backoff's
+        deadline, and a tick at it, returning what was sent, what was logged, and
+        how many times each rng was actually drawn.
+        """
         # Same node identity ("h0") in both runs -- only the db file (named by
         # `label`, not `node`) differs -- so a divergent wire name would signal a
         # real behavior change, not just a different store path.
@@ -563,14 +576,24 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: 
         transport = RecordingTransport()
         poll_calls: list[None] = []
         backoff_calls: list[None] = []
+        # Distinct, non-repeating values (not a constant): a hidden extra draw
+        # from either sequence returns a value it would not otherwise have
+        # reached, shifting every interval/wait computed after it -- a constant
+        # jitter cannot expose that, since drawing it twice looks the same as once.
+        poll_jitter_values = (0.2, 0.8)
+        backoff_jitter_values = (0.25, 0.75)
 
         def poll_jitter() -> float:
+            """Return the next of poll_jitter_values, cycling; record that it was drawn."""
+            value = poll_jitter_values[len(poll_calls) % len(poll_jitter_values)]
             poll_calls.append(None)
-            return 0.3
+            return value
 
         def backoff_jitter() -> float:
+            """Return the next of backoff_jitter_values, cycling; record that it was drawn."""
+            value = backoff_jitter_values[len(backoff_calls) % len(backoff_jitter_values)]
             backoff_calls.append(None)
-            return 0.0
+            return value
 
         config = SyncConfig(
             group="g", node="h0", neighbors=("h1",), fetch_backoff_initial_s=1.0, log_decisions=log_decisions
@@ -579,24 +602,46 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: 
         engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
 
         all_events: list[dict] = []
-        engine.on_tick(now=0.0)  # state poll (due now) + fetch plan (claims origin-x/1)
+        engine.on_tick(now=0.0)  # state poll (due now; poll draw #1) + fetch plan (claims origin-x/1)
         all_events += engine.drain_events()
 
         fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
-        engine.on_fetch_timeout(fetch_name, now=0.5)
+        engine.on_fetch_timeout(fetch_name, now=0.5)  # backoff draw #1: wait = 1.0 + 0.25 = 1.25s, deadline 1.75
+        all_events += engine.drain_events()
+        sent_count_after_timeout = len(transport.sent)
+
+        engine.on_tick(now=1.0)  # strictly before the 1.75 deadline and the next poll's own due time (>=1.6)
+        all_events += engine.drain_events()
+        sent_count_before_deadline = len(transport.sent)
+
+        engine.on_tick(now=5.0)  # past the deadline: retry resent, next poll due (poll draw #2)
         all_events += engine.drain_events()
 
-        engine.on_tick(now=5.0)  # the 1s backoff has long elapsed; retry plus next state poll
-        all_events += engine.drain_events()
+        return (
+            transport.sent,
+            all_events,
+            len(poll_calls),
+            len(backoff_calls),
+            sent_count_after_timeout,
+            sent_count_before_deadline,
+        )
 
-        return transport.sent, all_events, len(poll_calls), len(backoff_calls)
-
-    sent_on, events_on, polls_on, backoffs_on = _run("on", True)
-    sent_off, events_off, polls_off, backoffs_off = _run("off", False)
+    sent_on, events_on, polls_on, backoffs_on, after_timeout_on, before_deadline_on = _run("on", True)
+    sent_off, events_off, polls_off, backoffs_off, after_timeout_off, before_deadline_off = _run("off", False)
 
     assert sent_on == sent_off
-    assert polls_on == polls_off
-    assert backoffs_on == backoffs_off
+    assert polls_on == 2
+    assert backoffs_on == 1
+    assert polls_off == 2
+    assert backoffs_off == 1
+
+    # The tick strictly before the backoff deadline (now=1.0) sends nothing new in
+    # either run -- the retry is not resent early; the deadline tick (now=5.0) is
+    # what actually resends it.
+    assert before_deadline_on == after_timeout_on
+    assert before_deadline_off == after_timeout_off
+    assert len(sent_on) > before_deadline_on
+    assert len(sent_off) > before_deadline_off
 
     non_decision_on = [e for e in events_on if e["event"] != "decision"]
     non_decision_off = [e for e in events_off if e["event"] != "decision"]
