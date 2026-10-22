@@ -614,7 +614,28 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: 
         all_events += engine.drain_events()
         sent_count_before_deadline = len(transport.sent)
 
-        engine.on_tick(now=5.0)  # past the deadline: retry resent, next poll due (poll draw #2)
+        # 2026-10-25 test fix: the 1.75s backoff deadline and the next poll's own
+        # ~1.76s due time are only a hundredth of a second apart, so a tick at 1.0
+        # and the next one at 5.0 cannot tell "the retry resent exactly on time" from
+        # "a state poll fired instead" -- nor would either catch a bug that nudges
+        # either deadline by a few hundredths of a second (e.g. only when
+        # log_decisions draws an extra, unaccounted-for rng value). Ticking once
+        # more, strictly before 1.75, and once exactly at it, isolates the fetch
+        # retry from the still-not-due poll and pins the exact Interest each sends.
+        engine.on_tick(now=1.7)  # strictly before both the 1.75 and ~1.76 deadlines
+        all_events += engine.drain_events()
+        sent_before_1_75 = list(transport.sent)
+
+        engine.on_tick(now=1.75)  # exactly the backoff deadline; the poll is not due until 1.76
+        all_events += engine.drain_events()
+        sent_at_1_75 = list(transport.sent)
+
+        # poll_jitter_values[0]=0.2 maps to offset -0.12 (state_poll_jitter_frac's
+        # own default 0.2 -> 0.2*(2*0.2-1)), so the first poll's own interval is
+        # exactly 2.0*(1-0.12)=1.76s: tick there, not at some later catch-all time,
+        # so a bug that nudges this deadline (not just the backoff one above) by a
+        # few hundredths of a second is caught at the instant it would first show.
+        engine.on_tick(now=1.76)  # exactly the next poll's own due time: poll draw #2
         all_events += engine.drain_events()
 
         return (
@@ -624,10 +645,20 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: 
             len(backoff_calls),
             sent_count_after_timeout,
             sent_count_before_deadline,
+            sent_before_1_75,
+            sent_at_1_75,
+            fetch_name,
+            config.interest_lifetime_ms,
         )
 
-    sent_on, events_on, polls_on, backoffs_on, after_timeout_on, before_deadline_on = _run("on", True)
-    sent_off, events_off, polls_off, backoffs_off, after_timeout_off, before_deadline_off = _run("off", False)
+    (
+        sent_on, events_on, polls_on, backoffs_on, after_timeout_on, before_deadline_on,
+        before_1_75_on, at_1_75_on, fetch_name_on, lifetime_on,
+    ) = _run("on", True)
+    (
+        sent_off, events_off, polls_off, backoffs_off, after_timeout_off, before_deadline_off,
+        before_1_75_off, at_1_75_off, fetch_name_off, lifetime_off,
+    ) = _run("off", False)
 
     assert sent_on == sent_off
     assert polls_on == 2
@@ -636,12 +667,27 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: 
     assert backoffs_off == 1
 
     # The tick strictly before the backoff deadline (now=1.0) sends nothing new in
-    # either run -- the retry is not resent early; the deadline tick (now=5.0) is
-    # what actually resends it.
+    # either run -- the retry is not resent early.
     assert before_deadline_on == after_timeout_on
     assert before_deadline_off == after_timeout_off
-    assert len(sent_on) > before_deadline_on
-    assert len(sent_off) > before_deadline_off
+
+    # Still nothing new at 1.7s: strictly before both the backoff deadline and the
+    # next poll's own due time.
+    assert before_1_75_on == sent_on[:before_deadline_on]
+    assert before_1_75_off == sent_off[:before_deadline_off]
+
+    # Exactly at the 1.75s deadline, the retry -- and only the retry, not a poll
+    # that is not due until 1.76s -- is resent.
+    assert at_1_75_on[len(before_1_75_on):] == [(fetch_name_on, lifetime_on)]
+    assert at_1_75_off[len(before_1_75_off):] == [(fetch_name_off, lifetime_off)]
+
+    # Exactly at the poll's own 1.76s due time, exactly one more Interest goes
+    # out: the state-request poll itself, not a second copy of the
+    # already-in-flight retry (checked, separately from the retry above, at the
+    # instant the poll is actually due rather than at some later catch-all tick).
+    poll_name = names.build_state_name("g", "h1", "h0", round(1.76 * 1000))
+    assert sent_on[len(at_1_75_on):] == [(poll_name, lifetime_on)]
+    assert sent_off[len(at_1_75_off):] == [(poll_name, lifetime_off)]
 
     non_decision_on = [e for e in events_on if e["event"] != "decision"]
     non_decision_off = [e for e in events_off if e["event"] != "decision"]

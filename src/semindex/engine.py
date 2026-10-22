@@ -339,10 +339,11 @@ class SyncEngine:
         `fetch_backoff` decision (map.md "判断の記録", kind 2).
 
         The state snapshot is taken *before* the Tracker call, which decrements its
-        in-flight count for `neighbor` and sets its last_fail_at -- the snapshot must
-        show what was true going into this failure, not what the failure itself just
-        changed. Tracker._fail returns None for a stale timeout/rejection (nothing was
-        actually in flight any more); that is not a decision, so nothing is logged.
+        in-flight count for `neighbor` and, only when cause == "timeout", updates
+        last_timeout_at -- the snapshot must show what was true going into this
+        failure, not what the failure itself just changed. Tracker._fail returns
+        None for a stale timeout/rejection (nothing was actually in flight any
+        more); that is not a decision, so nothing is logged.
         """
         state = self._tracker.decision_state(neighbor)
         if cause == "timeout":

@@ -89,9 +89,8 @@ class _OriginState:
 class Tracker:
     """Tracks missing Index records per origin and schedules their retrieval."""
 
-    # Exposed as a class attribute (mirrors DECISION_STATE_MAX_ORIGINS above) so a
-    # caller -- or a test pinning the cap in its own assertions -- can read it off the
-    # class without reaching into the module's globals.
+    # Exposed as a class attribute (mirrors DECISION_STATE_MAX_ORIGINS above): the same
+    # cap value, reachable off the class itself rather than only the module's globals.
     DECISION_STATE_MAX_ORIGINS = DECISION_STATE_MAX_ORIGINS
 
     def __init__(
@@ -194,16 +193,28 @@ class Tracker:
         2026-10-23 bug fix: decision_state used to report len(missing()), so a
         backlog beyond the cap showed exactly max_missing_per_origin forever,
         indistinguishable from a backlog of exactly that size.
+
+        2026-10-23 bug fix: this used to enumerate every seq from
+        held_contiguous+1 to notified_max to count the ones not in
+        held_extra -- on_tick calls it (through decision_state) for every
+        neighbor on every tick regardless of whether anything is actually
+        due, so a single neighbor advertising a hi in the tens of millions
+        (a malformed or just very long-lived origin) made that one count
+        take hundreds of milliseconds, blocking this single-threaded
+        agent's whole loop. held_extra only ever holds the sparse seqs
+        this node has actually received out of order, never the full
+        span, so counting it directly and subtracting from the span's
+        raw size is the same count without walking the span itself.
         """
         state = self._origins.get(origin)
         if state is None:
             return 0
         upper = self.notified_max(origin)
-        return sum(
-            1
-            for seq in range(state.held_contiguous + 1, upper + 1)
-            if seq not in state.held_extra
-        )
+        held_contiguous = state.held_contiguous
+        if upper <= held_contiguous:
+            return 0
+        held_extra_in_range = sum(1 for seq in state.held_extra if held_contiguous < seq <= upper)
+        return (upper - held_contiguous) - held_extra_in_range
 
     def origins(self) -> list[str]:
         """Every origin this tracker has any advertised or held state for."""
@@ -394,9 +405,9 @@ class Tracker:
         advertisers for as long as they all keep failing.
 
         2026-10-23 (map.md "判断の記録"): returns the chosen wait
-        (seconds), or None on the stale early-return below, so a caller
-        can tell a real decision from a no-op and log a `fetch_backoff`
-        decision event only for the former.
+        (seconds), or None on the stale early-return below -- the
+        distinction between a real decision and a no-op, so only the
+        former is ever worth logging as a `fetch_backoff` decision event.
 
         2026-10-23 bug fix: only cause == "timeout" records `now` in
         _last_timeout_at[neighbor], and only once execution is past the

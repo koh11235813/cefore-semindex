@@ -246,8 +246,8 @@ def test_default_backoff_initial_clears_cefores_pit_grace_window():
 
 
 def test_on_fetch_timeout_returns_the_chosen_wait():
-    """on_fetch_timeout returns the backoff wait it just scheduled, for SyncEngine to log
-    as a `decision` event's action -- a real, in-flight fetch that actually failed."""
+    """on_fetch_timeout returns the backoff wait it just scheduled: the seconds chosen
+    before the next attempt, for a real, in-flight fetch that actually failed."""
     tracker = Tracker(backoff_initial_s=3.0, jitter=lambda: 0.0)
     tracker.observe_held("h0", hi=0, extra=())
     tracker.observe_state("h0", "n1", hi=1, extra=())
@@ -317,6 +317,14 @@ def test_last_timeout_at_ignores_a_rejected_reply():
     rejection silently overwrote the timeout's own time, even though decision_state
     reports this value as "last_timeout_s" -- map.md "判断の記録"'s "直前のタイムア
     ウトの時刻" means a timeout specifically.
+
+    2026-10-23 test fix: the re-fetch used to be planned at now=3.0, the exact
+    instant the timeout itself fired -- but backoff_initial_s=1.0 means the retry
+    is not actually due until now=4.0, so plan_fetches at 3.0 claimed nothing
+    ([]), on_fetch_rejected at 6.0 found no in-flight fetch to resolve and
+    returned None through _fail's own stale early-return, and the final assert
+    passed on a value the rejection had never touched at all -- it would have
+    passed identically against the pre-fix code this test exists to pin.
     """
     tracker = Tracker(backoff_initial_s=1.0, jitter=lambda: 0.0)
     tracker.observe_held("h0", hi=0, extra=())
@@ -326,8 +334,10 @@ def test_last_timeout_at_ignores_a_rejected_reply():
     tracker.on_fetch_timeout("h0", 1, "n1", now=3.0)
     assert tracker.last_timeout_at("n1") == 3.0
 
-    tracker.plan_fetches("n1", now=3.0)  # backoff elapsed; re-fetch claimed
-    tracker.on_fetch_rejected("h0", 1, "n1", now=6.0)
+    # Due only once the 1s backoff has actually elapsed (now=4.0, not 3.0).
+    assert tracker.plan_fetches("n1", now=4.0) == [("h0", 1)]
+    wait = tracker.on_fetch_rejected("h0", 1, "n1", now=6.0)
+    assert wait is not None  # proves this rejection actually resolved a real in-flight fetch
     assert tracker.last_timeout_at("n1") == 3.0
 
 
@@ -348,6 +358,38 @@ def test_decision_state_missing_is_not_capped_by_the_fetch_planning_limit():
     assert len(tracker.missing("h0")) == 1024  # fetch planning's own cap, unchanged
     state = tracker.decision_state("n1")
     assert state["origins"]["h0"]["missing"] == 2000
+
+
+def test_missing_total_excludes_only_the_held_extras_inside_the_range():
+    """missing_total's arithmetic form (span size minus held extras within that span)
+    must agree with missing()'s own seq-by-seq enumeration, including a held extra
+    that falls outside (held_contiguous, notified_max] -- seq 1, already covered by
+    held_contiguous itself -- which must not be subtracted a second time."""
+    tracker = Tracker()
+    tracker.observe_held("h0", hi=2, extra=(1, 5, 9))
+    tracker.observe_state("h0", "n1", hi=10, extra=())
+    assert tracker.missing("h0") == [3, 4, 6, 7, 8, 10]
+    assert tracker.missing_total("h0") == 6
+
+
+def test_missing_total_runs_in_constant_time_regardless_of_notified_max():
+    """missing_total must not enumerate every seq between held_contiguous and
+    notified_max to count them: on an empty local state, a single neighbor
+    advertising hi=10_000_000 used to take on the order of a tenth of a second to
+    answer this one call -- and on_tick calls it, through decision_state, for
+    every neighbor on every tick of this single-threaded agent's loop, whether or
+    not anything is actually due. The arithmetic form answers in microseconds no
+    matter how high hi is.
+    """
+    import time
+
+    tracker = Tracker()
+    tracker.observe_state("h0", "n1", hi=10_000_000, extra=())
+    started = time.perf_counter()
+    total = tracker.missing_total("h0")
+    elapsed = time.perf_counter() - started
+    assert total == 10_000_000
+    assert elapsed < 0.05
 
 
 def test_decision_state_reports_per_origin_hi_missing_and_every_neighbors_advertisement():
