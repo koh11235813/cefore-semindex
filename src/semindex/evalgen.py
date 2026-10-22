@@ -64,8 +64,9 @@ DURATION_S = 120
 # Disconnect schedule (map.md "切断の起こし方"): one Bernoulli(p) draw per
 # link per 5s slot, independent per link and slot, over the WHOLE measured
 # window DURATION_S -- map.md's "落ちている時間の割合の期待値が p になる" and
-# ticket 03's acceptance ("p を大きくすると落ちている時間の割合が p に近づく")
-# both say this about the run, not about some sub-window of it.
+# this generator's own acceptance criterion ("p を大きくすると落ちている時間の
+# 割合が p に近づく") both say this about the run, not about some sub-window
+# of it.
 DISCONNECT_SLOT_S = 5.0
 DISCONNECT_WINDOW_S = DURATION_S
 assert DISCONNECT_WINDOW_S % DISCONNECT_SLOT_S == 0, "DISCONNECT_WINDOW_S must be a whole number of slots"
@@ -127,9 +128,10 @@ def _derive_seed(seed: int, purpose: str) -> int:
     2026-10-23 (review r1, finding 3) fix: `p` used to be part of this
     hash's input, for every purpose including "records:hN" and "probe:h2"
     -- so the same seed with a different p drew a completely unrelated
-    record/probe stream (ticket 03's ".../zone1/landslide/video" at p=0.2
-    vs ".../zone5/fire/sensor" at p=0.3 for seed=7's h0 first record),
-    instead of the ticket's "乱数は seed だけから決まり". `p` is no longer
+    record/probe stream (a reviewer's reproduction: seed=7's h0 first
+    record was ".../zone1/landslide/video" at p=0.2 but
+    ".../zone5/fire/sensor" at p=0.3), instead of the spec's "乱数は seed
+    だけから決まり". `p` is no longer
     an input here at all; `_link_events` (the only purpose where p is
     supposed to matter) still takes p as a parameter, but only to compare
     against this seed-only stream's draws, never to pick the stream.

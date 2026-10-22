@@ -181,9 +181,15 @@ def test_cli_output_is_byte_identical_across_separate_processes(tmp_path: Path):
 
 @pytest.mark.parametrize("bad_p", [-0.1, 1.1, float("nan"), float("inf"), float("-inf")])
 def test_build_experiment_rejects_p_outside_zero_one(bad_p: float):
-    """An out-of-range or non-finite p must raise, not silently clamp."""
-    with pytest.raises(ExperimentError, match=r"p must be"):
+    """An out-of-range or non-finite p must raise, not silently clamp.
+
+    Exact-match, not `match=` substring (CLAUDE.md: mutation testing shows
+    substring asserts let mutants through) -- this also pins the exact
+    `{p!r}` rendering for nan/inf/-inf, not just that *some* message came back.
+    """
+    with pytest.raises(ExperimentError) as excinfo:
         evalgen.build_experiment(bad_p, 7, "s1", "/out")
+    assert str(excinfo.value) == f"p must be a finite number in [0, 1], got {bad_p!r}"
 
 
 @pytest.mark.parametrize("good_p", [0.0, 0.2, 1.0])
@@ -345,12 +351,17 @@ def test_generate_run_writes_the_experiment_description_and_gens_own_files(tmp_p
 
 
 def test_generate_run_writes_nothing_for_a_stage_that_escapes_outdir(tmp_path: Path):
-    """A stage containing '..' must not write even the escaping file before raising."""
+    """A stage containing '..' must not write even the escaping file before raising.
+
+    Exact-match, not `match=` substring (CLAUDE.md: mutation testing shows
+    substring asserts let mutants through).
+    """
     outdir = tmp_path / "run"
     escaped_path = tmp_path / "escaped_p0.2_seed7.experiment.json"
 
-    with pytest.raises(ExperimentError, match=r"name must not be a path"):
+    with pytest.raises(ExperimentError) as excinfo:
         evalgen.generate_run(0.2, 7, "../escaped", str(outdir))
+    assert str(excinfo.value) == "name must not be a path: '../escaped_p0.2_seed7'"
 
     assert not escaped_path.exists()
     assert not outdir.exists()
@@ -367,8 +378,9 @@ def test_generate_run_writes_nothing_for_an_absolute_stage(tmp_path: Path):
     """
     outdir = tmp_path / "run"
 
-    with pytest.raises(ExperimentError, match=r"name must not be a path"):
+    with pytest.raises(ExperimentError) as excinfo:
         evalgen.generate_run(0.2, 7, "/abs", str(outdir))
+    assert str(excinfo.value) == "name must not be a path: '/abs_p0.2_seed7'"
 
     assert not outdir.exists()
 
