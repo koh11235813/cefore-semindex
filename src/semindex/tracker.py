@@ -40,6 +40,12 @@ DEFAULT_BACKOFF_MAX_S = 16.0
 DEFAULT_MAX_MISSING_PER_ORIGIN = 1024
 DEFAULT_MAX_IN_FLIGHT_PER_NEIGHBOR = 8
 
+# 2026-10-23 (map.md "判断の記録"): Tracker.decision_state reports at most this many
+# origins (lowest name first) so one `decision` event's size cannot grow with how many
+# origins a run tracks -- a run config is expected to have a handful of origins (this
+# effort's own baseline has 2), so the cap is generous headroom, not a tuned limit.
+DECISION_STATE_MAX_ORIGINS = 8
+
 
 def no_jitter() -> float:
     """Default jitter callable: always zero, for deterministic callers and tests."""
@@ -83,6 +89,10 @@ class _OriginState:
 class Tracker:
     """Tracks missing Index records per origin and schedules their retrieval."""
 
+    # Exposed as a class attribute (mirrors DECISION_STATE_MAX_ORIGINS above): the same
+    # cap value, reachable off the class itself rather than only the module's globals.
+    DECISION_STATE_MAX_ORIGINS = DECISION_STATE_MAX_ORIGINS
+
     def __init__(
         self,
         *,
@@ -102,6 +112,17 @@ class Tracker:
         self._jitter = jitter
         self._origins: dict[str, _OriginState] = {}
         self._in_flight_count: dict[str, int] = {}  # neighbor -> count, across all origins
+        # 2026-10-23 (map.md "判断の記録"): the `now` of the most recent fetch
+        # *timeout* _fail actually resolved on this neighbor, across any
+        # origin/seq -- read-only bookkeeping for decision_state; never
+        # consulted by any scheduling decision.
+        # 2026-10-23 bug fix: a rejected reply used to update this same dict
+        # too, so a rejection after a timeout silently overwrote the
+        # timeout's own time, even though decision_state reports it as
+        # "last_timeout_s" -- map.md's own "直前のタイムアウトの時刻" means a
+        # timeout specifically. Only cause == "timeout" in _fail below may
+        # set this now.
+        self._last_timeout_at: dict[str, float] = {}
 
     def _origin(self, origin: str) -> _OriginState:
         """Return this origin's bookkeeping, creating empty state on first mention."""
@@ -162,9 +183,110 @@ class Tracker:
                     break
         return result
 
+    def missing_total(self, origin: str) -> int:
+        """How many seqs this node knows exist (<= notified_max) but does not hold,
+        for `origin` -- the true backlog size, uncapped (unlike missing()'s own
+        list, which fetch planning caps at max_missing_per_origin so one due pass
+        stays bounded). For decision-event reporting (map.md "判断の記録"), which
+        must show how far behind a run actually is, not that unrelated planning cap.
+
+        2026-10-23 bug fix: decision_state used to report len(missing()), so a
+        backlog beyond the cap showed exactly max_missing_per_origin forever,
+        indistinguishable from a backlog of exactly that size.
+
+        2026-10-23 bug fix: this used to enumerate every seq from
+        held_contiguous+1 to notified_max to count the ones not in
+        held_extra -- on_tick calls it (through decision_state) for every
+        neighbor on every tick regardless of whether anything is actually
+        due, so a single neighbor advertising a hi in the tens of millions
+        (a malformed or just very long-lived origin) made that one count
+        take hundreds of milliseconds, blocking this single-threaded
+        agent's whole loop. held_extra only ever holds the sparse seqs
+        this node has actually received out of order, never the full
+        span, so counting it directly and subtracting from the span's
+        raw size is the same count without walking the span itself.
+        """
+        state = self._origins.get(origin)
+        if state is None:
+            return 0
+        upper = self.notified_max(origin)
+        held_contiguous = state.held_contiguous
+        if upper <= held_contiguous:
+            return 0
+        held_extra_in_range = sum(1 for seq in state.held_extra if held_contiguous < seq <= upper)
+        return (upper - held_contiguous) - held_extra_in_range
+
     def origins(self) -> list[str]:
         """Every origin this tracker has any advertised or held state for."""
         return sorted(self._origins)
+
+    def in_flight_count(self, neighbor: str) -> int:
+        """How many fetches are currently outstanding on `neighbor`, across every origin.
+
+        2026-10-23 (map.md "判断の記録"): read-only accessor onto the same counter
+        plan_fetches/_fail already maintain for scheduling; exposed for
+        decision-event logging too, and it changes no scheduling behavior itself.
+        """
+        return self._in_flight_count.get(neighbor, 0)
+
+    def last_timeout_at(self, neighbor: str) -> float | None:
+        """The `now` of the most recent fetch *timeout* _fail actually resolved on
+        `neighbor`, or None if it has never timed one out (map.md "判断の記録"'s "直
+        前のタイムアウトの時刻"). A stale timeout -- one _fail treats as nothing to
+        resolve -- never sets this, since nothing actually failed.
+
+        2026-10-23 bug fix: a rejected reply (on_fetch_rejected) used to set this
+        same value, so a timeout followed by a later rejection reported the
+        rejection's time, not the timeout's own. Only a real timeout updates this
+        now; see _fail's own cause handling.
+        """
+        return self._last_timeout_at.get(neighbor)
+
+    def decision_state(self, neighbor: str) -> dict:
+        """A compact snapshot of what is known about `neighbor`, for one `decision`
+        event (map.md "判断の記録"): this node's own per-origin progress, every
+        neighbor's own advertisement of that origin (not just `neighbor`'s), how many
+        fetches are outstanding on `neighbor`, and when it last timed one out.
+
+        Capped at DECISION_STATE_MAX_ORIGINS origins (lowest name first) so a
+        decision line's size cannot grow with how many origins a run tracks;
+        `truncated` says whether any were left out. Per origin: `hi` is this node's
+        own contiguous hold (Store.OriginProgress.hi's own meaning), `missing` is
+        this node's true backlog for that origin (missing_total, not missing()'s own
+        fetch-planning-capped list), and `advertised` maps every neighbor that has
+        ever advertised this origin to its own {hi, notified_max} -- `hi` is that
+        neighbor's own contiguous hold, `notified_max` the highest seq it has told
+        this node about at all (its `hi`, or higher if some of its sparse `extra`
+        exceeds it).
+
+        2026-10-23 bug fix: this used to report a single `adv` number for
+        `neighbor` alone, collapsing its (hi, extra) into one max() -- a neighbor
+        holding 1..5 contiguously and one holding only a sparse seq 5 produced the
+        identical `adv=5`, and no other neighbor's advertisement was recorded at
+        all. plan_fetches itself needs exactly this (hi, extra) distinction to pick
+        a fetch target, so losing it here left the decision log unable to explain
+        plan_fetches's own choices.
+        """
+        origins = self.origins()
+        shown = origins[:DECISION_STATE_MAX_ORIGINS]
+        origin_rows: dict[str, dict] = {}
+        for origin in shown:
+            state = self._origins[origin]
+            advertised_rows: dict[str, dict] = {}
+            for other in sorted(state.advertised):
+                hi, extra = state.advertised[other]
+                advertised_rows[other] = {"hi": hi, "notified_max": max(hi, max(extra, default=0))}
+            origin_rows[origin] = {
+                "hi": state.held_contiguous,
+                "missing": self.missing_total(origin),
+                "advertised": advertised_rows,
+            }
+        return {
+            "in_flight": self.in_flight_count(neighbor),
+            "last_timeout_s": self.last_timeout_at(neighbor),
+            "truncated": len(origins) > DECISION_STATE_MAX_ORIGINS,
+            "origins": origin_rows,
+        }
 
     # -- fetch scheduling -------------------------------------------------------
 
@@ -232,7 +354,7 @@ class Tracker:
             self._in_flight_count[neighbor] = self._in_flight_count.get(neighbor, 0) + 1
         return due
 
-    def on_fetch_timeout(self, origin: str, seq: int, neighbor: str, now: float) -> None:
+    def on_fetch_timeout(self, origin: str, seq: int, neighbor: str, now: float) -> float | None:
         """A fetch sent to `neighbor` for (origin, seq) got no reply in time.
 
         Releases the in-flight slot and waits the *current* backoff
@@ -242,10 +364,13 @@ class Tracker:
         the backoff for the attempt after that, capped. A timeout for a
         fetch already resolved or reassigned elsewhere is stale and
         ignored.
-        """
-        self._fail(origin, seq, neighbor, now)
 
-    def on_fetch_rejected(self, origin: str, seq: int, neighbor: str, now: float) -> None:
+        Returns the chosen wait (seconds), or None if this timeout was
+        stale (nothing was actually resolved) -- see _fail's own return.
+        """
+        return self._fail(origin, seq, neighbor, now, cause="timeout")
+
+    def on_fetch_rejected(self, origin: str, seq: int, neighbor: str, now: float) -> float | None:
         """A Data reply for (origin, seq) arrived from `neighbor` but failed
         validation (malformed payload, or name/payload mismatch).
 
@@ -256,13 +381,18 @@ class Tracker:
         treatment as a timeout, through the same failed_neighbors
         bookkeeping, so a neighbor that keeps answering with garbage is
         rotated away from exactly like one that stops answering at all.
-        """
-        self._fail(origin, seq, neighbor, now)
 
-    def _fail(self, origin: str, seq: int, neighbor: str, now: float) -> None:
+        Returns the chosen wait (seconds), or None if this rejection was
+        stale -- see _fail's own return.
+        """
+        return self._fail(origin, seq, neighbor, now, cause="rejected")
+
+    def _fail(self, origin: str, seq: int, neighbor: str, now: float, *, cause: str) -> float | None:
         """Shared outcome of a timeout or a rejected reply: release the
         in-flight slot, back off, and record `neighbor` as having failed
-        this seq.
+        this seq. `cause` is "timeout" or "rejected"; it only selects
+        whether _last_timeout_at is updated below -- every other part of
+        this outcome is identical either way.
 
         If every neighbor currently advertising this seq has now failed
         it (the failed set would cover them all), the set is reset to
@@ -273,13 +403,25 @@ class Tracker:
         recreating the starvation this bookkeeping exists to prevent.
         Resetting instead restarts the round-robin over the same
         advertisers for as long as they all keep failing.
+
+        2026-10-23 (map.md "判断の記録"): returns the chosen wait
+        (seconds), or None on the stale early-return below -- the
+        distinction between a real decision and a no-op, so only the
+        former is ever worth logging as a `fetch_backoff` decision event.
+
+        2026-10-23 bug fix: only cause == "timeout" records `now` in
+        _last_timeout_at[neighbor], and only once execution is past the
+        stale early-returns below -- never a rejection, and never a stale
+        call faking a failure that did not happen -- so a rejection can
+        no longer masquerade as the timeout map.md's own "直前のタイムア
+        ウトの時刻" actually means.
         """
         state = self._origins.get(origin)
         if state is None:
-            return
+            return None
         fetch = state.fetches.get(seq)
         if fetch is None or fetch.in_flight_neighbor != neighbor:
-            return
+            return None
         wait = fetch.backoff_s + self._jitter()
         next_backoff = min(fetch.backoff_s * self._backoff_multiplier, self._backoff_max_s)
         failed = fetch.failed_neighbors | {neighbor}
@@ -289,6 +431,9 @@ class Tracker:
             next_attempt_at=now + wait, backoff_s=next_backoff, failed_neighbors=failed
         )
         self._in_flight_count[neighbor] = max(0, self._in_flight_count.get(neighbor, 0) - 1)
+        if cause == "timeout":
+            self._last_timeout_at[neighbor] = now
+        return wait
 
     def _release(self, state: _OriginState, seq: int) -> None:
         """Stop tracking `seq` as a fetch and free its in-flight slot, if any."""

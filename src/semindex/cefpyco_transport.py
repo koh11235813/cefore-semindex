@@ -15,15 +15,22 @@ needs that an in-memory one does not:
   like that must not crash the single-threaded loop that also serves every
   other neighbor -- it is treated the same as handle_interest returning
   None: the Interest is left to expire.
-- A should_stop check inside fetch_content's own wait loop. The agent
-  loop's run() only checks its stop flag between step()s, but
-  fetch_content can otherwise block inside a single step() for up to
-  chunk_lifetime_ms per chunk waiting on content that never arrives (a
-  partition, or T1's partition-phase probe by design) -- that is already
-  the entire SIGTERM-to-SIGKILL budget a ReCefore host_apps process gets.
-  should_stop, when given, is polled before every chunk's Interest and
-  before every receive() inside the wait, so a stop request lands within
-  one receive_timeout_ms instead of up to chunk_lifetime_ms.
+- A should_stop check both right here in poll(), immediately after its own
+  receive() returns, and inside fetch_content's own wait loop. The agent
+  loop's run() only checks its stop flag between step()s, but a single
+  receive() can itself block up to receive_timeout_ms, and fetch_content
+  can block inside a single step() for up to chunk_lifetime_ms per chunk
+  waiting on content that never arrives (a partition, or T1's
+  partition-phase probe by design) -- that chunk_lifetime_ms wait is
+  already the entire SIGTERM-to-SIGKILL budget a ReCefore host_apps
+  process gets. should_stop, when given, is polled right after every
+  receive() (poll()'s own, and both before and after each one inside
+  fetch_content's wait loop) and before every chunk's Interest, so a stop
+  request -- a real SIGTERM, or the agent's own measurement-window
+  stop_at_s deadline (semindex.agent.Agent._on_receive_boundary) -- lands
+  within one receive_timeout_ms instead of up to chunk_lifetime_ms, and
+  never leaves a packet/chunk that arrived past that point dispatched,
+  counted or acted on.
 - A payload-size check before every send_data. cefpyco's send_data does
   not check payload length itself (map.md); the engine already keeps every
   Response within schema.MAX_RECORD_BYTES / holder_state.MAX_ENCODED_BYTES
@@ -129,10 +136,18 @@ class CefpycoTransport:
         (the Agent that owns the real stop flag is built from this
         transport, not the other way around) and the same fix: it
         defaults to a callable that always says "keep going", and the
-        agent's wiring code replaces it with the real agent's stop check
-        once the agent itself exists. fetch_content polls it so a probe's
-        chunk-wait loop can never block a stop request for its own
-        chunk_lifetime_ms.
+        agent's wiring code replaces it with the real agent's boundary
+        check (Agent._on_receive_boundary) once the agent itself exists.
+        That check reports (and, if newly true, sets) whether a real stop
+        request or the agent's own stop_at_s deadline has been reached; it
+        also captures any counters_snapshot_at_s entry now due, but only
+        ever queues it in memory for the agent's own step() to write out
+        later -- never writes it from in here (see
+        Agent._on_receive_boundary's own docstring for why a write from
+        inside fetch_content's wait loop specifically would be wrong).
+        poll() and fetch_content's chunk-wait loop both call it right after
+        their own receive(), so neither can ever block a stop request --
+        real or stop_at_s -- for longer than one receive_timeout_ms.
         """
         self._handle = handle
         self._engine = engine
@@ -156,7 +171,10 @@ class CefpycoTransport:
 
     @property
     def should_stop(self) -> Callable[[], bool]:
-        """The callable fetch_content polls to end its chunk-wait loop early; see __init__."""
+        """The callable poll() and fetch_content both call right after their own
+        receive() returns, to notice a stop (real, or the agent's own
+        stop_at_s boundary) before acting on whatever that receive() just
+        returned; see __init__."""
         return self._should_stop
 
     @should_stop.setter
@@ -189,13 +207,32 @@ class CefpycoTransport:
     # -- driving the real network from the agent loop --------------------------
 
     def poll(self) -> None:
-        """Receive at most one packet (blocking up to receive_timeout_ms) and dispatch it, then check deadlines.
+        """Receive at most one packet (blocking up to receive_timeout_ms), then
+        dispatch it and check Interest deadlines -- unless should_stop()
+        reports true once that receive() call returns, in which case the
+        packet is left unprocessed and deadlines unchecked for this call.
 
         This is the agent loop's one call per iteration into cefpyco's
         receive(); see the module docstring for why there can only be one
         call site besides fetch_content's.
+
+        2026-10-23 fix: should_stop() used to be polled only inside
+        fetch_content's own wait loop, never here -- a stop request (real
+        SIGTERM, or the agent's own stop_at_s deadline) landing while this
+        receive() was blocked for up to receive_timeout_ms went unnoticed
+        until the *next* step()'s own check, by which point this call's
+        _dispatch/_check_timeouts had already run against a `now` possibly
+        past that deadline. Checking should_stop() right here, before
+        either, means stop_at_s never leaks a send/tick from the step this
+        poll() call belongs to (see semindex.agent.Agent.step()). One
+        tradeoff: a sync Interest whose own deadline falls inside this same
+        receive_timeout_ms window reports no fetch_timeout for this life --
+        a SIGTERM-driven stop already accepted that (the loop exits right
+        after), and stop_at_s now does too.
         """
         info = self._handle.receive(timeout_ms=self._receive_timeout_ms)
+        if self._should_stop():
+            return
         now = self._clock()
         self._dispatch(info, now)
         self._check_timeouts(now)
@@ -215,11 +252,18 @@ class CefpycoTransport:
         has been collected, or (False, bytes_so_far) if any one chunk's
         Interest lifetime elapses with no matching Data, or if max_chunks
         is exhausted without ever seeing an end_chunk_num (a guard against
-        spinning forever on an object published without one at all), or
-        if should_stop() reports true at any point -- checked here (before
-        sending the next chunk's Interest) and inside the wait loop below
-        (before every receive()), so a stop request is noticed within one
-        receive_timeout_ms rather than after up to chunk_lifetime_ms.
+        spinning forever on an object published without one at all), or if
+        should_stop() reports true at any point -- checked here (before
+        sending the next chunk's Interest), before every receive() in the
+        wait loop below, and again immediately after each receive()
+        returns. That second, post-receive check matters as much as the
+        first: a chunk's Data that only arrives once should_stop() has gone
+        true (e.g. the agent's own stop_at_s boundary crossed while this
+        receive() was blocked) is abandoned unprocessed and uncounted, not
+        treated as a retrieved chunk -- the returned total_bytes is exactly
+        what had already been collected strictly before that boundary. This
+        keeps a stop noticed within one receive_timeout_ms rather than after
+        up to chunk_lifetime_ms, same as poll()'s own should_stop() check.
         """
         total = 0
         chunk_num = 0
@@ -234,6 +278,14 @@ class CefpycoTransport:
                 if self._should_stop():
                     return False, total
                 info = self._handle.receive(timeout_ms=self._receive_timeout_ms)
+                # 2026-10-23 fix: re-check right here too, not only before this
+                # receive() -- a matching chunk that only arrived because this
+                # one receive() call blocked past the stop boundary must be
+                # abandoned the same as a chunk that never arrived at all, not
+                # counted into total just because it happened to be the packet
+                # this receive() returned.
+                if self._should_stop():
+                    return False, total
                 now = self._clock()
                 if info.is_data and info.name == name and info.chunk_num == chunk_num:
                     got = info

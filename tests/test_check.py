@@ -254,6 +254,40 @@ def test_check_t1_all_pass(tmp_path: Path):
     assert run_check("t1", str(experiment_path), str(run_dir)) == 0
 
 
+def test_check_t1_ignores_counters_snapshot_lines(tmp_path: Path):
+    """Regression for the agent's mid-run counters_snapshot_at_s lines
+    (semindex.agent.Agent._drain_counters_snapshots): check.py's own counters
+    handling (_events_of(..., "counters")) keys off the exact event name
+    "counters", a different string on purpose (agent.py's own
+    _drain_counters_snapshots docstring), so a counters_snapshot line must be
+    invisible to it -- same exit code with or without one present.
+    """
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    baseline_rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    # Append one counters_snapshot line, in the same four-field shape a real
+    # mid-run entry would have, to every node's events.jsonl.
+    for node in ("h0", "h1", "h2"):
+        path = _node_events_path(run_dir, node)
+        events = [json.loads(line) for line in path.read_text().splitlines()]
+        events.append(
+            {
+                "ts_ms": _ts_ms(25),
+                "event": "counters_snapshot",
+                "bytes_sent": 999,
+                "bytes_received": 999,
+                "control_bytes_sent": 999,
+                "control_bytes_received": 999,
+            }
+        )
+        _write_jsonl(path, events)
+
+    assert run_check("t1", str(experiment_path), str(run_dir)) == baseline_rc == 0
+
+
 def test_check_t1_protocol_fails_when_the_only_surviving_retrieval_is_the_during_outage_one(
     tmp_path: Path, capsys
 ):
