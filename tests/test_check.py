@@ -749,17 +749,20 @@ def test_check_t2a_protocol_fails_when_the_dropped_seq_was_stored_before_its_own
     tmp_path: Path, capsys
 ):
     """2026-10-23 fix: nothing checked that the dropped seq's own store
-    landed AFTER its fetch_timeout(s). Moves it 3s BEFORE its only pair of timeouts, which means
-    the "timeout" was never real evidence the reply had actually been withheld."""
+    landed AFTER its fetch_timeout(s). Moves it 3s BEFORE its only pair of timeouts (both its
+    ts_ms AND its file position, as a real events.jsonl -- appended in execution order -- always
+    has the two agree), which means the "timeout" was never real evidence the reply had actually
+    been withheld."""
     experiment_path = tmp_path / "t2a.json"
     _write_experiment(experiment_path, _t2a_experiment())
     run_dir = tmp_path / "run"
     _write_t2a_happy_path(run_dir)
     h1_path = _node_events_path(run_dir, "h1")
     events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
-    for event in events:
-        if event.get("event") == "record_stored" and event.get("seq") == 2:
-            event["ts_ms"] = _ts_ms(6) - 3000
+    store_event = next(e for e in events if e.get("event") == "record_stored" and e.get("seq") == 2)
+    store_event["ts_ms"] = _ts_ms(6) - 3000
+    events.remove(store_event)
+    events.insert(1, store_event)  # ahead of both fetch_timeout rows, not just an earlier ts_ms
     _write_jsonl(h1_path, events)
 
     rc = run_check("t2a", str(experiment_path), str(run_dir))
@@ -769,6 +772,40 @@ def test_check_t2a_protocol_fails_when_the_dropped_seq_was_stored_before_its_own
     assert (
         "FAIL: h1's eventual store of (h0, 2) came after its fetch_timeout(s), not before: "
         "stored at [1700000003000], timed out at [1700000006000, 1700000009000]"
+    ) in out.splitlines()
+
+
+def test_check_t2a_protocol_fails_when_the_dropped_seq_is_stored_immediately_before_its_final_timeout_at_the_same_ts_ms(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix (review finding): the check
+    above used to compare ts_ms with a strict `<`, so a store and its final timeout rounded to
+    the exact same millisecond (EventWriter rounds ts_ms to whole milliseconds) read as "not
+    before" even when the store's row in h1's own events.jsonl -- one process's own log, appended
+    in true execution order -- came immediately before that timeout. Moves the store to sit right
+    before the final timeout in file order and gives both rows the final timeout's own ts_ms."""
+    experiment_path = tmp_path / "t2a.json"
+    _write_experiment(experiment_path, _t2a_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2a_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    store_event = next(e for e in events if e.get("event") == "record_stored" and e.get("seq") == 2)
+    store_event["ts_ms"] = _ts_ms(9)
+    events.remove(store_event)
+    final_timeout_idx = max(
+        i for i, e in enumerate(events) if e.get("event") == "fetch_timeout" and e.get("seq") == 2
+    )
+    events.insert(final_timeout_idx, store_event)  # immediately before the final timeout, same ts_ms
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2a", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's eventual store of (h0, 2) came after its fetch_timeout(s), not before: "
+        "stored at [1700000009000], timed out at [1700000006000, 1700000009000]"
     ) in out.splitlines()
 
 
