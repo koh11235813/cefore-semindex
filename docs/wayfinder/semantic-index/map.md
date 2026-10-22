@@ -98,5 +98,4 @@ T1/T2 の確認は `semindex.check <t> experiments/<t>.json <run_dir>`（`<t>` �
 
 ## Fog
 
-- ReCefore のテンプレートは h0〜h2 に別々の `LOCAL_SOCK_ID` を持つ。h3 以降でも衝突しないか（5 ノード評価のとき）。
-- 5 ノード評価の分母、反復数、切断率は T1/T2 の合格後に決める。
+- （2026-10-23 決着）h3 以降の `LOCAL_SOCK_ID` は衝突しない。ReCefore はテンプレートをコピーしたあと、ホスト番号に書き換える。5 ノード評価の分母・反復数・切断率は、`docs/wayfinder/semindex-eval/map.md` で決めた。
