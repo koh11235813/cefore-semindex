@@ -24,11 +24,13 @@ def test_build_experiment_has_the_fixed_five_host_line_topology():
     assert raw["links"] == [[0, 1], [1, 2], [2, 3], [3, 4]]
     assert raw["agents"] == [0, 1, 2, 3, 4]
     assert raw["publisher"]["host"] == 0
-    # 2026-10-23 review r1 (finding 2): the submitted "duration" is the
-    # measured window (DURATION_S, 120) plus a pure post-measurement
-    # teardown cushion (TEARDOWN_MARGIN_S, 5) -- 125, not 120. See
-    # TEARDOWN_MARGIN_S's comment in evalgen.py.
-    assert raw["duration"] == 125
+    # 2026-10-23 review r2 (major): the submitted "duration" is the window's
+    # end (WINDOW_END_S, 130) plus a pure post-window teardown cushion
+    # (TEARDOWN_MARGIN_S, 5) -- 135. See RECEFORE_DURATION_S's comment in
+    # evalgen.py.
+    assert raw["duration"] == 135
+    assert raw["stop_at_s"] == 130.0
+    assert raw["counters_snapshot_at_s"] == [10.0]
 
 
 def test_build_experiment_puts_30_records_on_h0_and_h4_only():
@@ -61,6 +63,10 @@ def test_record_schedule_is_2s_apart_starting_at_the_startup_margin():
     at_s_values = [entry["at_s"] for entry in raw["schedule"]["0"]]
     assert at_s_values[0] == evalgen.RECORD_START_S
     assert at_s_values == [evalgen.RECORD_START_S + i * 2.0 for i in range(30)]
+    # Every record must land inside [WINDOW_START_S, WINDOW_END_S) --
+    # nothing measured may fall in the lead-in or past the window's close.
+    assert evalgen.WINDOW_START_S <= at_s_values[0]
+    assert at_s_values[-1] < evalgen.WINDOW_END_S
 
 
 def test_record_schedule_attrs_are_within_the_fixed_vocabulary():
@@ -82,7 +88,7 @@ def test_probe_schedule_is_10s_apart_and_inside_the_run():
     assert at_s_values[0] == evalgen.PROBE_START_S
     for a, b in zip(at_s_values, at_s_values[1:]):
         assert b - a == evalgen.PROBE_INTERVAL_S
-    assert all(0 <= at_s < evalgen.DURATION_S for at_s in at_s_values)
+    assert all(evalgen.WINDOW_START_S <= at_s < evalgen.WINDOW_END_S for at_s in at_s_values)
 
 
 # -- determinism -----------------------------------------------------------
@@ -195,7 +201,7 @@ def test_build_experiment_rejects_p_outside_zero_one(bad_p: float):
 @pytest.mark.parametrize("good_p", [0.0, 0.2, 1.0])
 def test_build_experiment_accepts_p_inside_zero_one(good_p: float):
     """The boundary values 0.0 and 1.0, and an ordinary mid-range p, must still be accepted."""
-    evalgen.build_experiment(good_p, 7, "s1", "/out")  # must not raise
+    evalgen.build_experiment(good_p, 7, "s1", "/out")
 
 
 # -- disconnect schedule: p = 0 ----------------------------------------------
@@ -210,11 +216,27 @@ def test_p_zero_produces_zero_link_events():
 # -- disconnect schedule: shape and ordering ----------------------------------
 
 
-def _down_intervals(events: list[dict], nodes: list[int]) -> list[tuple[float, float]]:
-    """Pair up one link's link_down/link_up events, in the order they appear, as (down_at, up_at)."""
+def _down_intervals(events: list[dict], nodes: list[int]) -> list[tuple[float, float | None]]:
+    """Pair up one link's link_down/link_up events, in the order they appear, as (down_at, up_at).
+
+    The last pair's `up_at` is None when that link_down has no matching
+    link_up -- still down when the measurement window closed (2026-10-23
+    review r2: the generator no longer forces a closing link_up at the
+    window's end, so this is a valid, expected shape, not an error).
+    """
     link_events = [e for e in events if e["nodes"] == nodes]
-    assert [e["type"] for e in link_events] == ["link_down", "link_up"] * (len(link_events) // 2)
-    return [(link_events[i]["at"], link_events[i + 1]["at"]) for i in range(0, len(link_events), 2)]
+    intervals: list[tuple[float, float | None]] = []
+    i = 0
+    while i < len(link_events):
+        assert link_events[i]["type"] == "link_down"
+        if i + 1 < len(link_events):
+            assert link_events[i + 1]["type"] == "link_up"
+            intervals.append((link_events[i]["at"], link_events[i + 1]["at"]))
+            i += 2
+        else:
+            intervals.append((link_events[i]["at"], None))
+            i += 1
+    return intervals
 
 
 def test_link_events_are_sorted_by_at():
@@ -224,32 +246,37 @@ def test_link_events_are_sorted_by_at():
     assert at_values == sorted(at_values)
 
 
-def test_every_link_up_follows_its_link_down_and_every_down_is_restored_by_the_end():
-    """Every link up follows its link down and every down is restored by the end."""
+def test_every_link_up_follows_its_link_down_and_stays_inside_the_window():
+    """Every link up follows its link down, and both ends of any interval stay inside the window.
+
+    2026-10-23 review r2 (major): a link still down in the last drawn slot
+    is left open (up_at is None) rather than force-closed at the window's
+    end -- see `_down_intervals`'s own comment.
+    """
     raw = evalgen.build_experiment(0.3, 7, "s1", "/out")
     for a, b in evalgen.LINKS:
         for down_at, up_at in _down_intervals(raw["events"], [a, b]):
-            assert down_at < up_at
-            assert up_at <= evalgen.DISCONNECT_WINDOW_S
+            assert evalgen.WINDOW_START_S <= down_at < evalgen.WINDOW_END_S
+            if up_at is not None:
+                assert down_at < up_at <= evalgen.WINDOW_END_S
 
 
 def test_link_events_stay_inside_the_measured_window_with_teardown_margin_to_spare():
     """Link events stay inside the measured window, with a teardown margin to spare.
 
-    2026-10-23 review r1 (finding 2): disconnect slots are now drawn over
-    the FULL measured window (DISCONNECT_WINDOW_S == DURATION_S, all
-    NUM_SLOTS=24 of them) -- no event, even at p=0.4's worst case, ever
-    lands past DISCONNECT_WINDOW_S. The teardown cushion this run still
-    needs (so a restoring link_up at the very end can't race disaster.py's
-    teardown sleep) now comes entirely from the submitted "duration" being
-    TEARDOWN_MARGIN_S longer than DISCONNECT_WINDOW_S, not from shrinking
-    the window p is drawn over (see TEARDOWN_MARGIN_S's comment in
-    evalgen.py for why the earlier version's shrunk window was wrong).
+    2026-10-23 review r2 (major): disconnect slots are drawn over the FULL
+    measurement window (DISCONNECT_WINDOW_S, all NUM_SLOTS=24 of them) --
+    no event, even at p=0.4's worst case, ever lands outside
+    [WINDOW_START_S, WINDOW_END_S]. The teardown cushion this run still
+    needs comes entirely from the submitted "duration" being
+    TEARDOWN_MARGIN_S past WINDOW_END_S, not from shrinking the window p
+    is drawn over.
     """
     raw = evalgen.build_experiment(0.4, 11, "s1", "/out")
     for e in raw["events"]:
-        assert 0 <= e["at"] <= evalgen.DISCONNECT_WINDOW_S
-    assert raw["duration"] == evalgen.DISCONNECT_WINDOW_S + evalgen.TEARDOWN_MARGIN_S
+        assert evalgen.WINDOW_START_S <= e["at"] <= evalgen.WINDOW_END_S
+    assert raw["duration"] == evalgen.RECEFORE_DURATION_S
+    assert evalgen.RECEFORE_DURATION_S == evalgen.WINDOW_END_S + evalgen.TEARDOWN_MARGIN_S
 
 
 # -- disconnect schedule: statistical bounds ----------------------------------
@@ -264,14 +291,12 @@ def test_link_events_stay_inside_the_measured_window_with_teardown_margin_to_spa
 # this bound with negligible probability while a broken one (e.g. a biased
 # or constant-probability draw) is still caught.
 #
-# 2026-10-23 review r1 (finding 2): the denominator is DISCONNECT_WINDOW_S,
-# which now equals the full DURATION_S (24 slots, not a shrunk 23) -- p is
-# drawn over the whole measured run, with no excluded tail. The earlier
-# version's DISCONNECT_WINDOW_S was DURATION_S minus a safety margin, which
-# would have biased every observed fraction low by a fixed factor
-# regardless of how correct the draw itself was; the margin now lives
-# entirely in the gap between DISCONNECT_WINDOW_S and the submitted
-# "duration" (TEARDOWN_MARGIN_S), outside what this statistic measures.
+# 2026-10-23 review r2 (major): an open interval's down time is counted up
+# to WINDOW_END_S, not just up to a matching link_up that may not exist --
+# the window the fraction is computed over (denominator, DISCONNECT_WINDOW_S)
+# and the window the generator actually draws disconnects over must be the
+# same 120s span, or this statistic would silently stop catching the bias a
+# mismatch between the two produces.
 NUM_SEEDS = 150
 
 
@@ -284,7 +309,8 @@ def test_mean_down_fraction_over_many_seeds_approaches_p(p: float):
         raw = evalgen.build_experiment(p, seed, "stat", "/out")
         for a, b in evalgen.LINKS:
             for down_at, up_at in _down_intervals(raw["events"], [a, b]):
-                total_down_s += up_at - down_at
+                end_at = evalgen.WINDOW_END_S if up_at is None else up_at
+                total_down_s += end_at - down_at
             total_possible_s += evalgen.DISCONNECT_WINDOW_S
     observed_fraction = total_down_s / total_possible_s
     assert abs(observed_fraction - p) < 0.03

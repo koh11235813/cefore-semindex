@@ -35,61 +35,85 @@ from semindex import gen, schema
 
 # Fixed topology: a 5-host line, agents on every host, h2 in the middle.
 HOSTS = 5
-LINKS: tuple[tuple[int, int], ...] = tuple((h, h + 1) for h in range(HOSTS - 1))  # (0,1),(1,2),(2,3),(3,4)
+LINKS: tuple[tuple[int, int], ...] = tuple((h, h + 1) for h in range(HOSTS - 1))
 AGENTS: tuple[int, ...] = tuple(range(HOSTS))
 RECORD_ORIGIN_HOSTS: tuple[int, ...] = (0, HOSTS - 1)  # h0 and h4 (map.md: "Index origin は両端の h0 と h4")
 PROBE_HOST = HOSTS // 2  # h2
 
-# Record generation (map.md "それぞれ 2 秒に 1 件、合計 30 件"). The first
-# record is placed at gen's own startup margin, not at 0s -- gen.ExperimentError
-# already rejects an earlier schedule entry (no host_apps readiness hook), so
-# reusing its constant keeps this module from re-deriving (and potentially
-# drifting from) that floor.
+# Lead-in and measurement window (2026-10-23, measured: in ReCefore's
+# autotest mode -- no_cli + results_json -- the seed `put` plus the
+# warmup_gets block takes about 2.6s after t0 before any scheduled event
+# can fire on time, and the scheduler's own `duration` sleep only starts
+# once that block finishes). LEAD_IN_S gives that startup slack generous
+# margin: every link stays up and no agent does anything until it ends.
+# Every record, probe and disconnect slot below is then placed inside
+# [WINDOW_START_S, WINDOW_END_S] -- never in the lead-in, never past the
+# window's close.
+LEAD_IN_S = 10.0
+WINDOW_START_S = LEAD_IN_S
+
+# Record generation (map.md "それぞれ 2 秒に 1 件、合計 30 件"), starting
+# gen's own startup margin after the window opens rather than after t0 --
+# that margin only guards a host_apps readiness race, which is already
+# long past by WINDOW_START_S.
 RECORD_COUNT = 30
 RECORD_INTERVAL_S = 2.0
-RECORD_START_S = gen.MIN_FIRST_RECORD_MARGIN_S
+RECORD_START_S = WINDOW_START_S + gen.MIN_FIRST_RECORD_MARGIN_S
 
 # Probe generation (map.md "probe は真ん中の h2 から 10 秒ごとに出す").
 PROBE_INTERVAL_S = 10.0
-PROBE_START_S = 5.0
-
-# Run length (map.md "run の長さは、生成が終わってから 60 秒の余裕を取って、
-# およそ 120 秒"): last record at RECORD_START_S + (RECORD_COUNT-1)*RECORD_INTERVAL_S
-# = 3 + 58 = 61s, so 120s leaves ~59s of margin after generation ends. This
-# is the MEASURED window (record/probe timing, disconnect fraction); the
-# "duration" ReCefore is actually asked to run is RECEFORE_DURATION_S,
-# longer than this by a pure teardown cushion (see that constant).
-DURATION_S = 120
+PROBE_START_S = WINDOW_START_S + 5.0
 
 # Disconnect schedule (map.md "切断の起こし方"): one Bernoulli(p) draw per
-# link per 5s slot, independent per link and slot, over the WHOLE measured
-# window DURATION_S -- map.md's "落ちている時間の割合の期待値が p になる" and
-# this generator's own acceptance criterion ("p を大きくすると落ちている時間の
-# 割合が p に近づく") both say this about the run, not about some sub-window
-# of it.
+# link per 5s slot, independent per link and slot, over the whole
+# measurement window -- map.md's own "落ちている時間の割合の期待値が p に
+# なる" and this generator's acceptance criterion both describe the window,
+# not some sub-interval excluded from it.
 DISCONNECT_SLOT_S = 5.0
-DISCONNECT_WINDOW_S = DURATION_S
+DISCONNECT_WINDOW_S = 120.0
 assert DISCONNECT_WINDOW_S % DISCONNECT_SLOT_S == 0, "DISCONNECT_WINDOW_S must be a whole number of slots"
 NUM_SLOTS = int(DISCONNECT_WINDOW_S / DISCONNECT_SLOT_S)
+WINDOW_END_S = WINDOW_START_S + DISCONNECT_WINDOW_S
 
-# 2026-10-23 (review r1, finding 2) fix: an earlier version shrank
-# DISCONNECT_WINDOW_S to DURATION_S - 5 instead, which bought the same
-# teardown margin by silently changing the ticket's own disconnect model
-# (p no longer applied to the whole run) -- a reviewer caught it. Read via
-# disaster.py (our config is autotest mode: `no_cli` + `results_json`):
-# when `duration > 0` it does `time.sleep(duration)` then tears the
-# scenario down immediately, with NO call to EventScheduler.wait_all() to
-# drain the heap first (that call only happens in the `duration == 0`
-# branch) -- so an event scheduled at exactly `at == duration` races that
-# teardown. The fix below never schedules anything at `at == duration`:
-# every link event stays inside DISCONNECT_WINDOW_S (now the *whole*
-# measured run), and the experiment instead asks ReCefore to run
-# TEARDOWN_MARGIN_S longer than that -- a cushion appended AFTER
-# measurement ends, not carved out of it. Nothing this module measures
-# (disconnect fraction, record/probe timing) ever runs during that
-# appended cushion.
+# 2026-10-23 (review r2, major) fix: an earlier version force-closed every
+# link still down at the window's end with a synthetic link_up at
+# `at == WINDOW_END_S`, then ran ReCefore TEARDOWN_MARGIN_S seconds past
+# that boundary -- fully connected the whole time, but still inside what
+# every agent's own final `counters` line (written at ReCefore teardown,
+# not at the window boundary) would cover. The measured disconnect
+# fraction this produced was below `p` (a 1000-seed check at p=0.4 landed
+# at 0.4036 with a 120s denominator, 0.3875 with the actual 125s run
+# length) -- the window the fraction was drawn over and the window the run
+# actually measured were two different numbers. The fix is two parts:
+# `_link_events` below no longer forces a closing link_up (see its own
+# comment), and AGENT_STOP_AT_S/AGENT_COUNTERS_SNAPSHOT_AT_S exist so an
+# agent's own measurement can stop exactly at the window boundary, not
+# whenever ReCefore happens to tear the scenario down.
+#
+# TEARDOWN_MARGIN_S itself exists for a separate, still-current reason:
+# disaster.py (autotest mode -- `no_cli` + `results_json`) runs a
+# `duration > 0` scenario as `time.sleep(duration)` then tears down
+# immediately, with no `EventScheduler.wait_all()` call to drain the event
+# heap first (that call only happens in the `duration == 0` branch) -- an
+# event scheduled at exactly `at == duration` races that teardown. Keeping
+# every event strictly below `duration` (WINDOW_END_S is, and "duration"
+# itself is WINDOW_END_S + this margin) avoids that race regardless of
+# which event turns out to be the last one scheduled.
 TEARDOWN_MARGIN_S = 5  # int: gen.parse_experiment requires "duration" to be an int, not a float
-RECEFORE_DURATION_S = DURATION_S + TEARDOWN_MARGIN_S
+RECEFORE_DURATION_S = int(WINDOW_END_S) + TEARDOWN_MARGIN_S
+
+# Agent-side measurement boundary, carried into every generated node's
+# JSON config via semindex.gen's `stop_at_s`/`counters_snapshot_at_s`
+# experiment keys. `stop_at_s` marks when an agent is meant to stop
+# synchronizing and write its final `counters` line; `counters_snapshot_at_s`
+# marks when it is meant to also write a `counters_snapshot` event (same
+# fields as `counters`, plus `ts_ms`) -- a distinct event name, not a
+# second `counters` line, because `semindex.analyze` already assumes
+# exactly one `counters` line per agent life. Both values only shape what
+# this generator writes into each node's config; nothing in this module
+# depends on how an agent process reads them.
+AGENT_STOP_AT_S = WINDOW_END_S
+AGENT_COUNTERS_SNAPSHOT_AT_S: tuple[float, ...] = (WINDOW_START_S,)
 
 # The publisher body (map.md "本体を put する publisher は h0 の 1 台だけ
 # （生成器の制約）"): h0 is both the sole put publisher and an Index origin.
@@ -154,9 +178,8 @@ def _validate_p(p: float) -> None:
     every draw when p is >1 or +inf -- so an out-of-range or non-finite p
     used to produce a normal-looking, fully valid experiment ("never down"
     or "always down") instead of an error, silently mislabeling the run's
-    condition. This is the one common entry point `build_experiment` calls
-    before any draw, so every caller (the CLI and every direct test call)
-    gets the same check.
+    condition. This runs once, before any random draw, so no path through
+    this module can read a p value that was never range-checked.
     """
     if not isinstance(p, (int, float)) or isinstance(p, bool) or not (0.0 <= p <= 1.0):
         raise gen.ExperimentError(f"p must be a finite number in [0, 1], got {p!r}")
@@ -210,7 +233,7 @@ def _probe_schedule(seed: int) -> list[dict]:
     zones = sorted(schema.ZONES)
     entries = []
     at_s = PROBE_START_S
-    while at_s < DURATION_S:
+    while at_s < WINDOW_END_S:
         entries.append({"at_s": at_s, "zone": rng.choice(zones)})
         at_s += PROBE_INTERVAL_S
     return entries
@@ -222,13 +245,15 @@ def _link_events(seed: int, p: float) -> list[dict]:
     One Bernoulli(p) draw per link per DISCONNECT_SLOT_S slot (independent
     per link -- its own random.Random stream -- and per slot), with
     consecutive down slots on the same link merged into a single
-    link_down/link_up pair. A sentinel "up" slot appended past the last
-    real slot closes any run still open at NUM_SLOTS, so every down
-    interval is restored by `at <= DISCONNECT_WINDOW_S` -- never left
-    dangling. All of this happens inside DISCONNECT_WINDOW_S (the whole
-    measured run); the separate teardown cushion that keeps a restoring
-    link_up from racing disaster.py's teardown lives in RECEFORE_DURATION_S
-    instead (see that constant's comment for why).
+    link_down/link_up pair. A link still down in the last drawn slot is
+    left open -- no closing link_up is appended for it (2026-10-23, review
+    r2: an earlier version forced one at `at == WINDOW_END_S`, which kept
+    every link connected for the rest of the run and biased the measured
+    disconnect fraction low; see WINDOW_END_S's own comment). Every event
+    this function emits falls inside [WINDOW_START_S, WINDOW_END_S]; the
+    separate teardown cushion that keeps a run started this way from
+    racing disaster.py's teardown lives entirely in RECEFORE_DURATION_S
+    (see that constant's comment for why).
 
     2026-10-23 (review r1, finding 3): each link's rng stream is seeded
     from (seed, purpose) only, never p (see `_derive_seed`) -- so the same
@@ -242,14 +267,16 @@ def _link_events(seed: int, p: float) -> list[dict]:
         rng = _rng_for(seed, f"link:{a}:{b}")
         down_slots = [rng.random() < p for _ in range(NUM_SLOTS)]
         run_start = None
-        for i in range(NUM_SLOTS + 1):
-            is_down = down_slots[i] if i < NUM_SLOTS else False
+        for i in range(NUM_SLOTS):
+            is_down = down_slots[i]
             if is_down and run_start is None:
                 run_start = i
             elif not is_down and run_start is not None:
-                events.append({"at": run_start * DISCONNECT_SLOT_S, "type": "link_down", "nodes": [a, b]})
-                events.append({"at": i * DISCONNECT_SLOT_S, "type": "link_up", "nodes": [a, b]})
+                events.append({"at": WINDOW_START_S + run_start * DISCONNECT_SLOT_S, "type": "link_down", "nodes": [a, b]})
+                events.append({"at": WINDOW_START_S + i * DISCONNECT_SLOT_S, "type": "link_up", "nodes": [a, b]})
                 run_start = None
+        if run_start is not None:
+            events.append({"at": WINDOW_START_S + run_start * DISCONNECT_SLOT_S, "type": "link_down", "nodes": [a, b]})
     # Sorted so the generated YAML reads chronologically (map.md "引いた予定は
     # 生成した YAML にそのまま残るので、あとから見直せる") -- ReCefore's own
     # scheduler (runtime/scheduler.py) heap-sorts events at run time
@@ -283,9 +310,9 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
         "group": name,
         "hosts": HOSTS,
         "links": [list(pair) for pair in LINKS],
-        # RECEFORE_DURATION_S, not DURATION_S: ReCefore must run
-        # TEARDOWN_MARGIN_S longer than the measured window so no event
-        # (the last possible link_up included) ever sits at `at == duration`
+        # RECEFORE_DURATION_S, not WINDOW_END_S: ReCefore must run
+        # TEARDOWN_MARGIN_S past the window's close so no event (an open
+        # link_down at WINDOW_END_S included) ever sits at `at == duration`
         # (see RECEFORE_DURATION_S's comment).
         "duration": RECEFORE_DURATION_S,
         "output_dir": os.path.abspath(outdir),
@@ -300,6 +327,8 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
         "schedule": schedule,
         "probes": {str(PROBE_HOST): _probe_schedule(seed)},
         "events": _link_events(seed, p),
+        "stop_at_s": AGENT_STOP_AT_S,
+        "counters_snapshot_at_s": list(AGENT_COUNTERS_SNAPSHOT_AT_S),
     }
 
 
