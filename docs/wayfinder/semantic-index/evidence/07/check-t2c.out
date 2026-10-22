@@ -1,0 +1,67 @@
+PRECOND-PASS: host_app_restart on h1 succeeded: success=True
+PRECOND-PASS: h1 received records from h0 on both sides of the actual restart: 2 before, 3 after (restart finished at ts 1792689222767)
+PRECOND-PASS: h2 had not yet received all of h0's records when the restart actually fired: h2 already held [1, 2] of 1..5 at restart (ts 1792689222767)
+PASS: h1 eventually received all 5 of h0's records (across both lives): got [1, 2, 3, 4, 5], expected 1..5
+PASS: h2 eventually received all 5 of h0's records: got [1, 2, 3, 4, 5], expected 1..5
+PASS: h1 holds exactly 5 of h0's records, none duplicated
+PASS: h2 holds exactly 5 of h0's records, none duplicated
+PASS: h1 never served a record to h2 before h1 itself had stored it: seqs served early: []
+PASS: every record h2 stored for h0 came from holder h1: holders seen: ['h1']
+PRECOND-PASS: h2 heard from h1 again after its restart (state_rx)
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689225033 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689225033 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689225033 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689227140 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689227140 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689227140 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689228846 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689228846 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689228846 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689230752 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689230752 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689230752 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689232657 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689232657 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689232657 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689234563 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689234563 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689234563 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689236870 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689236870 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689236870 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689238575 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689238575 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689238575 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689240781 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689240781 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689240781 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689242988 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689242988 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689242988 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689244694 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689244694 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689244694 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689246699 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689246699 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689246699 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689248804 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689248804 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689248804 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689250810 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689250810 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689250810 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689252816 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689252816 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689252816 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689255122 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689255122 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689255122 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689256927 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689256927 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689256927 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689258933 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689258933 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689258933 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689260841 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689260841 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689260841 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689262947 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689262947 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689262947 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689265255 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689265255 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689265255 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689267262 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689267262 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689267262 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689269169 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689269169 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689269169 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689270874 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689270874 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689270874 was 5
+PRECOND-PASS: h2's post-restart state_rx from h1 at ts 1792689272881 actually advertised a hi for h0: hi={'h0': 5}
+PASS: h1's advertised hi for h0 in its post-restart state_rx at ts 1792689272881 never exceeds what it had actually stored by then: advertised hi=5, holder's own contiguous progress at ts 1792689272881 was 5
+PASS: h1's life 2 never advertised a record it could not actually serve to h2: fetch_timeout(s) after grace: []
+PASS: h1 (restarted) wrote exactly 2 counters lines, one per life: got 2
+PASS: h0 (not restarted) wrote exactly 1 counters line: got 1
+PASS: h2 (not restarted) wrote exactly 1 counters line: got 1
+PASS: h0 logged no conflict: 0 conflict event(s)
+PASS: h1 logged no conflict: 0 conflict event(s)
+PASS: h2 logged no conflict: 0 conflict event(s)

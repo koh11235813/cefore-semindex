@@ -1,0 +1,17 @@
+PRECOND-PASS: host_app_restart on h0 succeeded: success=True
+PRECOND-PASS: h0 created records on both sides of the actual restart (life 1 and life 2): 3 before, 3 after (restart finished at ts 1792689154539)
+PASS: h0 eventually created all 6 of its own records (across both lives): got [1, 2, 3, 4, 5, 6], expected 1..6
+PASS: h1 eventually received all 6 of h0's records: got [1, 2, 3, 4, 5, 6], expected 1..6
+PASS: h2 eventually received all 6 of h0's records: got [1, 2, 3, 4, 5, 6], expected 1..6
+PASS: no record h1 stored for h0 predates that seq's own record_created: seqs stored before being created: []
+PASS: no record h2 stored for h0 predates that seq's own record_created: seqs stored before being created: []
+PASS: h0's own seqs are contiguous and unique across both lives
+PASS: h0 (restarted) wrote exactly 2 counters lines, one per life: got 2
+PASS: h1 (not restarted) wrote exactly 1 counters line: got 1
+PASS: h2 (not restarted) wrote exactly 1 counters line: got 1
+PASS: h1 holds exactly 6 of h0's records, none duplicated
+PASS: h2 holds exactly 6 of h0's records, none duplicated
+PASS: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: fetch_timeout(s) after grace: []
+PASS: h0 logged no conflict: 0 conflict event(s)
+PASS: h1 logged no conflict: 0 conflict event(s)
+PASS: h2 logged no conflict: 0 conflict event(s)

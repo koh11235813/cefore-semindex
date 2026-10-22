@@ -1,0 +1,157 @@
+{
+  "all_nodes_consistent": {
+    "overall_ts_ms": 1792689005145,
+    "per_origin_ts_ms": {
+      "h0": 1792689005145
+    }
+  },
+  "control_bytes": {
+    "per_node": {
+      "h0": {
+        "control_bytes_received": 4410,
+        "control_bytes_sent": 6664
+      },
+      "h1": {
+        "control_bytes_received": 12390,
+        "control_bytes_sent": 12748
+      },
+      "h2": {
+        "control_bytes_received": 7806,
+        "control_bytes_sent": 6258
+      }
+    },
+    "total": {
+      "control_bytes_received": 24606,
+      "control_bytes_sent": 25670
+    }
+  },
+  "discovery_latency_ms": [
+    {
+      "latency_ms": 1408,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 1
+    },
+    {
+      "latency_ms": 2109,
+      "node": "h2",
+      "origin": "h0",
+      "seq": 1
+    },
+    {
+      "latency_ms": 1350,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 2
+    },
+    {
+      "latency_ms": 2292,
+      "node": "h2",
+      "origin": "h0",
+      "seq": 2
+    },
+    {
+      "latency_ms": 1351,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 3
+    },
+    {
+      "latency_ms": 2301,
+      "node": "h2",
+      "origin": "h0",
+      "seq": 3
+    },
+    {
+      "latency_ms": 1150,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 4
+    },
+    {
+      "latency_ms": 1959,
+      "node": "h2",
+      "origin": "h0",
+      "seq": 4
+    },
+    {
+      "latency_ms": 1175,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 5
+    },
+    {
+      "latency_ms": 2183,
+      "node": "h2",
+      "origin": "h0",
+      "seq": 5
+    },
+    {
+      "latency_ms": 27496,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 6
+    },
+    {
+      "latency_ms": 28188,
+      "node": "h2",
+      "origin": "h0",
+      "seq": 6
+    },
+    {
+      "latency_ms": 25472,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 7
+    },
+    {
+      "latency_ms": 26164,
+      "node": "h2",
+      "origin": "h0",
+      "seq": 7
+    },
+    {
+      "latency_ms": 23571,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 8
+    },
+    {
+      "latency_ms": 24264,
+      "node": "h2",
+      "origin": "h0",
+      "seq": 8
+    }
+  ],
+  "nodes": [
+    "h0",
+    "h1",
+    "h2"
+  ],
+  "probes": [
+    {
+      "discovered_ts_ms": 1792688988890,
+      "match_count": 5,
+      "node": "h2",
+      "retrieved": {
+        "bytes": 0,
+        "origin": "h0",
+        "seq": 1,
+        "success": false,
+        "ts_ms": 1792688990996
+      }
+    },
+    {
+      "discovered_ts_ms": 1792689023903,
+      "match_count": 8,
+      "node": "h2",
+      "retrieved": {
+        "bytes": 433390,
+        "origin": "h0",
+        "seq": 1,
+        "success": true,
+        "ts_ms": 1792689024331
+      }
+    }
+  ]
+}
