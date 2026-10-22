@@ -1,0 +1,88 @@
+# Two-host live-run kit for ticket 06 (cefpyco transport + agent).
+#
+# Runs on an INTEGRATION checkout of ReCefore that merges three branches
+# that do not yet share a common ancestor as of 2026-10-22:
+#   - feat/host-apps      (host_apps:, the {node}/{node_dir}/{cefore_conf_dir}/{t0_ms}
+#                           placeholders)
+#   - feat/explicit-links  (links:, explicit topology instead of the seeded random mesh)
+#   - feat/prefix-routes  (prefix_routes:, FIB routes toward a registered prefix) --
+#                           this branch has no implementation committed yet as of
+#                           2026-10-22 (PLAN.md: "Wave 2 ... 06 agent ... then
+#                           integration checkout"), so the `prefix_routes:` shape below
+#                           is taken directly from this ticket's own spec text, not from
+#                           a merged implementation. If that branch's final shape
+#                           differs, this key is the one to re-check first.
+#
+# Usage (from the integration checkout's own root, which must also hold
+# ./sample-putfile -- see ORCHESTRATOR MUST RUN in the ticket 06 report):
+#   sudo .venv/bin/python3 -m src disaster \
+#       --config /home/lab_shared/cefore-semindex/examples/two_host_sync.yaml
+#
+# What this proves (map.md's T1, scaled to 2 hosts, no partition): h0 and
+# h1 are direct neighbors; h0 creates 3 Index records (all describing the
+# same real content body, published below via ReCefore's own `put`), h1
+# creates 2; both sides' Sync agents converge so each holds the other's
+# records; h1 then probes by an attrs value only h0's records have
+# (zone=zone1) and retrieves that content body in full. See
+# check_events.py for the exact pass/fail assertions against the
+# resulting events.jsonl files.
+#
+# Agent timing: h0's schedule finishes creating records by t=6s; the
+# default Sync agent config (state_poll_interval_s=2.0) converges both
+# sides well within 24 more seconds even allowing for host_apps starting
+# a few seconds after t0 with no readiness hook. h1's probe at t=30s and
+# this scenario's duration=45s leave a wide margin either side of that.
+hosts: 2
+seed: 42
+k: 1
+num: 9906
+output_dir: "logs/verify"
+no_cli: true
+duration: 45
+results_json: "results.json"
+publisher_host: 0
+
+links:
+  - [0, 1]
+
+prefix_routes:
+  "ccnx:/semidx/demo/h0": 0
+  "ccnx:/semidx/demo/h1": 1
+
+debug:
+  artifacts: ["node_dirs"]
+
+# h0 publishes the one real content body every one of its 3 Index
+# records names (examples/two_host_sync/h0.json): this is the only body
+# h1's probe can actually retrieve, since h1 never creates a record for
+# it and nothing else in this scenario calls `put`.
+events:
+  - at: 0
+    type: put
+    host: 0
+    uri: "ccnx:/content/h0/body"
+    file: "./sample-putfile"
+    expiry: 3000
+    cache_time: 3000
+
+# {node} also selects each host's own config file below (h0.json /
+# h1.json), since host_apps._expand only substitutes the four fixed
+# placeholder names -- this one `argv` spec therefore serves both hosts
+# without listing them separately.
+host_apps:
+  - hosts: [0, 1]
+    argv:
+      - "/home/lab_shared/cefore-semindex/.venv/bin/python3"
+      - "-m"
+      - "semindex.agent"
+      - "--config"
+      - "/home/lab_shared/cefore-semindex/examples/two_host_sync/{node}.json"
+      - "--node"
+      - "{node}"
+      - "--t0-ms"
+      - "{t0_ms}"
+      - "--cefore-conf-dir"
+      - "{cefore_conf_dir}"
+      - "--state-dir"
+      - "{node_dir}/semindex"
+    log: "{node_dir}/semindex_agent.log"

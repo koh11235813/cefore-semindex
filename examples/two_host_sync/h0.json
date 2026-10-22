@@ -1,0 +1,14 @@
+{
+  "node": "h0",
+  "group": "demo",
+  "neighbors": ["h1"],
+  "cefore_conf_dir": "/placeholder-overridden-by---cefore-conf-dir",
+  "state_dir": "/placeholder-overridden-by---state-dir",
+  "t0_ms": 0,
+  "schedule": [
+    {"at_s": 2, "content_name": "ccnx:/content/h0/body", "zone": "zone1", "disaster": "flood", "media": "image"},
+    {"at_s": 4, "content_name": "ccnx:/content/h0/body", "zone": "zone1", "disaster": "flood", "media": "image"},
+    {"at_s": 6, "content_name": "ccnx:/content/h0/body", "zone": "zone1", "disaster": "flood", "media": "image"}
+  ],
+  "probes": []
+}
