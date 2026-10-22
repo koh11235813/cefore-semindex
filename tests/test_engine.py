@@ -55,7 +55,7 @@ def test_on_record_rejects_name_payload_mismatch(tmp_path: Path):
     payload = schema.encode(record)
     # Name claims seq 2, payload says seq 1.
     mismatched_name = names.build_record_name("g", "h0", "h1", 2)
-    engine.on_record("h1", mismatched_name, payload, now=0.0)
+    engine.on_record(mismatched_name, payload, now=0.0)
     assert store.get_record("h1", 1) is None
     assert store.get_record("h1", 2) is None
     assert engine.drain_events() == []
@@ -78,7 +78,7 @@ def test_on_record_releases_the_fetch_for_retry_on_name_payload_mismatch(tmp_pat
         origin="origin-x", seq=2, content_name="x", zone="zone1", disaster="flood", media="image", observed_at=1
     )
     mismatched_payload = schema.encode(record)  # payload says seq 2, but fetch_name says seq 1
-    engine.on_record("h1", fetch_name, mismatched_payload, now=0.0)
+    engine.on_record(fetch_name, mismatched_payload, now=0.0)
 
     # The state poll is not due again yet (interval is 2.0s by
     # default); only the released fetch retry should fire.
@@ -94,7 +94,7 @@ def test_on_record_releases_the_fetch_for_retry_on_malformed_payload(tmp_path: P
     assert fetch_name in [n for n, _ in transport.sent]
     transport.sent.clear()
 
-    engine.on_record("h1", fetch_name, b"not json", now=0.0)
+    engine.on_record(fetch_name, b"not json", now=0.0)
 
     engine.on_tick(now=1.0)
     assert transport.sent == [(fetch_name, engine._config.interest_lifetime_ms)]
@@ -106,8 +106,8 @@ def test_on_record_stores_a_valid_record_and_emits_record_stored(tmp_path: Path)
         origin="h1", seq=1, content_name="x", zone="zone1", disaster="flood", media="image", observed_at=1
     )
     payload = schema.encode(record)
-    name = names.build_record_name("g", "h0", "h1", 1)
-    engine.on_record("h1", name, payload, now=0.0)
+    name = names.build_record_name("g", "h1", "h1", 1)
+    engine.on_record(name, payload, now=0.0)
     assert store.get_record("h1", 1) == payload
     assert engine.drain_events() == [{"event": "record_stored", "origin": "h1", "seq": 1, "holder": "h1"}]
 
@@ -119,9 +119,9 @@ def test_on_record_duplicate_is_idempotent_and_silent(tmp_path: Path):
     )
     payload = schema.encode(record)
     name = names.build_record_name("g", "h0", "h1", 1)
-    engine.on_record("h1", name, payload, now=0.0)
+    engine.on_record(name, payload, now=0.0)
     engine.drain_events()
-    engine.on_record("h1", name, payload, now=1.0)
+    engine.on_record(name, payload, now=1.0)
     assert engine.drain_events() == []
 
 
@@ -132,14 +132,14 @@ def test_on_record_conflict_keeps_first_and_emits_conflict_event(tmp_path: Path)
         origin="h1", seq=1, content_name="a", zone="zone1", disaster="flood", media="image", observed_at=1
     )
     payload_a = schema.encode(record_a)
-    engine.on_record("h1", name, payload_a, now=0.0)
+    engine.on_record(name, payload_a, now=0.0)
     engine.drain_events()
 
     record_b = schema.IndexRecord(
         origin="h1", seq=1, content_name="b", zone="zone2", disaster="fire", media="video", observed_at=2
     )
     payload_b = schema.encode(record_b)
-    engine.on_record("h1", name, payload_b, now=1.0)
+    engine.on_record(name, payload_b, now=1.0)
 
     events = engine.drain_events()
     assert events == [
@@ -258,7 +258,32 @@ def test_on_state_drops_payload_with_a_malformed_origin_without_crashing(tmp_pat
 def test_on_fetch_timeout_emits_event_and_backs_off(tmp_path: Path):
     engine, _, _ = _engine(tmp_path, neighbors=("h1",))
     name = names.build_record_name("g", "h1", "origin-x", 3)
-    engine.on_fetch_timeout("h1", name, now=0.0)
+    engine.on_fetch_timeout(name, now=0.0)
     assert engine.drain_events() == [
         {"event": "fetch_timeout", "origin": "origin-x", "seq": 3, "neighbor": "h1"}
     ]
+
+
+def test_on_fetch_timeout_releases_the_fetch_for_retry(tmp_path: Path):
+    """2026-10-22 regression: before the neighbor was derived from the
+    name's holder segment, a caller passing a neighbor that disagreed
+    with it left the fetch wedged in-flight forever, since
+    Tracker._fail no-ops on a mismatched neighbor and no further
+    timeout is ever coming for an Interest already resolved. With the
+    separate argument gone that mismatch cannot be constructed; this
+    pins that a real timeout still frees the slot so the next on_tick
+    retries it, instead of leaving it stuck.
+    """
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)  # claims the fetch for origin-x/1 against h1
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+    assert fetch_name in [n for n, _ in transport.sent]
+    transport.sent.clear()
+
+    engine.on_fetch_timeout(fetch_name, now=0.0)
+
+    # The state poll is not due again yet; only the released fetch
+    # retry (backoff_initial_s defaults to 1.0) should fire at now=1.0.
+    engine.on_tick(now=1.0)
+    assert transport.sent == [(fetch_name, engine._config.interest_lifetime_ms)]

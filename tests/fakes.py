@@ -84,21 +84,27 @@ class FakeNetwork:
             return
         holder = parsed.holder
         if holder not in self._nodes or not self.connected(item.requester, holder):
-            self._timeout(requester_engine, parsed, holder, item.name, now)
+            self._timeout(requester_engine, parsed, item.name, now)
             return
         response = self._nodes[holder].handle_interest(item.name)
         if response is None:
-            self._timeout(requester_engine, parsed, holder, item.name, now)
+            self._timeout(requester_engine, parsed, item.name, now)
             return
         if isinstance(parsed, names.StateName):
             requester_engine.on_state(holder, response.payload, now)
         else:
-            requester_engine.on_record(holder, item.name, response.payload, now)
+            requester_engine.on_record(item.name, response.payload, now)
 
-    def _timeout(self, requester_engine: SyncEngine, parsed, holder: str, name: str, now: float) -> None:
-        """Tell the requester its Interest for `name` got no reply, if it tracks timeouts at all."""
+    def _timeout(self, requester_engine: SyncEngine, parsed, name: str, now: float) -> None:
+        """Tell the requester its Interest for `name` got no reply, if it tracks timeouts at all.
+
+        2026-10-22 fix: dropped the `holder` parameter this took
+        alongside `name` -- on_fetch_timeout derives the holder from
+        `name` itself now, so passing it separately here was already
+        dead as soon as the engine stopped taking it as an argument.
+        """
         if isinstance(parsed, names.RecordName):
-            requester_engine.on_fetch_timeout(holder, name, now)
+            requester_engine.on_fetch_timeout(name, now)
         # A timed-out state request needs no callback: the requester's
         # next due on_tick simply asks that neighbor again.
 

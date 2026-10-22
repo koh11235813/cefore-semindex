@@ -182,20 +182,29 @@ class SyncEngine:
             self._tracker.observe_state(origin, neighbor, entry["hi"], entry["extra"])
         self._send_fetch_plan(neighbor, now)
 
-    def on_record(self, neighbor: str, name: str, payload: bytes, now: float) -> None:
+    def on_record(self, name: str, payload: bytes, now: float) -> None:
         """A neighbor's reply to a record-fetch Interest arrived.
 
         Validates the payload, checks it against the (origin, seq)
         carried by the name itself (map.md "名前の origin/seq とペイロー
         ドの値が違えば拒否"), stores it, and updates the tracker so this
-        seq stops being tracked as outstanding -- whichever neighbor it
-        was actually requested from.
+        seq stops being tracked as outstanding.
 
         2026-10-22 fix: a payload that fails validation now also calls
         Tracker.on_fetch_rejected rather than being silently dropped --
         Data had already arrived for this Interest, so no
         on_fetch_timeout would ever follow to release the in-flight
         slot, and a bad reply used to mark the fetch in-flight forever.
+
+        2026-10-22 fix: `neighbor` used to be a separate argument from
+        this same name's holder segment, with nothing checking the two
+        agreed. _send_fetch_plan always builds the fetch name with
+        holder=neighbor, so the two can never legitimately differ; a
+        caller that passed a disagreeing value just hit
+        Tracker._fail's `in_flight_neighbor != neighbor` early-return
+        silently, leaving the seq marked in-flight forever. Deriving it
+        from the name removes the possibility outright instead of
+        adding a check for it.
         """
         try:
             parsed = names.parse(name)
@@ -203,6 +212,7 @@ class SyncEngine:
             return
         if not isinstance(parsed, names.RecordName):
             return
+        neighbor = parsed.holder
 
         try:
             record = schema.decode(payload)
@@ -235,14 +245,20 @@ class SyncEngine:
                 {"event": "record_stored", "origin": record.origin, "seq": record.seq, "holder": neighbor}
             )
 
-    def on_fetch_timeout(self, neighbor: str, name: str, now: float) -> None:
-        """A record-fetch Interest sent to `neighbor` got no Data back in time."""
+    def on_fetch_timeout(self, name: str, now: float) -> None:
+        """A record-fetch Interest for `name` got no Data back in time.
+
+        2026-10-22 fix: see on_record for why the neighbor is derived
+        from the name's holder segment rather than taken as a separate
+        argument.
+        """
         try:
             parsed = names.parse(name)
         except names.MalformedNameError:
             return
         if not isinstance(parsed, names.RecordName):
             return
+        neighbor = parsed.holder
         self._tracker.on_fetch_timeout(parsed.origin, parsed.seq, neighbor, now)
         self._emit({"event": "fetch_timeout", "origin": parsed.origin, "seq": parsed.seq, "neighbor": neighbor})
 
