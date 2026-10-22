@@ -284,7 +284,7 @@ def test_on_state_decodes_and_feeds_the_tracker_then_plans_fetches(tmp_path: Pat
     payload = holder_state.encode({"origin-x": OriginProgress(hi=2, extra=())})
     engine.on_state("h1", payload, now=0.0)
     events = engine.drain_events()
-    assert events[0] == {"event": "state_rx", "neighbor": "h1"}
+    assert events[0] == {"event": "state_rx", "neighbor": "h1", "hi": {"origin-x": 2}}
     sent_names = [n for n, _ in transport.sent]
     assert sent_names == [
         names.build_record_name("g", "h1", "origin-x", 1),
@@ -297,7 +297,7 @@ def test_on_state_drops_malformed_payload_silently(tmp_path: Path):
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     engine.on_state("h1", b"not json", now=0.0)
     events = engine.drain_events()
-    assert events == [{"event": "state_rx", "neighbor": "h1"}]
+    assert events == [{"event": "state_rx", "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
 
@@ -312,7 +312,7 @@ def test_on_state_drops_payload_with_a_malformed_origin_without_crashing(tmp_pat
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     payload = b'{"bad/origin":{"extra":[],"hi":1,"truncated":false}}'
     engine.on_state("h1", payload, now=0.0)  # must not raise
-    assert engine.drain_events() == [{"event": "state_rx", "neighbor": "h1"}]
+    assert engine.drain_events() == [{"event": "state_rx", "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
 

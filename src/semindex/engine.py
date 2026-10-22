@@ -184,12 +184,22 @@ class SyncEngine:
         tracker, and immediately plans any newly-due fetches from that
         neighbor rather than waiting for the next tick, so a discovered
         gap starts closing as soon as it is known.
+
+        2026-10-22 fix: the state_rx event used to carry only
+        `neighbor`, with no record of what was actually advertised -- a
+        restarted holder (map.md T2(c)) that advertises a higher hi than
+        it has actually stored could only be caught indirectly, through a
+        fetch_timeout that follows much later, never through the
+        advertisement itself. `hi` (per-origin, decode failure -> `{}`)
+        lets a checker compare what a holder claimed against what its own
+        events.jsonl shows it had actually stored as of this same reply.
         """
-        self._emit({"event": "state_rx", "neighbor": neighbor})
         try:
             decoded = holder_state.decode(payload)
         except holder_state.HolderStateError:
+            self._emit({"event": "state_rx", "neighbor": neighbor, "hi": {}})
             return  # malformed/oversize reply from a neighbor; drop silently
+        self._emit({"event": "state_rx", "neighbor": neighbor, "hi": {o: e["hi"] for o, e in decoded.items()}})
         for origin, entry in decoded.items():
             self._tracker.observe_state(origin, neighbor, entry["hi"], entry["extra"])
         self._send_fetch_plan(neighbor, now)
