@@ -84,6 +84,8 @@ class AgentConfig:
     sync_overrides: dict[str, float | int]
     receive_timeout_ms: int
     chunk_lifetime_ms: int
+    # t0-relative seconds; None means never stop early (run until SIGTERM/SIGINT).
+    stop_at_s: float | None
 
 
 # The SyncConfig fields an agent config may override; map.md's "時間・サ
@@ -123,7 +125,9 @@ _REQUIRED_KEYS = (
     "schedule",
     "probes",
 )
-_ALLOWED_KEYS = frozenset(_REQUIRED_KEYS) | {"fault"} | set(_SYNC_OVERRIDE_KEYS) | set(_AGENT_NUMERIC_KEYS)
+_ALLOWED_KEYS = (
+    frozenset(_REQUIRED_KEYS) | {"fault", "stop_at_s"} | set(_SYNC_OVERRIDE_KEYS) | set(_AGENT_NUMERIC_KEYS)
+)
 
 _SCHEDULE_ENTRY_REQUIRED = ("at_s", "content_name", "zone", "disaster", "media")
 _SCHEDULE_ENTRY_KEYS = frozenset(_SCHEDULE_ENTRY_REQUIRED)
@@ -322,6 +326,15 @@ def validate_config(raw) -> AgentConfig:
 
     fault_drop_rec = _validate_fault(raw)
 
+    # stop_at_s has no sensible non-None default (unlike every _AGENT_NUMERIC_KEYS
+    # entry, which already defaults to a real timeout): absent must mean "never
+    # stop early", not 0 seconds, so it is read and checked directly rather than
+    # through _AGENT_NUMERIC_KEYS' raw.get()-with-a-default pattern.
+    stop_at_s_raw = raw.get("stop_at_s")
+    if stop_at_s_raw is not None:
+        _check_numeric("stop_at_s", stop_at_s_raw, float)
+    stop_at_s = float(stop_at_s_raw) if stop_at_s_raw is not None else None
+
     sync_overrides: dict[str, float | int] = {}
     for key, kind in _SYNC_OVERRIDE_KEYS.items():
         if key in raw:
@@ -345,6 +358,7 @@ def validate_config(raw) -> AgentConfig:
         sync_overrides=sync_overrides,
         receive_timeout_ms=raw.get("receive_timeout_ms", DEFAULT_RECEIVE_TIMEOUT_MS),
         chunk_lifetime_ms=raw.get("chunk_lifetime_ms", DEFAULT_CHUNK_LIFETIME_MS),
+        stop_at_s=stop_at_s,
     )
 
 
@@ -498,6 +512,8 @@ class Agent:
         already_probed = self._store.get_probe_count()
         self._probes = self._probes[already_probed:]
 
+        self._stop_at_s = config.stop_at_s
+
         self._stop_requested = False
 
     def request_stop(self) -> None:
@@ -582,7 +598,25 @@ class Agent:
             self._events.write(event)
 
     def step(self) -> None:
-        """One loop iteration: poll the transport, tick the engine, fire due schedule/probe entries, flush events."""
+        """One loop iteration: stop if stop_at_s has been reached, else poll the
+        transport, tick the engine, fire due schedule/probe entries, and flush events.
+
+        2026-10-23: stop_at_s is checked against `now` read *before* poll()/tick,
+        and this step does none of that work at all once it is due -- unlike a
+        real SIGTERM, which only asks the step already in progress to be the
+        last one, stop_at_s is a measurement-window boundary: the step that
+        first notices it has been reached must not send one more Interest or
+        fire one more schedule/probe entry only to have the result thrown away.
+        This also gives restart its "already past" behavior for free, with no
+        separate check: a relaunched life whose very first step already finds
+        itself past stop_at_s takes this same early return before ever calling
+        poll() or on_tick(), so it stops immediately -- see run()/shutdown()
+        for where the final `counters` line actually gets written.
+        """
+        now = self._transport.now()
+        if self._stop_at_s is not None and self._elapsed_s(now) >= self._stop_at_s:
+            self.request_stop()
+            return
         self._transport.poll()
         now = self._transport.now()
         self._engine.on_tick(now)

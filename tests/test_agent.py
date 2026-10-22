@@ -221,6 +221,41 @@ def test_validate_config_applies_sync_overrides():
     assert sync_config.state_poll_interval_s == 5.0
 
 
+def test_validate_config_defaults_stop_at_s_to_none_when_absent():
+    """stop_at_s is not required: a config that omits it never stops early (runs
+    until SIGTERM/SIGINT, same as before this key existed)."""
+    config = validate_config(_minimal_raw())
+    assert config.stop_at_s is None
+
+
+def test_validate_config_accepts_a_given_stop_at_s():
+    """A given stop_at_s reaches the parsed AgentConfig unchanged."""
+    raw = _minimal_raw()
+    raw["stop_at_s"] = 130.0
+    config = validate_config(raw)
+    assert config.stop_at_s == 130.0
+
+
+def test_validate_config_rejects_a_non_number_stop_at_s():
+    """stop_at_s must be a number, same rule _check_numeric already applies to every
+    other timing config key."""
+    raw = _minimal_raw()
+    raw["stop_at_s"] = "130"
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "stop_at_s must be a number"
+
+
+def test_validate_config_rejects_a_negative_stop_at_s():
+    """stop_at_s is t0-relative and must be >= 0: negative has no meaning (t0 is this
+    agent's own start, nothing happens before it)."""
+    raw = _minimal_raw()
+    raw["stop_at_s"] = -1.0
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "stop_at_s must be >= 0"
+
+
 def test_load_config_applies_cli_overrides_onto_the_file(tmp_path: Path):
     """--node/--t0-ms/--cefore-conf-dir/--state-dir override whatever the file holds for
     those four keys -- ReCefore host_apps only knows them at scenario-start time, so a
@@ -701,6 +736,72 @@ def test_a_second_life_on_the_same_state_dir_creates_no_duplicate_records_and_re
     discovered_second = [e for e in second_life if e["event"] == "probe_discovered"]
     # Only the at_s=10 probe is new; the at_s=1 probe must not re-fire.
     assert len(discovered_second) == 1
+
+
+def test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_step(tmp_path: Path):
+    """Once elapsed time reaches stop_at_s, run() stops -- same final-counters-then-
+    close shutdown a real SIGTERM's run() loop does -- but the step that first
+    notices the deadline sends nothing: only the state-request Interest from the
+    one earlier step (elapsed=0.3, strictly before stop_at_s=0.5) ever goes out.
+    """
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.3)
+    config = _config(tmp_path, neighbors=["h1"], stop_at_s=0.5)
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.run()  # step 1 (elapsed 0->0.3): sends the poll; step 2 (elapsed 0.3->0.6... but 0.3>=0.5 is false,
+    # so step 2 also runs, advancing to 0.6; step 3 (elapsed 0.6) is >= 0.5: stops without polling again.
+
+    assert len(handle.sent_interests) == 1
+    state_name = handle.sent_interests[0][0]
+    expected_bytes = len(state_name.encode("utf-8"))
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    counters = [e for e in lines if e["event"] == "counters"]
+    assert len(counters) == 1
+    assert (
+        counters[0]["bytes_sent"],
+        counters[0]["bytes_received"],
+        counters[0]["control_bytes_sent"],
+        counters[0]["control_bytes_received"],
+    ) == (expected_bytes, 0, expected_bytes, 0)
+
+
+def test_a_relaunched_life_with_stop_at_s_already_past_stops_immediately(tmp_path: Path):
+    """A relaunched life (same config, same state_dir, ReCefore's host_apps contract
+    giving no other way to stop/start one host app than SIGTERM then relaunch)
+    whose clock is already past t0+stop_at_s on its very first step must not poll
+    or tick at all -- just write its own `counters` line (all-zero: nothing was
+    ever sent or received in this life) and stop.
+    """
+    clock = _FakeClock(0.0)
+    config = _config(tmp_path, neighbors=["h1"], stop_at_s=100.0)
+
+    handle1 = _FakeHandle()
+    agent1 = build_agent(config, handle1, clock=clock)
+    clock.value = 1.0  # well before stop_at_s=100
+    agent1.step()
+    agent1.shutdown()
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    first_life = [json.loads(line) for line in events_path.read_text().splitlines()]
+
+    clock.value = 150.0  # already past t0+stop_at_s=100 before life 2 is even built
+    handle2 = _FakeHandle()
+    agent2 = build_agent(config, handle2, clock=clock)
+    agent2.run()
+
+    assert handle2.sent_interests == []
+    second_life = [json.loads(line) for line in events_path.read_text().splitlines()][len(first_life) :]
+    assert len(second_life) == 1
+    assert second_life[0]["event"] == "counters"
+    assert (
+        second_life[0]["bytes_sent"],
+        second_life[0]["bytes_received"],
+        second_life[0]["control_bytes_sent"],
+        second_life[0]["control_bytes_received"],
+    ) == (0, 0, 0, 0)
 
 
 def test_build_agent_fails_at_startup_when_the_schedule_is_shorter_than_the_persisted_own_record_count(
