@@ -81,3 +81,16 @@ def test_decode_rejects_missing_entry_key():
     with pytest.raises(holder_state.HolderStateError) as exc_info:
         holder_state.decode(payload)
     assert str(exc_info.value) == "each holder state entry must have exactly hi, extra and truncated"
+
+
+def test_decode_rejects_origin_key_containing_slash():
+    # 2026-10-22 fix regression: an origin was only checked for
+    # non-emptiness, so one containing '/' decoded successfully here
+    # and later crashed names.build_record_name uncaught while planning
+    # a fetch for it (see test_engine.py's on_state regression test for
+    # the full receive-path failure this caused).
+    body = {"bad/origin": {"hi": 0, "extra": [], "truncated": False}}
+    payload = json.dumps(body).encode("ascii")
+    with pytest.raises(holder_state.HolderStateError) as exc_info:
+        holder_state.decode(payload)
+    assert str(exc_info.value) == "holder state origin keys must be non-empty name components without '/'"

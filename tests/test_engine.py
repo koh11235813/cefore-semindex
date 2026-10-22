@@ -61,6 +61,45 @@ def test_on_record_rejects_name_payload_mismatch(tmp_path: Path):
     assert engine.drain_events() == []
 
 
+def test_on_record_releases_the_fetch_for_retry_on_name_payload_mismatch(tmp_path: Path):
+    # 2026-10-22 fix regression: a mismatched reply used to just be
+    # dropped, leaving the fetch marked in-flight forever (no
+    # on_fetch_timeout is ever coming for an Interest that already got
+    # a Data reply). It must instead back off and let the next on_tick
+    # retry it, exactly like a timeout would.
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)  # claims the fetch for origin-x/1 against h1
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+    assert fetch_name in [n for n, _ in transport.sent]
+    transport.sent.clear()
+
+    record = schema.IndexRecord(
+        origin="origin-x", seq=2, content_name="x", zone="zone1", disaster="flood", media="image", observed_at=1
+    )
+    mismatched_payload = schema.encode(record)  # payload says seq 2, but fetch_name says seq 1
+    engine.on_record("h1", fetch_name, mismatched_payload, now=0.0)
+
+    # The state poll is not due again yet (interval is 2.0s by
+    # default); only the released fetch retry should fire.
+    engine.on_tick(now=1.0)
+    assert transport.sent == [(fetch_name, engine._config.interest_lifetime_ms)]
+
+
+def test_on_record_releases_the_fetch_for_retry_on_malformed_payload(tmp_path: Path):
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+    assert fetch_name in [n for n, _ in transport.sent]
+    transport.sent.clear()
+
+    engine.on_record("h1", fetch_name, b"not json", now=0.0)
+
+    engine.on_tick(now=1.0)
+    assert transport.sent == [(fetch_name, engine._config.interest_lifetime_ms)]
+
+
 def test_on_record_stores_a_valid_record_and_emits_record_stored(tmp_path: Path):
     engine, _, store = _engine(tmp_path)
     record = schema.IndexRecord(
@@ -103,12 +142,15 @@ def test_on_record_conflict_keeps_first_and_emits_conflict_event(tmp_path: Path)
     engine.on_record("h1", name, payload_b, now=1.0)
 
     events = engine.drain_events()
-    assert len(events) == 1
-    assert events[0]["event"] == "conflict"
-    assert events[0]["origin"] == "h1"
-    assert events[0]["seq"] == 1
-    assert events[0]["kept_hash"] == schema.content_hash(payload_a)
-    assert events[0]["rejected_hash"] == schema.content_hash(payload_b)
+    assert events == [
+        {
+            "event": "conflict",
+            "origin": "h1",
+            "seq": 1,
+            "kept_hash": schema.content_hash(payload_a),
+            "rejected_hash": schema.content_hash(payload_b),
+        }
+    ]
     assert store.get_record("h1", 1) == payload_a
 
 
@@ -196,6 +238,20 @@ def test_on_state_drops_malformed_payload_silently(tmp_path: Path):
     engine.on_state("h1", b"not json", now=0.0)
     events = engine.drain_events()
     assert events == [{"event": "state_rx", "neighbor": "h1"}]
+    assert transport.sent == []
+
+
+def test_on_state_drops_payload_with_a_malformed_origin_without_crashing(tmp_path: Path):
+    # 2026-10-22 fix regression: holder_state.decode used to accept any
+    # non-empty origin key, including one containing '/'. That reached
+    # names.build_record_name while planning a fetch for it and raised
+    # MalformedNameError uncaught, escaping on_state entirely. Decoding
+    # must now reject the whole state instead, the same as any other
+    # malformed reply.
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    payload = b'{"bad/origin":{"extra":[],"hi":1,"truncated":false}}'
+    engine.on_state("h1", payload, now=0.0)  # must not raise
+    assert engine.drain_events() == [{"event": "state_rx", "neighbor": "h1"}]
     assert transport.sent == []
 
 

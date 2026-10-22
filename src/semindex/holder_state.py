@@ -90,8 +90,15 @@ def decode(data: bytes) -> dict[str, dict]:
 
     result: dict[str, dict] = {}
     for origin, entry in obj.items():
-        if not isinstance(origin, str) or not origin:
-            raise HolderStateError("holder state origin keys must be non-empty strings")
+        # 2026-10-22 fix: an origin was only checked for non-emptiness,
+        # so one containing '/' (e.g. "bad/origin") decoded successfully
+        # here and then reached names.build_record_name while planning a
+        # fetch for it, which raises MalformedNameError -- uncaught,
+        # escaping the on_state receive path entirely. An origin is a
+        # single wire name component wherever it is used downstream, so
+        # it must be rejected here on the same terms as a name component.
+        if not isinstance(origin, str) or not origin or "/" in origin:
+            raise HolderStateError("holder state origin keys must be non-empty name components without '/'")
         if not isinstance(entry, dict) or set(entry.keys()) != _ENTRY_KEYS:
             raise HolderStateError("each holder state entry must have exactly hi, extra and truncated")
         hi, extra, truncated = entry["hi"], entry["extra"], entry["truncated"]

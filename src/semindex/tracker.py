@@ -46,11 +46,21 @@ class _FetchState:
     `in_flight_neighbor` is set while a fetch Interest is outstanding on
     that neighbor and cleared on timeout; `next_attempt_at` is only
     meaningful while it is None (not currently in flight).
+
+    `failed_neighbors` is the set of neighbors that have failed this
+    exact (origin, seq) since the last time the set covered every
+    current advertiser. It exists to stop a single unreachable neighbor
+    from permanently hogging every retry of a seq that another neighbor
+    also advertises: without it, plan_fetches would hand the retry back
+    to whichever neighbor happens to come first in on_tick's fixed
+    iteration order every time, even though that neighbor is the one
+    that just failed.
     """
 
     next_attempt_at: float
     backoff_s: float
     in_flight_neighbor: str | None = None
+    failed_neighbors: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -76,6 +86,7 @@ class Tracker:
         max_in_flight_per_neighbor: int = DEFAULT_MAX_IN_FLIGHT_PER_NEIGHBOR,
         jitter: Callable[[], float] = no_jitter,
     ) -> None:
+        """Store the retry/backoff/cap configuration; all per-origin state starts empty."""
         self._backoff_initial_s = backoff_initial_s
         self._backoff_multiplier = backoff_multiplier
         self._backoff_max_s = backoff_max_s
@@ -150,6 +161,15 @@ class Tracker:
 
     # -- fetch scheduling -------------------------------------------------------
 
+    def _has_advertiser_outside(self, state: _OriginState, seq: int, excluded: frozenset[str]) -> bool:
+        """Whether some neighbor not in `excluded` has advertised holding `seq`."""
+        for other, (hi, extra) in state.advertised.items():
+            if other in excluded:
+                continue
+            if seq <= hi or seq in extra:
+                return True
+        return False
+
     def plan_fetches(self, neighbor: str, now: float) -> list[tuple[str, int]]:
         """Due, not-in-flight (origin, seq) fetches to send to `neighbor` now.
 
@@ -179,15 +199,29 @@ class Tracker:
                 if seq > hi and seq not in extra_set:
                     continue  # this neighbor never claimed to hold it
                 fetch = state.fetches.get(seq)
-                if fetch is not None and (fetch.in_flight_neighbor is not None or fetch.next_attempt_at > now):
-                    continue
+                if fetch is not None:
+                    if fetch.in_flight_neighbor is not None or fetch.next_attempt_at > now:
+                        continue
+                    # 2026-10-22 fix: a seq whose in-flight neighbor keeps
+                    # failing used to be reassigned straight back to that
+                    # same neighbor every retry, because on_tick visits
+                    # neighbors in a fixed order -- starving any other
+                    # neighbor that also advertised it. Give an advertiser
+                    # outside the failed set first claim on this retry.
+                    if neighbor in fetch.failed_neighbors and self._has_advertiser_outside(
+                        state, seq, fetch.failed_neighbors
+                    ):
+                        continue
                 due.append((origin, seq))
 
         for origin, seq in due:
             state = self._origins[origin]
             existing = state.fetches.get(seq)
             backoff = existing.backoff_s if existing is not None else self._backoff_initial_s
-            state.fetches[seq] = _FetchState(next_attempt_at=now, backoff_s=backoff, in_flight_neighbor=neighbor)
+            failed = existing.failed_neighbors if existing is not None else frozenset()
+            state.fetches[seq] = _FetchState(
+                next_attempt_at=now, backoff_s=backoff, in_flight_neighbor=neighbor, failed_neighbors=failed
+            )
             self._in_flight_count[neighbor] = self._in_flight_count.get(neighbor, 0) + 1
         return due
 
@@ -200,6 +234,37 @@ class Tracker:
         for the attempt after that, capped. A timeout for a fetch
         already resolved or reassigned elsewhere is stale and ignored.
         """
+        self._fail(origin, seq, neighbor, now)
+
+    def on_fetch_rejected(self, origin: str, seq: int, neighbor: str, now: float) -> None:
+        """A Data reply for (origin, seq) arrived from `neighbor` but failed
+        validation (malformed payload, or name/payload mismatch).
+
+        2026-10-22 fix: on_record used to just drop a bad reply and
+        return, leaving the fetch marked in_flight forever -- Data had
+        already arrived, so no on_fetch_timeout would ever follow to
+        release it. This applies the exact same backoff-and-release
+        treatment as a timeout, through the same failed_neighbors
+        bookkeeping, so a neighbor that keeps answering with garbage is
+        rotated away from exactly like one that stops answering at all.
+        """
+        self._fail(origin, seq, neighbor, now)
+
+    def _fail(self, origin: str, seq: int, neighbor: str, now: float) -> None:
+        """Shared outcome of a timeout or a rejected reply: release the
+        in-flight slot, back off, and record `neighbor` as having failed
+        this seq.
+
+        If every neighbor currently advertising this seq has now failed
+        it (the failed set would cover them all), the set is reset to
+        just `{neighbor}` instead of kept full: a full set would make
+        plan_fetches's exclusion check vacuous (no neighbor left
+        "outside" it), which would silently hand every subsequent retry
+        back to whichever neighbor on_tick happens to visit first --
+        recreating the starvation this bookkeeping exists to prevent.
+        Resetting instead restarts the round-robin over the same
+        advertisers for as long as they all keep failing.
+        """
         state = self._origins.get(origin)
         if state is None:
             return
@@ -208,7 +273,12 @@ class Tracker:
             return
         wait = fetch.backoff_s + self._jitter()
         next_backoff = min(fetch.backoff_s * self._backoff_multiplier, self._backoff_max_s)
-        state.fetches[seq] = _FetchState(next_attempt_at=now + wait, backoff_s=next_backoff)
+        failed = fetch.failed_neighbors | {neighbor}
+        if not self._has_advertiser_outside(state, seq, failed):
+            failed = frozenset({neighbor})
+        state.fetches[seq] = _FetchState(
+            next_attempt_at=now + wait, backoff_s=next_backoff, failed_neighbors=failed
+        )
         self._in_flight_count[neighbor] = max(0, self._in_flight_count.get(neighbor, 0) - 1)
 
     def _release(self, state: _OriginState, seq: int) -> None:

@@ -190,6 +190,12 @@ class SyncEngine:
         ドの値が違えば拒否"), stores it, and updates the tracker so this
         seq stops being tracked as outstanding -- whichever neighbor it
         was actually requested from.
+
+        2026-10-22 fix: a payload that fails validation now also calls
+        Tracker.on_fetch_rejected rather than being silently dropped --
+        Data had already arrived for this Interest, so no
+        on_fetch_timeout would ever follow to release the in-flight
+        slot, and a bad reply used to mark the fetch in-flight forever.
         """
         try:
             parsed = names.parse(name)
@@ -201,9 +207,12 @@ class SyncEngine:
         try:
             record = schema.decode(payload)
         except schema.RecordError:
+            self._tracker.on_fetch_rejected(parsed.origin, parsed.seq, neighbor, now)
             return
         if record.origin != parsed.origin or record.seq != parsed.seq:
-            return  # name/payload mismatch; reject without storing
+            # name/payload mismatch; reject without storing
+            self._tracker.on_fetch_rejected(parsed.origin, parsed.seq, neighbor, now)
+            return
 
         digest = schema.content_hash(payload)
         result = self._store.append_received(record.origin, record.seq, payload, digest)

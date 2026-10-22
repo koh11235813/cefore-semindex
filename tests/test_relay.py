@@ -114,3 +114,55 @@ def test_drop_rec_fault_delays_but_does_not_prevent_recovery(tmp_path: Path):
     assert timeouts_for_seq_3 == 2
     assert stored_seq_3 is True
     assert a._store.get_progress("B").hi == 3
+
+
+def test_requester_retries_via_a_second_holder_once_the_first_partitions(tmp_path: Path):
+    # R has two direct neighbors that both can answer for origin A's
+    # records: A itself, and B (already synced from A). R's config lists
+    # A before B, so its first fetch attempt lands on A. A then
+    # partitions from R specifically (B does not), and every one of
+    # those fetches must eventually be retried against B instead of
+    # being retried against A forever (tracker.py's failed_neighbors
+    # bookkeeping; see test_tracker.py for the mechanism in isolation).
+    network = FakeNetwork()
+    a = _build_node(tmp_path, network, "A", neighbors=())
+    b = _build_node(tmp_path, network, "B", neighbors=("A",))
+    r = _build_node(tmp_path, network, "R", neighbors=("A", "B"))
+
+    for i in range(3):
+        a.create_record(
+            content_name=f"ccnx:/content/A/{i + 1}", zone="zone1", disaster="flood", media="image", observed_at=i
+        )
+
+    # Sync A -> B first, with R not yet ticking, so B is fully caught up
+    # before R asks anyone.
+    now = 0.0
+    for _ in range(3):
+        _run_round([a, b], network, now)
+        now += ROUND_INTERVAL_S
+    assert b._store.get_progress("A").hi == 3
+
+    # R ticks once: it learns from both A and B that origin A has hi=3,
+    # and claims its first fetch attempt for seq 1..3 against A (the
+    # first neighbor state request to resolve, since A is listed first).
+    r.on_tick(now)
+    network.pump(now)  # resolves the two state replies; queues the fetch Interests to holder A
+    r.drain_events()
+
+    # Cut A off from R right after it claimed those fetches but before
+    # any of them are resolved, so every one of them times out.
+    network.partition("A", "R")
+    network.pump(now)  # resolves the queued fetch Interests to A: all 3 time out
+    timeouts = [e for e in r.drain_events() if e["event"] == "fetch_timeout" and e["origin"] == "A"]
+    assert {e["seq"] for e in timeouts} == {1, 2, 3}
+
+    stored: dict[int, str] = {}
+    for _ in range(4):
+        _run_round([a, b, r], network, now)
+        for event in r.drain_events():
+            if event["event"] == "record_stored" and event["origin"] == "A":
+                stored[event["seq"]] = event["holder"]
+        now += ROUND_INTERVAL_S
+
+    assert r._store.get_progress("A").hi == 3
+    assert stored == {1: "B", 2: "B", 3: "B"}
