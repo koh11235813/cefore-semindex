@@ -36,7 +36,7 @@
 - Holder state: origin ごとに `hi`（1 から連続保持の最大 seq）と `extra`（hi より上の飛び飛びの保持 seq、昇順、最大 64）。応答は正規形 JSON で 8 KiB 以下、超えたら extra を切り詰めて `truncated: true`、hi は必ず送る。ページングは無し。
 - 要求側は「通知された最大 seq」（隣接ノードの hi と extra の最大）、「連続して保持している範囲」、「未取得」を区別して持つ。1、2、4 を受け取っても 3 を取得済みにしない。
 
-### Wire names（確定）
+### Wire names (fixed)
 
 - 名前: 状態確認 `ccnx:/semidx/<group>/<holder>/sv/<requester>/<epoch_ms>`、レコード `ccnx:/semidx/<group>/<holder>/rec/<origin>/<seq>`。登録は `ccnx:/semidx/<group>/<自ノード>` の1本のみ。`<holder>` は「今答える相手」（隣接ノード、または中継時はそのレコードを持つホルダ）で、レコードの Index origin とは別物。
 - 名前の各コンポーネントは空文字列・`/` を含まない1セグメント。`epoch_ms` と `seq` は先頭の `+`・空白・アンダースコアを含まない非負の10進整数のみで、`seq` は1以上。これ以外の形は malformed として拒否する（`src/semindex/names.py`）。

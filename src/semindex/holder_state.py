@@ -3,8 +3,7 @@
 CONTEXT.md "Holder state": per origin, the highest seq held contiguously
 from 1 (`hi`) and the sparse seqs held above it (`extra`), nothing about
 records merely heard of. This module only encodes and decodes the wire
-representation; `store.OriginProgress` is the value it encodes, and
-`tracker.py` is what a requester does with a decoded one.
+representation; `store.OriginProgress` is the value it encodes.
 """
 
 from __future__ import annotations
