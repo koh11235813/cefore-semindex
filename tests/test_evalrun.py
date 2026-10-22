@@ -512,6 +512,121 @@ def test_default_chown_tree_is_a_noop_without_sudo_env(tmp_path: Path, monkeypat
     evalrun.default_chown_tree(str(path))  # must not raise
 
 
+# -- default_chown_dir ----------------------------------------------------------
+
+
+def test_default_chown_dir_is_a_noop_without_sudo_env(tmp_path: Path, monkeypatch):
+    """Default chown dir is a no-op without SUDO_UID/SUDO_GID set."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    evalrun.default_chown_dir(str(tmp_path))  # must not raise
+
+
+def test_default_chown_dir_refuses_a_symlink(tmp_path: Path, monkeypatch):
+    """Default chown dir refuses to chown through a symlink rather than silently following it."""
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    monkeypatch.setenv("SUDO_GID", str(os.getgid()))
+    target = tmp_path / "real_target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ValueError):
+        evalrun.default_chown_dir(str(link))
+
+
+# -- run_one / run_all: chown newly-created ancestor dirs (orchestrator trial) --
+
+
+def test_run_one_chowns_newly_created_stage_and_p_dirs_but_not_preexisting_ones(tmp_path: Path, monkeypatch):
+    """Run one chowns `<store>/<stage>` and `<store>/<stage>/p<p>` when its own makedirs call
+    creates them fresh, but leaves an already-existing ancestor alone on a later run that reuses
+    it -- the orchestrator's live trial found both of these directories left root-owned while
+    every run dir underneath them was correctly chowned."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    chowned_dirs: list = []
+    evalrun.run_one(
+        0.2, 7, "s1", str(store), str(recefore), str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        chown_dir=chowned_dirs.append,
+    )
+    stage_dir = store / "s1"
+    p_dir = store / "s1" / "p0.2"
+    assert set(chowned_dirs) == {str(stage_dir), str(p_dir)}
+
+    # A second seed under the SAME (stage, p): both ancestors already exist now, so neither
+    # should be chowned again.
+    chowned_dirs.clear()
+    evalrun.run_one(
+        0.2, 8, "s1", str(store), str(recefore), str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        chown_dir=chowned_dirs.append,
+    )
+    assert chowned_dirs == []
+
+
+def test_run_one_default_chown_dir_actually_fixes_ownership_of_the_ancestors(tmp_path: Path, monkeypatch):
+    """A live (no fake chown_dir) run_one call, with SUDO_UID/SUDO_GID set to this process's own
+    uid/gid, leaves `<store>/<stage>` and `<store>/<stage>/p<p>` owned by that uid/gid -- not just
+    recorded as "would have been chowned" by a recording fake."""
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    monkeypatch.setenv("SUDO_GID", str(os.getgid()))
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.2, 7, "s1", str(store), str(recefore), str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+    )
+    stage_dir = store / "s1"
+    p_dir = store / "s1" / "p0.2"
+    assert stage_dir.stat().st_uid == os.getuid()
+    assert p_dir.stat().st_uid == os.getuid()
+
+
+def test_run_all_chowns_the_store_dir_only_when_it_creates_it(tmp_path: Path, monkeypatch):
+    """Run all chowns `store` itself when its own makedirs call creates it fresh, but leaves an
+    already-existing store dir alone -- the same "only what this call created" rule as `run_one`'s
+    ancestor handling, applied to the one ancestor above everything `run_one` ever sees."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    chowned_dirs: list = []
+    evalrun.run_all(
+        [0.2], [1], "s1", str(store), str(recefore), str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        chown_dir=chowned_dirs.append,
+    )
+    assert str(store) in chowned_dirs
+
+    # store already exists now: a second sweep must not chown it again.
+    chowned_dirs.clear()
+    evalrun.run_all(
+        [0.2], [2], "s1", str(store), str(recefore), str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        chown_dir=chowned_dirs.append,
+    )
+    assert str(store) not in chowned_dirs
+
+
 # -- run_one: happy path -------------------------------------------------------
 
 

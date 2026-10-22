@@ -152,6 +152,36 @@ def default_chown_tree(path: str) -> None:
     os.chmod(path, os.stat(path).st_mode | 0o020)
 
 
+def default_chown_dir(path: str) -> None:
+    """chown `path` ITSELF (not recursively) to the invoking user (SUDO_UID/SUDO_GID) and make it
+    group-writable; a no-op without them, same rule as `default_chown_tree`.
+
+    2026-10-23 orchestrator trial fix: `run_one`'s single `os.makedirs(store_run_dir,
+    exist_ok=True)` call can create several missing ancestor components at once (`<stage>`,
+    `<stage>/p<p>`, the seed dir) in one shot -- but `chown_tree(store_run_dir)` only ever recurses
+    DOWN INTO `store_run_dir` itself, never back up into the ancestors above it that the same
+    makedirs call also just created. The live trial found exactly this: `<store>/<stage>` and
+    `<store>/<stage>/p<p>` were left root-owned while every run dir underneath them was correctly
+    chowned. This function covers those ancestors; `run_one` calls it only for the ones it
+    confirmed (before makedirs) did not already exist, so an ancestor some earlier run already
+    owns is never touched again.
+
+    Deliberately non-recursive: each ancestor's own CONTENTS (sibling seeds, other p values) are
+    each chowned by their own run's `chown_tree(store_run_dir)` call already -- walking back into
+    them here on every single run would be pure duplicate work repeated across an entire sweep.
+    Refuses outright (like `_guarded_rmtree`/`_verify_safe_run_dir`) if `path` is itself a symlink,
+    rather than silently chowning through it.
+    """
+    uid = os.environ.get("SUDO_UID")
+    gid = os.environ.get("SUDO_GID")
+    if uid is None or gid is None:
+        return
+    if os.path.islink(path):
+        raise ValueError(f"refusing to chown a symlink: {path!r}")
+    os.chown(path, int(uid), int(gid))
+    os.chmod(path, os.stat(path).st_mode | 0o020)
+
+
 def _validate_stage(stage: str) -> None:
     """Reject a `stage` that is not safe to use as a single, bare path component.
 
@@ -438,6 +468,7 @@ def run_one(
     run_subprocess: Callable[..., int] = default_run_subprocess,
     capture_subprocess: Callable[..., str] = default_capture_subprocess,
     chown_tree: Callable[[str], None] = default_chown_tree,
+    chown_dir: Callable[[str], None] = default_chown_dir,
     clock: Callable[[], float] = time.time,
 ) -> RunOutcome:
     """Generate, run, store and validate one (p, seed) run; or skip it if already DONE.
@@ -496,6 +527,18 @@ def run_one(
         end_s = clock()
 
         recefore_run_dir = os.path.join(staging_run_dir, f"ex{_RECEFORE_NUM}_seed{seed}")
+
+        # 2026-10-23 orchestrator trial fix: `os.makedirs(store_run_dir, exist_ok=True)` can
+        # create several missing ancestor components (`<stage>`, `<stage>/p<p>`) in the same
+        # call as the seed dir itself -- the live trial found exactly those two left root-owned,
+        # since `chown_tree(store_run_dir)` below only ever recurses DOWN from the seed dir, never
+        # back up to ancestors the same makedirs call also just created. Snapshotted BEFORE
+        # makedirs runs: only an ancestor that did not already exist gets chowned afterwards, so a
+        # directory some earlier run already owns is never touched again.
+        stage_dir = os.path.join(store, stage)
+        p_dir = os.path.dirname(store_run_dir)
+        new_ancestors = [d for d in (stage_dir, p_dir) if not os.path.isdir(d)]
+
         os.makedirs(store_run_dir, exist_ok=True)
         _copy_run_outputs(staging_run_dir, recefore_run_dir, store_run_dir, generated_paths)
 
@@ -523,6 +566,8 @@ def run_one(
         _write_json(os.path.join(store_run_dir, "meta.json"), meta)
 
         chown_tree(store_run_dir)
+        for new_ancestor in new_ancestors:
+            chown_dir(new_ancestor)
     finally:
         _guarded_rmtree(staging_run_dir, root=staging_root)
 
@@ -567,6 +612,7 @@ def run_all(
     run_subprocess: Callable[..., int] = default_run_subprocess,
     capture_subprocess: Callable[..., str] = default_capture_subprocess,
     chown_tree: Callable[[str], None] = default_chown_tree,
+    chown_dir: Callable[[str], None] = default_chown_dir,
     clock: Callable[[], float] = time.time,
     allow_dirty: bool = False,
     out=None,
@@ -609,7 +655,13 @@ def run_all(
                 f"(git status: {dirty!r}); commit or stash the changes first, "
                 "or pass --allow-dirty to start the sweep anyway"
             )
+    # Same "only chown what this call itself created" rule as `run_one`'s own ancestor handling
+    # (see `default_chown_dir`'s docstring): `store` is the one ancestor `run_one` never sees
+    # created fresh, since by the time it runs `store` already exists (this call just made it).
+    store_preexisted = os.path.isdir(store)
     os.makedirs(store, exist_ok=True)
+    if not store_preexisted:
+        chown_dir(store)
     os.makedirs(staging_root, exist_ok=True)
     outcomes = []
     for p, seed in build_run_order(ps, seeds):
@@ -624,6 +676,7 @@ def run_all(
                 run_subprocess=run_subprocess,
                 capture_subprocess=capture_subprocess,
                 chown_tree=chown_tree,
+                chown_dir=chown_dir,
                 clock=clock,
             )
         except Exception as exc:  # noqa: BLE001 -- see docstring: one run's crash must not stop the sweep
