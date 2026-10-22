@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from semindex import schema
 from semindex.store import OriginProgress, Store
 
@@ -76,6 +78,53 @@ def test_conflict_keeps_first_and_reports_it(tmp_path: Path):
     assert second.existing_hash == hash_a
     # The first write is kept, verbatim.
     assert store.get_record("h0", 1) == payload_a
+
+
+def test_append_own_rolls_back_the_insert_if_the_progress_fold_raises(tmp_path: Path, monkeypatch):
+    """Discriminates that the record insert and the progress fold inside
+    append_own run in one transaction: if the fold raises, the insert
+    it followed must not have survived either -- a store.py docstring
+    claim this exercises directly rather than trusting.
+    """
+    store = Store(tmp_path / "store.db")
+
+    def _boom(self, origin, seq):
+        raise RuntimeError("simulated failure between the record insert and the progress fold")
+
+    monkeypatch.setattr(Store, "_fold_progress", _boom)
+
+    with pytest.raises(RuntimeError):
+        store.append_own(
+            origin="h0", content_name="a", zone="zone1", disaster="flood", media="image", observed_at=1
+        )
+
+    assert store.get_record("h0", 1) is None
+    assert store.get_progress("h0") == OriginProgress(hi=0, extra=())
+
+
+def test_append_received_rolls_back_the_insert_if_the_progress_fold_raises(tmp_path: Path, monkeypatch):
+    """Same discrimination for the received-record path. Seeds a first
+    record normally before patching, so a leaked insert of the second
+    (without its progress fold) would show up as a held record at a
+    seq higher than progress.hi admits -- not just an absence either
+    way, which an unseeded store couldn't tell apart.
+    """
+    store = Store(tmp_path / "store.db")
+    payload1, hash1 = _payload_and_hash(1)
+    store.append_received("h0", 1, payload1, hash1)
+    assert store.get_progress("h0") == OriginProgress(hi=1, extra=())
+
+    def _boom(self, origin, seq):
+        raise RuntimeError("simulated failure between the record insert and the progress fold")
+
+    monkeypatch.setattr(Store, "_fold_progress", _boom)
+
+    payload2, hash2 = _payload_and_hash(2)
+    with pytest.raises(RuntimeError):
+        store.append_received("h0", 2, payload2, hash2)
+
+    assert store.get_record("h0", 2) is None
+    assert store.get_progress("h0") == OriginProgress(hi=1, extra=())
 
 
 def test_restart_does_not_collide_seqs_or_advance_progress_past_records(tmp_path: Path):
