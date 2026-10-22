@@ -40,7 +40,7 @@
 
 - 名前: 状態確認 `ccnx:/semidx/<group>/<holder>/sv/<requester>/<epoch_ms>`、レコード `ccnx:/semidx/<group>/<holder>/rec/<origin>/<seq>`。登録は `ccnx:/semidx/<group>/<自ノード>` の1本のみ。`<holder>` は「今答える相手」（隣接ノード、または中継時はそのレコードを持つホルダ）で、レコードの Index origin とは別物。
 - 名前の各コンポーネントは空文字列・`/` を含まない1セグメント。`epoch_ms` と `seq` は先頭の `+`・空白・アンダースコアを含まない非負の10進整数のみで、`seq` は1以上。これ以外の形は malformed として拒否する（`src/semindex/names.py`）。
-- Index record の wire JSON（キー整列・空白なしの UTF-8、1件 2 KiB 以下）: `origin`（string）、`seq`（int≥1）、`content_name`（string）、`attrs: {zone, disaster, media}`（いずれも固定語彙の単一値）、`observed_at`（非負 int、epoch ms）、`schema_version`（=1）、`model_id`（string、既定 `sample-v0`）、`supersedes`（`null` または `{"origin": string, "seq": int}`。初期試験では常に `null`）。`content_hash` はペイロードに含めず、受信側がこの正規形バイト列の SHA-256 として計算する。名前の origin/seq とペイロードの origin/seq が一致しないレコードは保存せず拒否する。
+- Index record の wire JSON（キー整列・空白なしの UTF-8、1件 2 KiB 以下）: `origin`（string）、`seq`（int≥1）、`content_name`（string）、`attrs: {zone, disaster, media}`（いずれも固定語彙の単一値）、`observed_at`（非負 int、epoch ms）、`schema_version`（=1）、`model_id`（string、既定 `sample-v0`）、`supersedes`（`null` または `{"origin": string, "seq": int}`。初期試験では常に `null`）。`content_hash` はペイロードに含めず、受信側がこの正規形バイト列の SHA-256 として計算する。名前の origin/seq とペイロードの origin/seq が一致しないレコードは保存せず拒否する。正規形でないバイト列（キー順・空白が異なる等、内容が同じでも符号化が違うもの）は、受信側が malformed として拒否し、正規化し直して受理はしない。
 - Holder state の wire JSON（キー整列・空白なしの UTF-8、8 KiB 以下）: `{<origin>: {"hi": int≥0, "extra": [int, ...], "truncated": bool}}`。`extra` は `hi` より大きい値だけを昇順・重複なしで持ち、1 origin あたり最大64件。64件を超える場合は昇順の下位64件（`hi` に近い側）だけを残し `truncated: true` にする。64件以内でも応答全体が8 KiBを超える場合は、origin 名の辞書順に `extra` を空へ切り詰めながら `truncated: true` にしていく。`hi` は常に送る。受信側は `extra` が64件を超えている応答、または昇順・重複なしでない応答を、トランケート済みとして再解釈せず malformed として拒否する。
 
 ### Index record と永続化

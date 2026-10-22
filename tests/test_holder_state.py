@@ -115,8 +115,10 @@ def test_encode_truncates_extras_origin_by_origin_once_overall_size_exceeds_8kib
     # The fallback loop walks sorted(body), so the dropped origins are
     # an exact sorted-order prefix of the full set -- pinned exactly
     # rather than just checked non-empty, so this fails if the loop is
-    # ever removed (the un-truncated encoding is 40*~218 =~ 8126..8900
-    # bytes, over the limit, so it would raise HolderStateError instead).
+    # ever removed (the full, untruncated encoding of all 40 origins is
+    # over the 8192-byte limit; the truncated result above is 8126
+    # bytes, so without the loop encode() would raise HolderStateError
+    # instead of returning a smaller payload).
     assert truncated_names == ["o00", "o01", "o02", "o03", "o04"]
     assert kept_names == origins[5:]
     for name in truncated_names:
