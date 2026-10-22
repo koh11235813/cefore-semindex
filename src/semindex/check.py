@@ -784,7 +784,12 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # when a successful post-restart record delivery (direct proof origin
     # had already answered) landed much earlier. Readiness evidence is
     # now the EARLIEST of either signal -- state_rx or an actual record
-    # delivery -- never just the first state_rx seen.
+    # delivery -- never just the first state_rx seen. The record-delivery
+    # side must also require holder == origin: a node that merely relays
+    # a delivery it got from some OTHER neighbor (holder != origin) proves
+    # nothing about whether origin's own life 2 is reachable, and folding
+    # it in anyway can anchor the deadline on an arbitrary relay instead
+    # of real evidence, in either direction.
     post_restart_readiness_ts = [
         e["ts_ms"]
         for node in other_nodes
@@ -794,7 +799,7 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
         e["ts_ms"]
         for node in other_nodes
         for e in _record_stored(events_by_node[node], origin)
-        if e["ts_ms"] > restart_ts
+        if e["ts_ms"] > restart_ts and e.get("holder") == origin
     ]
     grace_deadline = min(post_restart_readiness_ts, default=restart_ts) + 2500
     late_timeouts = [

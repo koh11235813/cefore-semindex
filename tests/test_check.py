@@ -1285,6 +1285,50 @@ def test_check_t2b_protocol_fails_even_when_a_very_late_first_state_rx_would_oth
     ) in out.splitlines()
 
 
+def test_check_t2b_protocol_fails_when_a_relayed_delivery_would_otherwise_mask_a_registration_lag_failure(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix (review finding, #2): the
+    readiness-evidence list above folded in every post-restart record_stored for origin
+    regardless of its holder -- but a record h2 relays from h1 says nothing about whether h0's
+    own life 2 is actually reachable; only a delivery h1 itself got DIRECTLY from h0 (holder=h0)
+    is real evidence of that. Reproduces the masking failure: h2 merely re-logs its (already
+    pre-restart) seq-2 delivery at offset 12 -- a relay through h1, holder "h1", with nothing to
+    do with h0's readiness -- while h1's own FIRST direct contact with h0's life 2 does not land
+    until offset 20. A single legitimate registration-lag timeout at offset 15 (well before h1's
+    genuine readiness at 20) should pass; counting h2's relay as readiness evidence instead
+    anchors the deadline at 14.5 and turns that ordinary lag into a false protocol failure."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    h1_events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    for event in h1_events:
+        if event.get("event") == "record_stored" and event.get("seq") == 3:
+            event["ts_ms"] = _ts_ms(20)  # h1's own first direct post-restart contact with h0
+    h1_events.append({"ts_ms": _ts_ms(15), "event": "fetch_timeout", "origin": "h0", "seq": 3, "neighbor": "h0"})
+    _write_jsonl(h1_path, h1_events)
+    h2_path = _node_events_path(run_dir, "h2")
+    h2_events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in h2_events:
+        if event.get("event") == "record_stored" and event.get("seq") == 2:
+            # a relayed (holder h1, NOT h0) re-delivery of a pre-restart
+            # record, landing shortly after restart_ts -- irrelevant to
+            # whether h0 itself is reachable again.
+            event["ts_ms"] = _ts_ms(12)
+    _write_jsonl(h2_path, h2_events)
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert (
+        "PASS: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: "
+        "fetch_timeout(s) after grace: []"
+    ) in out.splitlines()
+
+
 # -- T2c --------------------------------------------------------------------
 
 
