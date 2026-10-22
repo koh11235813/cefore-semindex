@@ -756,11 +756,11 @@ def test_node_window_control_bytes_no_snapshot_anywhere_is_no_data():
 
 
 def test_node_window_control_bytes_last_life_counts_despite_a_few_ms_of_late_stop_detection():
-    """2026-10-23 (external review): the agent detects crossing stop_at_s on its own poll
+    """2026-10-23: the agent detects crossing stop_at_s on its own poll
 
     tick and only then writes the final `counters` line -- a few ms of
     wall-clock lateness in the WRITE, not evidence that life started or
-    ran outside the window. The reviewer's own counterexample: window
+    ran outside the window. Counterexample: window
     [10000, 130000] ms, a restart mid-window (life 1 holds the snapshot
     and ends at elapsed 60s with value 50; life 2 is fresh, with no
     snapshot of its own, and is the LAST life -- the one structurally
@@ -841,7 +841,7 @@ def test_analyze_run_run_a_decisions_are_window_filtered(synthetic_store: Path):
 
 
 def test_build_decisions_rows_advertised_hi_and_notified_max_distinguish_same_gap():
-    """2026-10-23 (external review): `advertised_gap` alone cannot tell (hi=3,
+    """2026-10-23: `advertised_gap` alone cannot tell (hi=3,
 
     notified_max=5) apart from (hi=30, notified_max=32) -- both have
     gap=2, so a decisions.csv built from only the gap reports an
@@ -1079,7 +1079,7 @@ def test_aggregate_counts_runs_without_done_marker_as_incomplete_by_default(tmp_
 
 
 def test_aggregate_94_valid_plus_6_incomplete_counterexample(tmp_path: Path):
-    """The reviewer's own counterexample: 94 finished, valid runs (DONE present)
+    """2026-10-23 counterexample: 94 finished, valid runs (DONE present)
 
     alongside 6 runs an earlier, interrupted sweep never finished (no
     DONE -- regardless of whatever meta.json a half-finished attempt

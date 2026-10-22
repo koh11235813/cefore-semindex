@@ -586,14 +586,14 @@ def _node_window_control_bytes(
       every evalgen-generated config sets stop_at_s == WINDOW_END_S for
       every node, so there is always exactly one life still running at
       that instant, and it is always the last one in `_split_lives`'s
-      order. 2026-10-23 review fix: this used to be decided from that
-      life's own final-line ts_ms (`<= window_end_ms`) instead of this
+      order. 2026-10-23 fix: this used to be decided from that life's
+      own final-line ts_ms (`<= window_end_ms`) instead of this
       structural position, which a few ms of stop-detection lateness
       (see `_STOP_DETECTION_LATE_SLACK_MS` above) could push past
-      window_end_ms and drop entirely (reviewer's counterexample: window
-      [10000, 130000] ms, a restart mid-window, final counters stamped
-      130001 ms -- 1ms late -- dropped that whole life, undercounting a
-      true total of 100 as 40). Deciding by position instead means the
+      window_end_ms and drop entirely (counterexample: window [10000,
+      130000] ms, a restart mid-window, final counters stamped 130001
+      ms -- 1ms late -- dropped that whole life, undercounting a true
+      total of 100 as 40). Deciding by position instead means the
       explicit slack constant only ever has to absorb logging lateness,
       never decide "is this even the right life" on its own.
     - any OTHER life with no snapshot, whose own final `counters` line
@@ -1270,8 +1270,9 @@ def build_decisions_rows(analyses: list[RunAnalysis], include_unknown: bool) -> 
     2026-10-23: redesigned from one wide row per (p, kind) covering only
     in_flight/missing/wait_s to one row per (p, kind, field) covering
     every field map.md's own `decision` event records -- state's
-    in_flight/hi/missing/advertised_gap/last_timeout_age_s (scalar or
-    flattened-list, see analyze_run's own decision_rows construction) as
+    in_flight/hi/missing/advertised_gap/advertised_hi/
+    advertised_notified_max/last_timeout_age_s (scalar or flattened-list,
+    see analyze_run's own decision_rows construction) as
     median/Q1/Q3, state's own boolean `truncated` as a frequency instead
     (a median of a 0/1 indicator is not the number anyone asking "how
     often" wants), and whichever action field this kind's own `action`
@@ -1309,8 +1310,9 @@ def build_decisions_rows(analyses: list[RunAnalysis], include_unknown: bool) -> 
 
         for field_name in _STATE_NUMERIC_FIELDS:
             raw = [d[field_name] for d in decisions if field_name in d]
-            # hi/missing/advertised_gap are already-flattened lists on
-            # each decision row; in_flight/last_timeout_age_s are scalars.
+            # hi/missing/advertised_gap/advertised_hi/advertised_notified_max
+            # are already-flattened lists on each decision row;
+            # in_flight/last_timeout_age_s are scalars.
             values = [v for entry in raw for v in (entry if isinstance(entry, list) else [entry]) if v is not None]
             rows.append(_field_row(p, kind, decision_count, field_name, values))
 
@@ -1366,10 +1368,10 @@ def aggregate(
     every table under-reported the OPPOSITE of what map.md's own
     ">5% flagged" threshold needs: a condition cannot be judged against
     a count that already excluded the runs most likely to still need a
-    redo. Such a run now gets a status="incomplete" row (p/seed only,
-    every metric column and status empty -- there is nothing stored yet
-    to analyze), counted in summary.csv's own n_incomplete, and always
-    excluded from pooling (see `_included`) regardless of
+    redo. Such a run now gets a status="incomplete" row (p/seed and
+    status only, every metric column and `flags` empty -- there is
+    nothing stored yet to analyze), counted in summary.csv's own
+    n_incomplete, and always excluded from pooling (see `_included`) regardless of
     `include_unknown` -- there is no verdict to pool either way.
     `--include-undone` keeps its own prior meaning unchanged: it is for
     the one case that has no DONE by construction and is NOT awaiting a
