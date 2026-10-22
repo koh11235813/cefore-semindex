@@ -13,6 +13,7 @@ ROUND_INTERVAL_S = 2.0  # matches SyncConfig.state_poll_interval_s default
 
 
 def _build_node(tmp_path: Path, network: FakeNetwork, node: str, neighbors: tuple[str, ...], **overrides) -> SyncEngine:
+    """Build and register one node's SyncEngine on `network`, under its own Store."""
     store = Store(tmp_path / f"{node}.db")
     config = SyncConfig(group="g", node=node, neighbors=neighbors, **overrides)
     engine = SyncEngine(config, store, network.transport_for(node))
@@ -35,6 +36,7 @@ def _run_round(engines: list[SyncEngine], network: FakeNetwork, now: float) -> N
 
 
 def test_a_to_b_to_c_relay_survives_a_partition_after_b_synced(tmp_path: Path):
+    """Records relay from A through B to C, and records created while A is partitioned from B catch up fully once the link heals."""
     network = FakeNetwork()
     a = _build_node(tmp_path, network, "A", neighbors=("B",))
     b = _build_node(tmp_path, network, "B", neighbors=("A", "C"))
@@ -84,6 +86,7 @@ def test_a_to_b_to_c_relay_survives_a_partition_after_b_synced(tmp_path: Path):
 
 
 def test_drop_rec_fault_delays_but_does_not_prevent_recovery(tmp_path: Path):
+    """A holder withholding a reply via fault_drop_rec delays but does not prevent the requester from eventually storing the record, via retry."""
     network = FakeNetwork()
     # B is the holder being asked for (origin=B, seq=3); B's own
     # handle_interest is what fault_drop_rec gates, so it is B's config
@@ -117,6 +120,7 @@ def test_drop_rec_fault_delays_but_does_not_prevent_recovery(tmp_path: Path):
 
 
 def test_requester_retries_via_a_second_holder_once_the_first_partitions(tmp_path: Path):
+    """Fetches stuck in flight against a holder that then partitions are eventually retried against another neighbor that also advertised the same records, not retried against the unreachable one forever."""
     # R has two direct neighbors that both can answer for origin A's
     # records: A itself, and B (already synced from A). R's config lists
     # A before B, so its first fetch attempt lands on A. A then

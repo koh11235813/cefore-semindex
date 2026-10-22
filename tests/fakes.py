@@ -29,6 +29,7 @@ class FakeNetwork:
     """A controllable multi-node network for unit tests: holder-scoped routing and partitions."""
 
     def __init__(self) -> None:
+        """Start with no nodes, no partitions and an empty Interest queue."""
         self._nodes: dict[str, SyncEngine] = {}
         self._partitions: set[frozenset[str]] = set()
         self._queue: list[_QueuedInterest] = []

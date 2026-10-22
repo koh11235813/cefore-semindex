@@ -10,6 +10,7 @@ from semindex.tracker import (
 
 
 def test_gaps_1_2_4_give_contiguous_2_and_missing_3():
+    """Holding 1, 2 contiguously and 4 sparsely, with a neighbor advertising up to 4, leaves exactly 3 missing."""
     tracker = Tracker()
     # This node already holds 1,2 contiguously and 4 sparsely; a
     # neighbor has told it seq 4 is the highest it knows of.
@@ -22,6 +23,7 @@ def test_gaps_1_2_4_give_contiguous_2_and_missing_3():
 
 
 def test_missing_is_empty_when_caught_up():
+    """Nothing is missing once held and notified are the same seq."""
     tracker = Tracker()
     tracker.observe_held("h0", hi=3, extra=())
     tracker.observe_state("h0", "n1", hi=3, extra=())
@@ -29,6 +31,7 @@ def test_missing_is_empty_when_caught_up():
 
 
 def test_plan_fetches_only_targets_a_neighbor_that_advertised_the_seq():
+    """plan_fetches only ever assigns a seq to a neighbor that itself advertised holding it, never to one that merely raised notified_max."""
     tracker = Tracker()
     tracker.observe_held("h0", hi=0, extra=())
     tracker.observe_state("h0", "n1", hi=1, extra=())  # n1 only has seq 1
@@ -61,6 +64,7 @@ def test_missing_is_capped_at_max_missing_per_origin():
 
 
 def test_in_flight_cap_per_neighbor():
+    """plan_fetches never exceeds max_in_flight_per_neighbor fetches outstanding on one neighbor at a time."""
     tracker = Tracker()
     many = tuple(range(2, 2 + 20))
     tracker.observe_held("h0", hi=1, extra=())
@@ -72,6 +76,7 @@ def test_in_flight_cap_per_neighbor():
 
 
 def test_backoff_schedule_doubles_from_1s_capped_at_16s():
+    """Each timeout's wait is the backoff already in effect; only the next attempt's backoff doubles, capped at 16s."""
     # map.md "再送間隔 1 秒から倍々、16 秒で頭打ち": the wait *after* a
     # timeout is the backoff that was in effect for that attempt (1s the
     # first time), and only the backoff for the *next* attempt doubles.
@@ -108,6 +113,7 @@ def test_backoff_schedule_doubles_from_1s_capped_at_16s():
 
 
 def test_observe_held_releases_in_flight_slot_when_seq_arrives_from_elsewhere():
+    """A seq that arrives by any means releases its in-flight slot on whichever neighbor it was outstanding on, freeing that slot for a new fetch."""
     tracker = Tracker()
     tracker.observe_held("h0", hi=0, extra=())
     tracker.observe_state("h0", "n1", hi=1, extra=())
@@ -124,6 +130,7 @@ def test_observe_held_releases_in_flight_slot_when_seq_arrives_from_elsewhere():
 
 
 def test_plan_fetches_gives_the_retry_to_another_advertiser_once_one_neighbor_fails():
+    """Once a neighbor fails a seq, its retry goes to another neighbor that also advertised it, not back to the one that just failed."""
     # Two neighbors both advertise seq 1; n1 is the one that keeps
     # failing. Without failed-neighbor exclusion, the retry would go
     # straight back to n1 every time (plan_fetches is called for n1
@@ -145,6 +152,7 @@ def test_plan_fetches_gives_the_retry_to_another_advertiser_once_one_neighbor_fa
 
 
 def test_plan_fetches_cycles_through_three_advertisers_that_all_keep_failing():
+    """Once every advertiser of a seq has failed it once, the failed set resets so the round-robin keeps cycling instead of locking up."""
     # Three neighbors advertise the same seq and all three keep timing
     # out. A failed set that only ever grows would, once it covered all
     # three, make the exclusion check vacuous and hand every further
@@ -174,6 +182,7 @@ def test_plan_fetches_cycles_through_three_advertisers_that_all_keep_failing():
 
 
 def test_on_fetch_rejected_releases_the_slot_and_backs_off_like_a_timeout():
+    """A rejected reply (failed validation, not a timeout) still releases the in-flight slot and backs off exactly like a timeout would."""
     # A reply that fails validation (schema.py / engine.on_record) is a
     # different outcome from a network timeout -- Data did arrive -- but
     # it must free the in-flight slot and apply the same backoff, or the
@@ -190,6 +199,7 @@ def test_on_fetch_rejected_releases_the_slot_and_backs_off_like_a_timeout():
 
 
 def test_stale_fetch_timeout_from_a_reassigned_neighbor_is_ignored():
+    """A timeout for a fetch already satisfied by other means is stale and must not resurrect tracking for it."""
     tracker = Tracker()
     tracker.observe_held("h0", hi=0, extra=())
     tracker.observe_state("h0", "n1", hi=1, extra=())

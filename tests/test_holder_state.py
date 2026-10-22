@@ -11,6 +11,7 @@ from semindex.store import OriginProgress
 
 
 def test_encode_decode_round_trip():
+    """Encoding then decoding a progress mapping returns it unchanged."""
     progress = {
         "h0": OriginProgress(hi=3, extra=(5, 6)),
         "h1": OriginProgress(hi=0, extra=()),
@@ -24,12 +25,14 @@ def test_encode_decode_round_trip():
 
 
 def test_encode_is_canonical_json_sorted_keys_no_whitespace():
+    """The wire encoding is exactly sorted-key, whitespace-free JSON, byte for byte."""
     progress = {"h0": OriginProgress(hi=1, extra=())}
     payload = holder_state.encode(progress)
     assert payload == b'{"h0":{"extra":[],"hi":1,"truncated":false}}'
 
 
 def test_encode_truncates_extra_over_64_keeping_the_lowest():
+    """An origin with more than 64 sparse seqs is truncated to the lowest 64, with truncated set."""
     extra = tuple(range(2, 2 + 70))  # 70 sparse seqs above hi
     progress = {"h0": OriginProgress(hi=1, extra=extra)}
     payload = holder_state.encode(progress)
@@ -40,6 +43,7 @@ def test_encode_truncates_extra_over_64_keeping_the_lowest():
 
 
 def test_encode_sends_hi_even_when_extra_is_fully_truncated():
+    """hi is still sent even when every one of that origin's extra entries is dropped."""
     extra = tuple(range(100, 200))
     progress = {"h0": OriginProgress(hi=42, extra=extra)}
     decoded = holder_state.decode(holder_state.encode(progress))
@@ -47,6 +51,7 @@ def test_encode_sends_hi_even_when_extra_is_fully_truncated():
 
 
 def test_decode_rejects_oversize_payload_without_parsing_it():
+    """A payload over the 8 KiB limit is rejected by size before any JSON parsing happens."""
     oversize = b"{" + b"x" * 9000
     with pytest.raises(holder_state.HolderStateError) as exc_info:
         holder_state.decode(oversize)
@@ -54,12 +59,14 @@ def test_decode_rejects_oversize_payload_without_parsing_it():
 
 
 def test_decode_rejects_malformed_json():
+    """Non-JSON bytes are rejected as malformed, not propagated as a JSON decode error."""
     with pytest.raises(holder_state.HolderStateError) as exc_info:
         holder_state.decode(b"not json")
     assert str(exc_info.value) == "holder state payload is not valid JSON"
 
 
 def test_decode_rejects_extra_over_64_entries_from_a_peer():
+    """A peer's extra list longer than 64 is rejected outright, never silently re-truncated on receipt."""
     body = {"h0": {"hi": 0, "extra": list(range(1, 66)), "truncated": False}}
     payload = json.dumps(body).encode("ascii")
     with pytest.raises(holder_state.HolderStateError) as exc_info:
@@ -68,6 +75,7 @@ def test_decode_rejects_extra_over_64_entries_from_a_peer():
 
 
 def test_decode_rejects_unsorted_extra():
+    """A peer's extra list that is not sorted is rejected as malformed."""
     body = {"h0": {"hi": 0, "extra": [3, 1, 2], "truncated": False}}
     payload = json.dumps(body).encode("ascii")
     with pytest.raises(holder_state.HolderStateError) as exc_info:
@@ -76,6 +84,7 @@ def test_decode_rejects_unsorted_extra():
 
 
 def test_decode_rejects_missing_entry_key():
+    """An entry missing one of hi/extra/truncated is rejected as malformed."""
     body = {"h0": {"hi": 0, "extra": []}}
     payload = json.dumps(body).encode("ascii")
     with pytest.raises(holder_state.HolderStateError) as exc_info:
@@ -84,6 +93,7 @@ def test_decode_rejects_missing_entry_key():
 
 
 def test_decode_rejects_origin_key_containing_slash():
+    """An origin key containing '/' is rejected, since it is a wire name component wherever it is used downstream."""
     # 2026-10-22 fix regression: an origin was only checked for
     # non-emptiness, so one containing '/' decoded successfully here
     # and later crashed names.build_record_name uncaught while planning
@@ -97,6 +107,7 @@ def test_decode_rejects_origin_key_containing_slash():
 
 
 def test_encode_truncates_extras_origin_by_origin_once_overall_size_exceeds_8kib():
+    """When every origin's extra individually fits but the whole payload does not, extras are dropped origin by origin in sorted order until it fits, never dropping hi."""
     # Every one of these origins individually fits the 64-entry cap, but
     # encoding all 40 together exceeds MAX_ENCODED_BYTES, so encode()
     # must fall back to emptying extras origin by origin, in sorted
@@ -128,6 +139,7 @@ def test_encode_truncates_extras_origin_by_origin_once_overall_size_exceeds_8kib
 
 
 def test_encode_raises_when_state_cannot_fit_even_with_every_extra_dropped():
+    """When even every extra emptied cannot bring the payload under the limit, encode raises rather than silently paging."""
     # Enough origins, each with a long-enough name, that even emptying
     # every extra (map.md "ページングは無し": there is no further
     # fallback) cannot bring the payload under MAX_ENCODED_BYTES.
