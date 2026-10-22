@@ -28,6 +28,7 @@ import glob
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -130,8 +131,58 @@ def default_capture_subprocess(argv: list[str], *, cwd: str | None = None) -> st
     return proc.stdout.strip()
 
 
+# 2026-10-23 (external review, P1 #2): every directory/file this module
+# creates or copies into the store ends up at exactly one of these two
+# modes, never "whatever umask the sudo environment happened to have, with
+# group-write OR'd on top" (the previous behavior here). `os.chmod` sets
+# these bits absolutely, so the result is umask-independent regardless of
+# what mode `os.makedirs`/`shutil.copy2` actually created the entry with.
+# This is the other half of the fix described in `_check_dir_permissions`'
+# own docstring: a directory that is not writable by group or others can
+# never have one of its entries replaced (by another group member) with a
+# symlink in the first place, which is what actually closes the race --
+# re-checking permissions right before a write (see
+# `_verify_safe_store_permissions`) only catches a window that will always
+# exist; removing the write permission that a swap would need removes the
+# window itself.
+_STORE_DIR_MODE = 0o755
+_STORE_FILE_MODE = 0o644
+
+
+def _makedirs_locked_down(path: str) -> None:
+    """`os.makedirs(path, exist_ok=True)`, with every directory this call actually creates
+    immediately chmod'd to `_STORE_DIR_MODE`.
+
+    2026-10-23 fix (external review, P1 #2): `os.makedirs`'s own `mode` argument is masked by
+    this process's umask at the syscall level (POSIX `mkdir()`), so passing `mode=_STORE_DIR_MODE`
+    to it directly would NOT be umask-independent -- a permissive umask (e.g. 0, common in a
+    throwaway root shell) would still leave a freshly created directory group/other-writable. The
+    deferred `chown_tree`/`chown_dir` calls at the end of `run_one` fix this eventually, but
+    `_copy_run_outputs`, `evalvalid.validate` and `_build_meta` (which shells out to `git`) all run
+    in between -- a real, if short, gap during which a directory this call just created sits at
+    whatever mode umask gave it. `os.chmod` is not subject to umask (it sets the bits given,
+    absolutely), so chmod'ing right here, immediately after creation, closes that gap outright
+    rather than narrowing it. Walks up from `path` first to find which ancestors do not exist yet
+    -- the same "only touch what this call itself created" rule `run_one`'s own `new_ancestors`
+    snapshot already uses for chown -- so a directory some earlier run already owns and locked
+    down is never redundantly touched.
+    """
+    to_create = []
+    cur = path
+    while not os.path.isdir(cur):
+        to_create.append(cur)
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    os.makedirs(path, exist_ok=True)
+    for created in to_create:
+        os.chmod(created, _STORE_DIR_MODE)
+
+
 def default_chown_tree(path: str) -> None:
-    """Recursively chown `path` to the invoking user (SUDO_UID/SUDO_GID) and make it group-writable.
+    """Recursively chown `path` to the invoking user (SUDO_UID/SUDO_GID) and set every directory
+    to `_STORE_DIR_MODE` and every file to `_STORE_FILE_MODE`.
 
     A no-op when SUDO_UID/SUDO_GID are not set -- this process is not
     running under `sudo` (every test, and any direct, non-orchestrator
@@ -143,18 +194,23 @@ def default_chown_tree(path: str) -> None:
         return
     uid, gid = int(uid), int(gid)
     for root, dirs, files in os.walk(path):
-        for name in dirs + files:
+        for name in dirs:
             full = os.path.join(root, name)
             os.chown(full, uid, gid, follow_symlinks=False)
             if not os.path.islink(full):
-                os.chmod(full, os.stat(full).st_mode | 0o020)  # g+w
+                os.chmod(full, _STORE_DIR_MODE)
+        for name in files:
+            full = os.path.join(root, name)
+            os.chown(full, uid, gid, follow_symlinks=False)
+            if not os.path.islink(full):
+                os.chmod(full, _STORE_FILE_MODE)
     os.chown(path, uid, gid)
-    os.chmod(path, os.stat(path).st_mode | 0o020)
+    os.chmod(path, _STORE_DIR_MODE if os.path.isdir(path) else _STORE_FILE_MODE)
 
 
 def default_chown_dir(path: str) -> None:
-    """chown `path` ITSELF (not recursively) to the invoking user (SUDO_UID/SUDO_GID) and make it
-    group-writable; a no-op without them, same rule as `default_chown_tree`.
+    """chown `path` ITSELF (not recursively) to the invoking user (SUDO_UID/SUDO_GID) and set it to
+    `_STORE_DIR_MODE`; a no-op without them, same rule as `default_chown_tree`.
 
     2026-10-23 orchestrator trial fix: `run_one`'s single `os.makedirs(store_run_dir,
     exist_ok=True)` call can create several missing ancestor components at once (`<stage>`,
@@ -179,7 +235,7 @@ def default_chown_dir(path: str) -> None:
     if os.path.islink(path):
         raise ValueError(f"refusing to chown a symlink: {path!r}")
     os.chown(path, int(uid), int(gid))
-    os.chmod(path, os.stat(path).st_mode | 0o020)
+    os.chmod(path, _STORE_DIR_MODE)
 
 
 def _validate_stage(stage: str) -> None:
@@ -266,6 +322,92 @@ def _verify_safe_run_dir(store_run_dir: str, store: str) -> None:
         raise ValueError(f"refusing to use {store_run_dir!r}: resolves outside {store!r}")
 
 
+def _check_dir_permissions(path: str, *, invoking_uid: int) -> None:
+    """Refuse `path` unless it is either absent (nothing there yet to check -- it will be created
+    fresh, at `_STORE_DIR_MODE`, by `run_one` itself), or an existing, non-symlink directory owned
+    by root or `invoking_uid` and not writable by group or others.
+
+    Uses `os.lstat`, not `os.stat`: a symlinked `path` is refused outright, in the same call that
+    reads its mode/owner, rather than first asking `os.path.islink` (itself an `lstat`) and only
+    then `os.stat`-ing it -- two syscalls with a gap between them is exactly the kind of
+    check-then-use race this whole fix exists to close. A store or ancestor swapped for a symlink
+    (2026-10-23 review finding: the store root itself, not just a component below it) is caught
+    here the same way `_verify_safe_run_dir`'s own symlink check is, just without following it
+    first to find out.
+
+    2026-10-23 fix (external review, P1 #2). Threat model: `run_one` is invoked under `sudo`
+    against a store directory shared with other members of the same Unix group (the live store is
+    `drwxrwsr-x`, group-owned) -- `_verify_safe_run_dir` above only checks for an EXISTING symlink
+    on `store_run_dir`'s path, and it runs once, well before the actual store writes (`os.makedirs`/
+    `_copy_run_outputs`/`_write_json`), which only happen after ReCefore's own ~160s run finishes.
+    Nothing stops another group member from swapping a directory component -- say `<store>/<stage>`
+    -- for a symlink to an external directory DURING that wait: by the time this process writes
+    `meta.json` there, root privilege means it is written wherever that symlink now points, and a
+    further symlinked file at the target (e.g. an external `meta.json` symlinked to some other
+    file this process has no business touching) lets `_write_json` overwrite it outright.
+    Re-checking for a symlink right before the write (see `_verify_safe_store_permissions`) narrows
+    the window but can never close it -- there is always a gap between a check and the write that
+    follows it.
+
+    What actually closes it is access control, not timing: if every directory on the path is owned
+    by root or the one user this sweep is running for, and is writable only by its owner, then NO
+    other group member ever has the filesystem permission needed to unlink-and-replace one of its
+    entries with a symlink in the first place -- the race has nothing left to exploit, regardless
+    of how long `run_one` waits between checking and writing. `default_chown_tree`/
+    `default_chown_dir` (above) are the other half of this: every directory `run_one` itself
+    creates ends up at exactly this mode (`_STORE_DIR_MODE`, 0755) and owner, so each run leaves the
+    invariant intact for the next one to check.
+    """
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(st.st_mode):
+        raise ValueError(f"refusing to use {path!r}: is a symlink below the store root")
+    if st.st_uid != 0 and st.st_uid != invoking_uid:
+        raise ValueError(
+            f"refusing to use {path!r}: owned by uid {st.st_uid}, not root or the invoking user (uid {invoking_uid})"
+        )
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise ValueError(
+            f"refusing to use {path!r}: writable by group or others (mode {oct(stat.S_IMODE(st.st_mode))})"
+        )
+
+
+def _verify_safe_store_permissions(store_run_dir: str, store: str) -> None:
+    """Apply `_check_dir_permissions` to `store` and every directory on the path down to
+    `store_run_dir` -- see that function's own docstring for the race this closes, and for why
+    `store` itself (2026-10-23 review finding) is checked exactly the same way as every component
+    below it, not skipped just because `os.path.isdir` would also call it a directory were it a
+    symlink to one.
+
+    A no-op when SUDO_UID is not set, the same convention `default_chown_tree`/`default_chown_dir`
+    already use: outside `sudo`, there is no "invoking user" this check could even be protecting
+    (every test, and any direct, non-orchestrator invocation, falls here).
+
+    Called twice by `run_one`: once up front (alongside `_verify_safe_run_dir`, before the DONE
+    check), and again immediately before the first store write, right after ReCefore's own run
+    returns -- a permission change made during that multi-minute wait must still be caught before
+    anything is written, not just assumed to still hold from the earlier check. Also called once,
+    unconditionally, by `run_all` before its own per-(p, seed) loop starts (2026-10-23 review
+    finding): `run_one`'s own call sites are each wrapped in `run_all`'s per-pair try/except, which
+    exists so one run's bug never aborts an entire overnight sweep -- but that same try/except
+    would otherwise turn a mis-permissioned `store` into hundreds of individually swallowed
+    `status=error` lines instead of the sweep refusing to start at all, the same "fail loudly before
+    touching anything" treatment `DirtySemindexError` already gets for a dirty semindex tree.
+    """
+    sudo_uid = os.environ.get("SUDO_UID")
+    if sudo_uid is None:
+        return
+    invoking_uid = int(sudo_uid)
+    _check_dir_permissions(store, invoking_uid=invoking_uid)
+    rel = os.path.relpath(store_run_dir, store)
+    cur = store
+    for part in rel.split(os.sep):
+        cur = os.path.join(cur, part)
+        _check_dir_permissions(cur, invoking_uid=invoking_uid)
+
+
 def _write_done(path: str) -> None:
     """Create `path` atomically (write to a tmp sibling, then rename) -- the resume check's one source of truth."""
     tmp = path + ".tmp"
@@ -310,7 +452,7 @@ def _copy_run_outputs(staging_run_dir: str, recefore_run_dir: str, store_run_dir
         rel = os.path.relpath(src, staging_run_dir)
         dest = os.path.join(store_run_dir, rel)
         if os.path.exists(src):
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            _makedirs_locked_down(os.path.dirname(dest))
             shutil.copy2(src, dest)
 
     for node_dir in sorted(glob.glob(os.path.join(recefore_run_dir, "debug", "node_dirs", "h*"))):
@@ -319,12 +461,12 @@ def _copy_run_outputs(staging_run_dir: str, recefore_run_dir: str, store_run_dir
 
         events_src = os.path.join(node_dir, "semindex", "events.jsonl")
         if os.path.exists(events_src):
-            os.makedirs(os.path.join(dest_node_dir, "semindex"), exist_ok=True)
+            _makedirs_locked_down(os.path.join(dest_node_dir, "semindex"))
             shutil.copy2(events_src, os.path.join(dest_node_dir, "semindex", "events.jsonl"))
 
         log_src = os.path.join(node_dir, "semindex_agent.log")
         if os.path.exists(log_src):
-            os.makedirs(dest_node_dir, exist_ok=True)
+            _makedirs_locked_down(dest_node_dir)
             shutil.copy2(log_src, os.path.join(dest_node_dir, "semindex_agent.log"))
 
 
@@ -482,6 +624,7 @@ def run_one(
     _validate_stage(stage)
     store_run_dir = _store_run_dir(store, stage, p, seed)
     _verify_safe_run_dir(store_run_dir, store)
+    _verify_safe_store_permissions(store_run_dir, store)
     done_marker = os.path.join(store_run_dir, "DONE")
     if os.path.exists(done_marker):
         return RunOutcome(p=p, seed=seed, status="skipped")
@@ -526,6 +669,19 @@ def run_one(
         recefore_rc = run_subprocess(argv, cwd=recefore)
         end_s = clock()
 
+        # 2026-10-23 fix (external review, P1 #2): re-verify right here, the
+        # instant ReCefore's own ~160s run returns and before this process
+        # writes anything to the store. The check at the top of this
+        # function ran before that whole wait; a symlink swap or a
+        # permission change made DURING it must still be caught now, not
+        # assumed to still hold just because it held when this call started.
+        # See `_check_dir_permissions`' own docstring for the full threat
+        # model this re-check (and `_verify_safe_store_permissions` below)
+        # exists for -- re-checking only narrows the window, the permission
+        # invariant is what actually closes it.
+        _verify_safe_run_dir(store_run_dir, store)
+        _verify_safe_store_permissions(store_run_dir, store)
+
         recefore_run_dir = os.path.join(staging_run_dir, f"ex{_RECEFORE_NUM}_seed{seed}")
 
         # 2026-10-23 orchestrator trial fix: `os.makedirs(store_run_dir, exist_ok=True)` can
@@ -539,7 +695,7 @@ def run_one(
         p_dir = os.path.dirname(store_run_dir)
         new_ancestors = [d for d in (stage_dir, p_dir) if not os.path.isdir(d)]
 
-        os.makedirs(store_run_dir, exist_ok=True)
+        _makedirs_locked_down(store_run_dir)
         _copy_run_outputs(staging_run_dir, recefore_run_dir, store_run_dir, generated_paths)
 
         try:
@@ -665,6 +821,19 @@ def run_all(
     os.makedirs(store, exist_ok=True)
     if not store_preexisted:
         chown_dir(store)
+    # 2026-10-23 fix (external review, P1 #2): gated here, once, before the
+    # per-(p, seed) loop below -- not left to `run_one`'s own call to the
+    # same check. That loop wraps every `run_one` call in a try/except
+    # specifically so one run's own bug never aborts an entire overnight
+    # sweep (see this function's own docstring); without this gate, a
+    # mis-permissioned `store` would not refuse the sweep at all, it would
+    # just make every single (p, seed) pair fail individually and print
+    # `status=error`, with the sweep itself still exiting 0 as if it had
+    # run. See `_check_dir_permissions`'s own docstring for what this is
+    # actually checking and why.
+    sudo_uid = os.environ.get("SUDO_UID")
+    if sudo_uid is not None:
+        _check_dir_permissions(store, invoking_uid=int(sudo_uid))
     os.makedirs(staging_root, exist_ok=True)
     outcomes = []
     for p, seed in build_run_order(ps, seeds):

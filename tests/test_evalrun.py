@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -534,6 +535,201 @@ def test_default_chown_dir_refuses_a_symlink(tmp_path: Path, monkeypatch):
         evalrun.default_chown_dir(str(link))
 
 
+def test_default_chown_tree_sets_exact_modes_not_just_group_write_on_top_of_umask(tmp_path: Path, monkeypatch):
+    """2026-10-23 regression (external review, P1 #2): a file/dir created under a permissive
+    umask (e.g. 0, giving 0777/0666) used to come out of chown_tree still group- AND
+    other-writable (the old code only OR'd in g+w onto whatever umask left behind). Every
+    directory must end up at exactly 0755 and every file at exactly 0644, regardless of umask.
+    """
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    monkeypatch.setenv("SUDO_GID", str(os.getgid()))
+    root = tmp_path / "tree"
+    sub = root / "sub"
+    sub.mkdir(parents=True)
+    f = sub / "f.txt"
+    f.write_text("x", encoding="utf-8")
+    # Simulate a permissive umask having already left these too open --
+    # chown_tree must still force them down to the canonical modes.
+    os.chmod(root, 0o777)
+    os.chmod(sub, 0o777)
+    os.chmod(f, 0o666)
+
+    evalrun.default_chown_tree(str(root))
+
+    assert stat.S_IMODE(os.stat(root).st_mode) == 0o755
+    assert stat.S_IMODE(os.stat(sub).st_mode) == 0o755
+    assert stat.S_IMODE(os.stat(f).st_mode) == 0o644
+
+
+def test_default_chown_dir_sets_exactly_0755_not_just_group_write_on_top_of_umask(tmp_path: Path, monkeypatch):
+    """Same regression as the chown_tree test above, for the single-directory `chown_dir` path."""
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    monkeypatch.setenv("SUDO_GID", str(os.getgid()))
+    path = tmp_path / "ancestor"
+    path.mkdir()
+    os.chmod(path, 0o777)
+
+    evalrun.default_chown_dir(str(path))
+
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o755
+
+
+# -- _check_dir_permissions / _verify_safe_store_permissions (external review, P1 #2) -----------
+
+
+def _patched_lstat(monkeypatch, path: str, *, uid: int, mode: int, is_symlink: bool = False):
+    """Make `os.lstat(path)` (which `_check_dir_permissions` reads through) report a crafted
+    (st_uid, st_mode) for exactly this one path, falling through to the real `os.lstat` for every
+    other path. Lets a test exercise an ownership, or a symlink, this process cannot actually
+    create on disk (a directory "owned" by some other, unrelated uid) without needing real root
+    -- the "injected stat" the external review's fix asked for.
+    """
+    real_lstat = os.lstat
+    full_mode = (stat.S_IFLNK if is_symlink else stat.S_IFDIR) | mode
+
+    def fake_lstat(p, *args, **kwargs):
+        if os.fspath(p) == path:
+            return os.stat_result((full_mode, 0, 0, 1, uid, uid, 0, 0, 0, 0))
+        return real_lstat(p, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+
+
+def test_check_dir_permissions_accepts_owner_match_not_group_or_other_writable(tmp_path: Path):
+    """The ordinary, locked-down case: owned by the invoking user, mode 0755."""
+    path = tmp_path / "d"
+    path.mkdir()
+    os.chmod(path, 0o755)
+    evalrun._check_dir_permissions(str(path), invoking_uid=os.getuid())  # must not raise
+
+
+def test_check_dir_permissions_rejects_group_writable_even_when_owner_matches(tmp_path: Path):
+    """Ownership alone is not enough -- a group-writable directory still lets any OTHER group
+    member replace one of its entries, regardless of who owns the directory itself."""
+    path = tmp_path / "d"
+    path.mkdir()
+    os.chmod(path, 0o775)
+    with pytest.raises(ValueError, match="writable by group or others"):
+        evalrun._check_dir_permissions(str(path), invoking_uid=os.getuid())
+
+
+def test_check_dir_permissions_rejects_other_writable(tmp_path: Path):
+    """The other-writable bit is checked independently of the group-writable one."""
+    path = tmp_path / "d"
+    path.mkdir()
+    os.chmod(path, 0o757)
+    with pytest.raises(ValueError, match="writable by group or others"):
+        evalrun._check_dir_permissions(str(path), invoking_uid=os.getuid())
+
+
+def test_check_dir_permissions_accepts_root_owned_regardless_of_invoking_uid(tmp_path: Path, monkeypatch):
+    """A root-owned, non-group/other-writable directory is accepted even when its uid does not
+    match the invoking user -- root itself is always a trusted owner."""
+    path = tmp_path / "d"
+    path.mkdir()
+    _patched_lstat(monkeypatch, str(path), uid=0, mode=0o755)
+    evalrun._check_dir_permissions(str(path), invoking_uid=12345)  # must not raise
+
+
+def test_check_dir_permissions_rejects_owner_mismatch_when_not_root(tmp_path: Path, monkeypatch):
+    """2026-10-23 regression (external review, P1 #2): a directory owned by neither root nor the
+    invoking user -- e.g. another group member -- is refused outright, even at mode 0755: the
+    threat is a user who already owns (or can be handed ownership of) a path component on the
+    run's path, not only one who merely has write access to it.
+    """
+    path = tmp_path / "d"
+    path.mkdir()
+    _patched_lstat(monkeypatch, str(path), uid=99999, mode=0o755)
+    with pytest.raises(ValueError, match="not root or the invoking user"):
+        evalrun._check_dir_permissions(str(path), invoking_uid=os.getuid())
+
+
+def test_check_dir_permissions_rejects_a_symlink_even_at_a_trusted_owner_and_mode(
+    tmp_path: Path, monkeypatch
+):
+    """2026-10-23 regression (external review, P1 #2): a symlink is refused on sight, via a
+    single `os.lstat`, before its owner/mode (which would describe the LINK itself, not whatever
+    it points at) are ever inspected -- `os.stat`-then-`os.path.islink` would mean two syscalls
+    with a gap between them for an attacker to swap the target in.
+    """
+    path = tmp_path / "d"
+    path.mkdir()
+    _patched_lstat(monkeypatch, str(path), uid=0, mode=0o755, is_symlink=True)
+    with pytest.raises(ValueError, match="is a symlink below the store root"):
+        evalrun._check_dir_permissions(str(path), invoking_uid=os.getuid())
+
+
+def test_check_dir_permissions_is_a_noop_when_the_path_does_not_exist(tmp_path: Path):
+    """Nothing there yet to check -- it will be created fresh by `run_one` itself."""
+    evalrun._check_dir_permissions(str(tmp_path / "does-not-exist"), invoking_uid=os.getuid())
+
+
+def test_verify_safe_store_permissions_raises_when_the_store_root_itself_is_a_symlink(
+    tmp_path: Path, monkeypatch
+):
+    """2026-10-23 regression (external review, P1 #2): the store root is checked with
+    `_check_dir_permissions` directly, not behind an `os.path.isdir(store) and not
+    os.path.islink(store)` guard -- that guard used to be False (and so skip the check entirely)
+    for a symlinked store, since `os.path.isdir` follows symlinks and calls a symlink-to-a-
+    directory a directory too."""
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    store = tmp_path / "store"
+    store.mkdir()
+    _patched_lstat(monkeypatch, str(store), uid=os.getuid(), mode=0o755, is_symlink=True)
+    with pytest.raises(ValueError, match="is a symlink below the store root"):
+        evalrun._verify_safe_store_permissions(str(store / "s1" / "p0.2" / "7"), str(store))
+
+
+def test_verify_safe_store_permissions_is_a_noop_without_sudo_uid(tmp_path: Path, monkeypatch):
+    """Outside `sudo` there is no invoking user this check could protect -- same no-op
+    convention as default_chown_tree/default_chown_dir."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    store = tmp_path / "store"
+    store.mkdir()
+    os.chmod(store, 0o777)  # would fail the check below if it ran at all
+    evalrun._verify_safe_store_permissions(str(store / "s1" / "p0.2" / "7"), str(store))  # must not raise
+
+
+def test_verify_safe_store_permissions_skips_components_that_do_not_exist_yet(tmp_path: Path, monkeypatch):
+    """Nothing on the run's path below an already-locked-down `store` exists yet -- there is
+    nothing there for a symlink or a bad permission to have been swapped into, so this passes."""
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    store = tmp_path / "store"
+    store.mkdir()
+    os.chmod(store, 0o755)
+    evalrun._verify_safe_store_permissions(str(store / "s1" / "p0.2" / "7"), str(store))  # must not raise
+
+
+def test_verify_safe_store_permissions_raises_when_store_itself_is_group_writable(tmp_path: Path, monkeypatch):
+    """The store root is checked unconditionally, not just the components below it."""
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    store = tmp_path / "store"
+    store.mkdir()
+    os.chmod(store, 0o775)
+    with pytest.raises(ValueError, match="writable by group or others"):
+        evalrun._verify_safe_store_permissions(str(store / "s1" / "p0.2" / "7"), str(store))
+
+
+def test_verify_safe_store_permissions_raises_on_an_existing_ancestor_owned_by_another_user(
+    tmp_path: Path, monkeypatch
+):
+    """2026-10-23 regression (external review, P1 #2): the exact repro -- `<store>/<stage>`
+    (here `s1`) is the directory another group member could otherwise swap for a symlink. An
+    ancestor owned by neither root nor the invoking user is refused before anything is read
+    from or written through it, regardless of the seed/p leaf (which does not exist yet)."""
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    store = tmp_path / "store"
+    store.mkdir()
+    os.chmod(store, 0o755)
+    stage_dir = store / "s1"
+    stage_dir.mkdir()
+    os.chmod(stage_dir, 0o755)
+    _patched_lstat(monkeypatch, str(stage_dir), uid=99999, mode=0o755)
+
+    with pytest.raises(ValueError, match="not root or the invoking user"):
+        evalrun._verify_safe_store_permissions(str(stage_dir / "p0.2" / "7"), str(store))
+
+
 # -- run_one / run_all: chown newly-created ancestor dirs (orchestrator trial) --
 
 
@@ -594,6 +790,170 @@ def test_run_one_default_chown_dir_actually_fixes_ownership_of_the_ancestors(tmp
     p_dir = store / "s1" / "p0.2"
     assert stage_dir.stat().st_uid == os.getuid()
     assert p_dir.stat().st_uid == os.getuid()
+
+
+def test_run_one_refuses_to_write_when_an_ancestor_becomes_group_writable_during_the_recefore_wait(
+    tmp_path: Path, monkeypatch
+):
+    """2026-10-23 regression (external review, P1 #2): the actual race the fix closes. `<store>/s1`
+    starts out properly locked down (owned by the invoking user, mode 0755, exactly what a prior
+    run's own chown_dir would have left it at) -- but the fake ReCefore subprocess itself, standing
+    in for "another group member acted while the real ~160s run was in progress", loosens it to
+    group-writable partway through. `run_one`'s re-check right after that subprocess returns must
+    catch this before `os.makedirs`/`_copy_run_outputs`/`_write_json` ever touch the store -- the
+    one check at the top of this function, before the wait, cannot see a change made during it.
+    """
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    monkeypatch.setenv("SUDO_GID", str(os.getgid()))
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    store.mkdir()
+    os.chmod(store, 0o755)
+    stage_dir = store / "s1"
+    stage_dir.mkdir()
+    os.chmod(stage_dir, 0o755)
+
+    base_fake = make_fake_run_subprocess()
+
+    def attacking_run_subprocess(argv, *, cwd=None):
+        if "disaster" in argv and "--config" in argv:
+            # The attack: loosen the stage dir's permissions exactly while
+            # the long-running ReCefore command is "in progress" (this fake
+            # stands in for that whole multi-minute wait).
+            os.chmod(stage_dir, 0o775)
+        return base_fake(argv, cwd=cwd)
+
+    with pytest.raises(ValueError, match="writable by group or others"):
+        evalrun.run_one(
+            0.2, 7, "s1", str(store), str(recefore), str(staging_root),
+            run_subprocess=attacking_run_subprocess,
+            capture_subprocess=_fake_capture_subprocess,
+        )
+
+    # Caught before anything was written to the store: no seed dir, no meta.json.
+    assert not (stage_dir / "p0.2" / "7").exists()
+
+
+def test_run_one_refuses_to_write_when_an_ancestor_is_swapped_for_a_symlink_during_the_wait(
+    tmp_path: Path, monkeypatch
+):
+    """2026-10-23 regression (external review, P1 #2): the review's own literal repro -- not a
+    permission loosening, but `<store>/s1` itself replaced with a symlink to an external
+    directory while the fake ReCefore run is "in progress". The re-check right after that
+    subprocess returns (`_verify_safe_run_dir`, re-run alongside `_verify_safe_store_permissions`)
+    must catch this before anything is written through the swapped-in symlink.
+    """
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    monkeypatch.setenv("SUDO_GID", str(os.getgid()))
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    store.mkdir()
+    os.chmod(store, 0o755)
+    stage_dir = store / "s1"
+    stage_dir.mkdir()
+    os.chmod(stage_dir, 0o755)
+    external = tmp_path / "external"
+    external.mkdir()
+
+    base_fake = make_fake_run_subprocess()
+
+    def attacking_run_subprocess(argv, *, cwd=None):
+        if "disaster" in argv and "--config" in argv:
+            # The attack: swap the real stage dir for a symlink pointing
+            # outside `store` entirely, while the long-running ReCefore
+            # command is "in progress".
+            aside = tmp_path / "s1-real"
+            os.rename(stage_dir, aside)
+            os.symlink(external, stage_dir, target_is_directory=True)
+        return base_fake(argv, cwd=cwd)
+
+    with pytest.raises(ValueError, match="is a symlink below the store root"):
+        evalrun.run_one(
+            0.2, 7, "s1", str(store), str(recefore), str(staging_root),
+            run_subprocess=attacking_run_subprocess,
+            capture_subprocess=_fake_capture_subprocess,
+        )
+
+    # Caught before anything was written through the swapped-in symlink.
+    assert not (external / "p0.2" / "7" / "meta.json").exists()
+
+
+def test_run_one_creates_directories_at_exactly_0755_regardless_of_umask(tmp_path: Path, monkeypatch):
+    """2026-10-23 regression (external review, P1 #2): every directory `run_one` creates while
+    copying/writing into the store -- not just what `chown_tree` fixes up at the very end -- must
+    already be at `_STORE_DIR_MODE` (0755), even under a maximally permissive umask. Checked via
+    the injected `capture_subprocess` fake: `_build_meta`'s own git calls run strictly after
+    `_copy_run_outputs` and strictly before the final `chown_tree(store_run_dir)`, so asserting
+    the mode from inside it catches exactly the gap this fix closes.
+    """
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    old_umask = os.umask(0)
+    try:
+        store = tmp_path / "store"
+        staging_root = tmp_path / "staging"
+        staging_root.mkdir()
+        recefore = tmp_path / "recefore"
+        recefore.mkdir()
+
+        seen_modes: list[int] = []
+
+        def checking_capture_subprocess(argv, *, cwd=None):
+            store_run_dir = store / "s1" / "p0.2" / "7"
+            if store_run_dir.is_dir():
+                seen_modes.append(stat.S_IMODE(os.stat(store_run_dir).st_mode))
+            return _fake_capture_subprocess(argv, cwd=cwd)
+
+        evalrun.run_one(
+            0.2, 7, "s1", str(store), str(recefore), str(staging_root),
+            run_subprocess=make_fake_run_subprocess(),
+            capture_subprocess=checking_capture_subprocess,
+        )
+    finally:
+        os.umask(old_umask)
+
+    assert seen_modes, "the fake capture_subprocess was never called with store_run_dir present"
+    assert all(mode == 0o755 for mode in seen_modes), seen_modes
+
+
+def test_run_all_refuses_the_whole_sweep_up_front_when_the_store_is_group_writable(
+    tmp_path: Path, monkeypatch
+):
+    """2026-10-23 regression (external review, P1 #2): without this gate, a mis-permissioned
+    `store` would not stop the sweep at all -- `run_one`'s own copy of this same check lives
+    inside `run_all`'s per-pair try/except (there precisely so one run's bug never aborts an
+    entire overnight sweep), so every single (p, seed) pair would fail individually and print
+    `status=error`, with `run_all` itself still returning normally. Raising here, before the loop
+    even starts, is what actually stops the sweep -- the same "fail loudly before touching
+    anything" treatment `DirtySemindexError` gets for a dirty semindex tree. A `run_subprocess`
+    that asserts if ever called proves `run_one` was never even reached.
+    """
+    monkeypatch.setenv("SUDO_UID", str(os.getuid()))
+    monkeypatch.setenv("SUDO_GID", str(os.getgid()))
+    store = tmp_path / "store"
+    store.mkdir()
+    os.chmod(store, 0o775)  # group-writable: exactly what the fix refuses
+    staging_root = tmp_path / "staging"
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    def never_called(argv, *, cwd=None):
+        raise AssertionError(f"run_subprocess must never be called, got {argv!r}")
+
+    with pytest.raises(ValueError, match="writable by group or others"):
+        evalrun.run_all(
+            [0.2], [1], "s1", str(store), str(recefore), str(staging_root),
+            run_subprocess=never_called,
+            capture_subprocess=_fake_capture_subprocess,
+        )
 
 
 def test_run_all_chowns_the_store_dir_only_when_it_creates_it(tmp_path: Path, monkeypatch):
