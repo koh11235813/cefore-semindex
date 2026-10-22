@@ -190,3 +190,87 @@ def test_all_progress_covers_every_origin_held(tmp_path: Path):
         "h0": OriginProgress(hi=1, extra=()),
         "h1": OriginProgress(hi=1, extra=()),
     }
+
+
+def _own_record(store: Store, *, origin: str, seq_hint: str, zone: str, disaster: str, media: str) -> schema.IndexRecord:
+    """Insert one own record with the given attrs, for query_by_attrs tests that only care about attrs/origin."""
+    return store.append_own(
+        origin=origin,
+        content_name=f"ccnx:/content/{origin}/{seq_hint}",
+        zone=zone,
+        disaster=disaster,
+        media=media,
+        observed_at=1,
+    )
+
+
+def test_query_by_attrs_with_no_filters_returns_every_record_ordered_by_origin_then_seq(tmp_path: Path):
+    """No filters means every held record matches, ordered by (origin, seq) regardless of insertion order."""
+    store = Store(tmp_path / "store.db")
+    _own_record(store, origin="h1", seq_hint="a", zone="zone1", disaster="flood", media="image")
+    _own_record(store, origin="h0", seq_hint="b", zone="zone2", disaster="fire", media="video")
+    _own_record(store, origin="h0", seq_hint="c", zone="zone3", disaster="collapse", media="sensor")
+    matches = store.query_by_attrs()
+    assert [(m.origin, m.seq) for m in matches] == [("h0", 1), ("h0", 2), ("h1", 1)]
+
+
+def test_query_by_attrs_filters_on_every_given_field(tmp_path: Path):
+    """A record must match every given filter, not just one of them, to be returned."""
+    store = Store(tmp_path / "store.db")
+    _own_record(store, origin="h0", seq_hint="a", zone="zone1", disaster="flood", media="image")
+    _own_record(store, origin="h0", seq_hint="b", zone="zone1", disaster="fire", media="image")
+    matches = store.query_by_attrs(zone="zone1", disaster="flood")
+    assert [(m.origin, m.seq) for m in matches] == [("h0", 1)]
+
+
+def test_query_by_attrs_with_no_match_returns_empty_list(tmp_path: Path):
+    """A filter combination no held record satisfies returns an empty list, not None or an error."""
+    store = Store(tmp_path / "store.db")
+    _own_record(store, origin="h0", seq_hint="a", zone="zone1", disaster="flood", media="image")
+    assert store.query_by_attrs(zone="zone5") == []
+
+
+def test_query_by_attrs_on_an_empty_store_returns_empty_list(tmp_path: Path):
+    """Querying a store with no records at all returns an empty list."""
+    store = Store(tmp_path / "store.db")
+    assert store.query_by_attrs() == []
+
+
+def test_query_by_attrs_filters_on_media_alone(tmp_path: Path):
+    """media is one of three independent filters; a record matching zone and disaster
+    but not media must still be excluded (the existing multi-filter test above never
+    exercises media on its own, so a media filter that silently no-ops would still
+    pass it).
+    """
+    store = Store(tmp_path / "store.db")
+    _own_record(store, origin="h0", seq_hint="a", zone="zone1", disaster="flood", media="image")
+    _own_record(store, origin="h0", seq_hint="b", zone="zone1", disaster="flood", media="sensor")
+    matches = store.query_by_attrs(media="sensor")
+    assert [(m.origin, m.seq) for m in matches] == [("h0", 2)]
+
+
+# -- probe restart cursor (agent.py's own _drain_probes skip-on-restart) ------------
+
+
+def test_get_probe_count_is_zero_on_a_fresh_store(tmp_path: Path):
+    """A store that has never recorded a probe reports a count of 0, not an error."""
+    store = Store(tmp_path / "store.db")
+    assert store.get_probe_count() == 0
+
+
+def test_record_probe_executed_increments_and_persists_across_a_restart(tmp_path: Path):
+    """Each call increments the counter by exactly one, and the count survives closing
+    and reopening the same database file -- the same restart guarantee progress.hi
+    already has, now extended to probes.
+    """
+    db_path = tmp_path / "store.db"
+    store = Store(db_path)
+    store.record_probe_executed()
+    store.record_probe_executed()
+    assert store.get_probe_count() == 2
+    store.close()
+
+    reopened = Store(db_path)
+    assert reopened.get_probe_count() == 2
+    reopened.record_probe_executed()
+    assert reopened.get_probe_count() == 3

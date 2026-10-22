@@ -77,6 +77,24 @@ class Store:
                 )
                 """
             )
+            # 2026-10-22 fix: a restarted agent used to re-run every
+            # schedule/probe entry whose at_s had already come due in a
+            # prior life. Unlike own records, a probe has no per-origin
+            # progress row to reuse as a restart cursor (a probe is a
+            # local query, not a record with a seq) -- so this single-row
+            # table is a dedicated cursor instead: how many of this
+            # node's scheduled probes (in at_s order) have already run,
+            # across every life of this state_dir. The `id = 0` check
+            # keeps it a true singleton (one counter per node, since each
+            # node has its own state_dir/index.db).
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS probe_progress (
+                    id INTEGER PRIMARY KEY CHECK (id = 0),
+                    count INTEGER NOT NULL
+                )
+                """
+            )
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -100,12 +118,50 @@ class Store:
             for origin, hi, extra_json in rows
         }
 
+    def get_probe_count(self) -> int:
+        """How many of this node's scheduled probes have already executed, across every
+        life of this state_dir (0 for a fresh store, or one that has never run a probe).
+        """
+        row = self._conn.execute("SELECT count FROM probe_progress WHERE id = 0").fetchone()
+        return row[0] if row is not None else 0
+
     def get_record(self, origin: str, seq: int) -> bytes | None:
         """The canonical wire bytes stored for (origin, seq), or None if not held."""
         row = self._conn.execute(
             "SELECT payload FROM records WHERE origin = ? AND seq = ?", (origin, seq)
         ).fetchone()
         return row[0] if row is not None else None
+
+    def query_by_attrs(
+        self,
+        *,
+        zone: str | None = None,
+        disaster: str | None = None,
+        media: str | None = None,
+    ) -> list[schema.IndexRecord]:
+        """Every held record whose attrs match the given filters, ordered by (origin, seq).
+
+        A filter left None matches any value (CONTEXT.md "Sync agent": this
+        is a probe's local query against this node's own copy of the
+        Semantic Index, never a remote lookup -- map.md explicitly excludes
+        remote lookup from this baseline). `attrs` is not a separate column:
+        this baseline's record counts do not justify duplicating it out of
+        the stored payload just to index it, so this decodes every row and
+        filters in Python. The fixed (origin, seq) ordering gives a probe a
+        deterministic "first match" without needing its own tie-break rule.
+        """
+        rows = self._conn.execute("SELECT payload FROM records ORDER BY origin, seq").fetchall()
+        matches: list[schema.IndexRecord] = []
+        for (payload,) in rows:
+            record = schema.decode(payload)
+            if zone is not None and record.zone != zone:
+                continue
+            if disaster is not None and record.disaster != disaster:
+                continue
+            if media is not None and record.media != media:
+                continue
+            matches.append(record)
+        return matches
 
     # -- writes ----------------------------------------------------------------
 
@@ -178,6 +234,20 @@ class Store:
             )
             self._fold_progress(origin, next_seq)
             return record
+
+    def record_probe_executed(self) -> None:
+        """Durably record that one more of this node's scheduled probes has run.
+
+        Wrapped in its own transaction, the same discipline append_received/
+        append_own use, so a crash either lands this increment or it
+        didn't -- never a partial write the restart cursor could read back
+        as some in-between count.
+        """
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO probe_progress (id, count) VALUES (0, 1) "
+                "ON CONFLICT(id) DO UPDATE SET count = count + 1"
+            )
 
     def _fold_progress(self, origin: str, seq: int) -> None:
         """Fold a newly-inserted seq into (hi, extra); caller holds the transaction.
