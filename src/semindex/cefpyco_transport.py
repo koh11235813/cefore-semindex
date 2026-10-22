@@ -83,7 +83,7 @@ class CefpycoTransport:
     def __init__(
         self,
         handle: CefpycoHandle,
-        engine: SyncEngine,
+        engine: SyncEngine | None = None,
         *,
         clock: Callable[[], float] = time.time,
         receive_timeout_ms: int = DEFAULT_RECEIVE_TIMEOUT_MS,
@@ -92,6 +92,14 @@ class CefpycoTransport:
         Interests and timeouts into. `clock` is the single time source shared with the
         agent loop's own engine.on_tick(now) calls, so Interest-lifetime deadlines, the
         engine's poll/backoff scheduling and events.jsonl timestamps all agree on "now".
+
+        `engine` defaults to None because SyncEngine.__init__ itself calls
+        this transport's register() while constructing -- the engine
+        cannot be handed to this constructor before it exists. register()
+        never touches self._engine, only poll/fetch_content do, and those
+        are only ever called once construction has finished, so the
+        agent's wiring code builds the transport, builds the engine from
+        it, then sets transport.engine = engine before the loop starts.
         """
         self._handle = handle
         self._engine = engine
@@ -100,6 +108,15 @@ class CefpycoTransport:
         self._deadlines: dict[str, float] = {}
         self.bytes_sent = 0
         self.bytes_received = 0
+
+    @property
+    def engine(self) -> SyncEngine | None:
+        """The SyncEngine this transport delivers replies, incoming Interests and timeouts into."""
+        return self._engine
+
+    @engine.setter
+    def engine(self, value: SyncEngine) -> None:
+        self._engine = value
 
     def now(self) -> float:
         """The transport's own clock reading, for the agent loop to pass to engine.on_tick."""
