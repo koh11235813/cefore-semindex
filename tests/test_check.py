@@ -1320,19 +1320,21 @@ def test_check_t2b_protocol_fails_even_when_a_very_late_first_state_rx_would_oth
     ) in out.splitlines()
 
 
-def test_check_t2b_protocol_fails_when_a_relayed_delivery_would_otherwise_mask_a_registration_lag_failure(
+def test_check_t2b_allows_registration_lag_when_early_delivery_is_only_relayed(
     tmp_path: Path, capsys
 ):
     """2026-10-23 fix (review finding, #2): the
     readiness-evidence list above folded in every post-restart record_stored for origin
     regardless of its holder -- but a record h2 relays from h1 says nothing about whether h0's
     own life 2 is actually reachable; only a delivery h1 itself got DIRECTLY from h0 (holder=h0)
-    is real evidence of that. Reproduces the masking failure: h2 merely re-logs its (already
+    is real evidence of that. Reproduces the fix for that: h2 merely re-logs its (already
     pre-restart) seq-2 delivery at offset 12 -- a relay through h1, holder "h1", with nothing to
     do with h0's readiness -- while h1's own FIRST direct contact with h0's life 2 does not land
     until offset 20. A single legitimate registration-lag timeout at offset 15 (well before h1's
-    genuine readiness at 20) should pass; counting h2's relay as readiness evidence instead
-    anchors the deadline at 14.5 and turns that ordinary lag into a false protocol failure."""
+    genuine readiness at 20) should pass -- the fixed check does exactly that (rc == 0), by
+    requiring holder == origin so h2's relay is never counted as readiness evidence and cannot
+    anchor the deadline at the too-early 14.5 that would turn this ordinary lag into a false
+    protocol failure."""
     experiment_path = tmp_path / "t2b.json"
     _write_experiment(experiment_path, _t2b_experiment())
     run_dir = tmp_path / "run"
