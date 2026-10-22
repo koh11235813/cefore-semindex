@@ -660,10 +660,10 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
 # 2026-10-23 fix (review finding): how far past
 # restart_ts a piece of readiness evidence (state_rx or a post-restart
 # record delivery) is still allowed to anchor the grace deadline below.
-# Real runs (ex9913/ex9923/ex9914/ex9924) show readiness evidence landing
-# roughly 2-4s after the restart finishes -- state_poll_interval_s polls
-# every 2s +-20% on top of the restart itself -- so 10s is five poll
-# periods of slack. Evidence arriving later than that is not independent
+# On the real T2b runs (ex9913, ex9923) the earliest readiness evidence
+# was a state_rx 0.16-0.19 s after restart_ts. The cap is not derived from
+# that: 10 s is five state-poll periods (2 s +-20%), wide enough that a
+# healthy restart never comes near it. Evidence arriving later than that is not independent
 # proof the origin just became reachable; it stops extending the window,
 # and the grace deadline falls back to restart_ts + MAX_LAG + 2500 instead
 # of chasing however late that evidence happened to be.
