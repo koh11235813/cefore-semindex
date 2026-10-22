@@ -1,0 +1,61 @@
+{
+  "all_nodes_consistent": {
+    "overall_ts_ms": 1792689082488,
+    "per_origin_ts_ms": {
+      "h0": 1792689082488
+    }
+  },
+  "control_bytes": {
+    "per_node": {
+      "h0": {
+        "control_bytes_received": 3782,
+        "control_bytes_sent": 4849
+      },
+      "h1": {
+        "control_bytes_received": 4849,
+        "control_bytes_sent": 3782
+      }
+    },
+    "total": {
+      "control_bytes_received": 8631,
+      "control_bytes_sent": 8631
+    }
+  },
+  "discovery_latency_ms": [
+    {
+      "latency_ms": 2150,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 1
+    },
+    {
+      "latency_ms": 150,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 2
+    },
+    {
+      "latency_ms": 12202,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 3
+    },
+    {
+      "latency_ms": 216,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 4
+    },
+    {
+      "latency_ms": 100,
+      "node": "h1",
+      "origin": "h0",
+      "seq": 5
+    }
+  ],
+  "nodes": [
+    "h0",
+    "h1"
+  ],
+  "probes": []
+}

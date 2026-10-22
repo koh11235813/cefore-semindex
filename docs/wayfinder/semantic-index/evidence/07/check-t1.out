@@ -1,0 +1,23 @@
+PRECOND-PASS: publisher's put succeeded: success=True
+PRECOND-PASS: link_down actually succeeded: success=True
+PRECOND-PASS: link_up actually succeeded: success=True
+PRECOND-PASS: all 5 pre-outage records reached h2 before link_down actually fired: 5/5 stored before link_down (actual ts 1792688973846)
+PRECOND-PASS: all 3 post-outage records were actually created during the outage: 3 created with seq>5, 3 of those strictly between link_down (ts 1792688973846) and link_up (ts 1792689003845)
+PRECOND-PASS: no node stored a post-outage (seq > 5) record strictly inside the outage window: leaked: []
+PRECOND-PASS: during-outage probe actually fired inside the outage window: probe ts 1792688988890, outage (1792688973846, 1792689003845)
+PRECOND-PASS: after-recovery probe actually fired after link_up: probe ts 1792689023903 vs link_up ts 1792689003845
+PASS: during-outage probe discovered exactly the pre-outage records, nothing more: got [('h0', 1), ('h0', 2), ('h0', 3), ('h0', 4), ('h0', 5)]
+PASS: h1 holds exactly 8 of h0's records after recovery
+PASS: h2 holds exactly 8 of h0's records after recovery
+PASS: every record h1 stored for h0 came from holder h0: holders seen: ['h0']
+PASS: every record h2 stored for h0 came from holder h1: holders seen: ['h1']
+PASS: h2 never stored a record before h1 itself had stored it: seqs stored early: []
+PASS: after-recovery probe discovers all N+M records: got [('h0', 1), ('h0', 2), ('h0', 3), ('h0', 4), ('h0', 5), ('h0', 6), ('h0', 7), ('h0', 8)]
+PASS: after-recovery probe's matches are all records h2 actually stored, naming the publisher's own content: matched seqs h2 never actually stored: [], content name(s) other than 'ccnx:/content/h0/body': []
+PASS: after-recovery probe retrieves the content body: {'bytes': 433390, 'content_name': 'ccnx:/content/h0/body', 'event': 'probe_retrieved', 'origin': 'h0', 'seq': 1, 'success': True, 'ts_ms': 1792689024331}
+PASS: h0 logged no conflict: 0 conflict event(s)
+PASS: h1 logged no conflict: 0 conflict event(s)
+PASS: h2 logged no conflict: 0 conflict event(s)
+PRECOND-PASS: h0 wrote a counters line before this run ended
+PRECOND-PASS: h1 wrote a counters line before this run ended
+PRECOND-PASS: h2 wrote a counters line before this run ended
