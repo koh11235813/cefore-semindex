@@ -1,4 +1,4 @@
-# Two-host live-run kit for ticket 06 (cefpyco transport + agent).
+# Two-host live-run kit for the cefpyco transport + agent (ADR-0002).
 #
 # Runs on an INTEGRATION checkout of ReCefore that merges three branches
 # that do not yet share a common ancestor as of 2026-10-22:
@@ -7,14 +7,13 @@
 #   - feat/explicit-links  (links:, explicit topology instead of the seeded random mesh)
 #   - feat/prefix-routes  (prefix_routes:, FIB routes toward a registered prefix) --
 #                           this branch has no implementation committed yet as of
-#                           2026-10-22 (PLAN.md: "Wave 2 ... 06 agent ... then
-#                           integration checkout"), so the `prefix_routes:` shape below
-#                           is taken directly from this ticket's own spec text, not from
-#                           a merged implementation. If that branch's final shape
+#                           2026-10-22, so the `prefix_routes:` shape below is taken
+#                           directly from this baseline's own spec text (map.md), not
+#                           from a merged implementation. If that branch's final shape
 #                           differs, this key is the one to re-check first.
 #
 # Usage (from the integration checkout's own root, which must also hold
-# ./sample-putfile -- see ORCHESTRATOR MUST RUN in the ticket 06 report):
+# ./sample-putfile):
 #   sudo .venv/bin/python3 -m src disaster \
 #       --config /home/lab_shared/cefore-semindex/examples/two_host_sync.yaml
 #
