@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from semindex import evalgen, schema
-from semindex.gen import parse_experiment
+from semindex.gen import ExperimentError, parse_experiment
 
 
 # -- build_experiment: shape --------------------------------------------------
@@ -284,6 +284,46 @@ def test_generate_run_writes_the_experiment_description_and_gens_own_files(tmp_p
 
     h0_config = json.loads(h0_path.read_text(encoding="utf-8"))
     assert h0_config["node"] == "h0"
+
+
+# -- generate_run: rejected input must leave no trace on disk ----------------
+#
+# 2026-10-23 review r1 (finding 1, major): generate_run used to write
+# `<outdir>/<name>.experiment.json` BEFORE gen.write_experiment's internal
+# `gen.parse_experiment(raw)` call validated `raw["name"]`. A `stage` that
+# makes `name` escape `outdir` (a relative "../" or an absolute path) was
+# still rejected in the end, but only after that escaping write had already
+# landed on disk. These two tests reproduce each shape and prove nothing is
+# written once generate_run validates first.
+
+
+def test_generate_run_writes_nothing_for_a_stage_that_escapes_outdir(tmp_path: Path):
+    """A stage containing '..' must not write even the escaping file before raising."""
+    outdir = tmp_path / "run"
+    escaped_path = tmp_path / "escaped_p0.2_seed7.experiment.json"
+
+    with pytest.raises(ExperimentError, match=r"name must not be a path"):
+        evalgen.generate_run(0.2, 7, "../escaped", str(outdir))
+
+    assert not escaped_path.exists()
+    assert not outdir.exists()
+
+
+def test_generate_run_writes_nothing_for_an_absolute_stage(tmp_path: Path):
+    """An absolute-path stage must be rejected before any write is attempted.
+
+    Before the fix this reached `open("/abs_p0.2_seed7.experiment.json", "w")`
+    (os.path.join discards its first argument once the second is absolute) --
+    a PermissionError in this sandbox, but a write to an attacker/typo
+    -controlled absolute path anywhere writable. The fix must raise
+    ExperimentError instead, before that open() is ever reached.
+    """
+    outdir = tmp_path / "run"
+
+    with pytest.raises(ExperimentError, match=r"name must not be a path"):
+        evalgen.generate_run(0.2, 7, "/abs", str(outdir))
+
+    assert not outdir.exists()
 
 
 # -- CLI -----------------------------------------------------------------

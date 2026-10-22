@@ -257,9 +257,20 @@ def generate_run(p: float, seed: int, stage: str, outdir: str) -> list[str]:
     that already turns an experiment description into `<name>.yaml` and
     `<name>/<node>.json`, so this module never re-implements that step.
 
+    2026-10-23 (review r1, finding 1) fix: `gen.parse_experiment(raw)` runs
+    here, before any directory is created or any file opened. It used to
+    run only inside `gen.write_experiment`, several lines after the
+    `<outdir>/<name>.experiment.json` write above -- so a `stage` that made
+    `name` escape `outdir` (e.g. "../escaped", or an absolute path, for
+    which `os.path.join` discards `outdir_abspath` entirely) still got
+    rejected, but only after that escaping write had already landed on
+    disk, or outside it.
+
     Returns every path written, experiment description first.
     """
     raw = build_experiment(p, seed, stage, outdir)
+    gen.parse_experiment(raw)  # raises gen.ExperimentError before any filesystem write
+
     outdir_abspath = os.path.abspath(outdir)
     os.makedirs(outdir_abspath, exist_ok=True)
 
