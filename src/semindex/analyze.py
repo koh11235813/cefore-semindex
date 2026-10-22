@@ -160,10 +160,14 @@ def control_bytes(nodes: dict[str, list[dict]]) -> dict:
     for node, events in nodes.items():
         sent = sum(e["control_bytes_sent"] for e in events if e.get("event") == "counters")
         received = sum(e["control_bytes_received"] for e in events if e.get("event") == "counters")
-        per_node[node] = {"bytes_sent": sent, "bytes_received": received}
+        # 2026-10-22 fix: these dict keys were bytes_sent/bytes_received
+        # even though the values are the control-only counters -- a reader of this JSON alone
+        # (no docstring in hand) could misread them as the probe-inflated totals this whole
+        # function exists to exclude.
+        per_node[node] = {"control_bytes_sent": sent, "control_bytes_received": received}
     total = {
-        "bytes_sent": sum(v["bytes_sent"] for v in per_node.values()),
-        "bytes_received": sum(v["bytes_received"] for v in per_node.values()),
+        "control_bytes_sent": sum(v["control_bytes_sent"] for v in per_node.values()),
+        "control_bytes_received": sum(v["control_bytes_received"] for v in per_node.values()),
     }
     return {"per_node": per_node, "total": total}
 

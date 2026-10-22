@@ -142,8 +142,11 @@ def test_control_bytes_sums_every_counters_line_per_node_not_just_the_last():
         ],
     }
     assert control_bytes(nodes) == {
-        "per_node": {"h0": {"bytes_sent": 17, "bytes_received": 8}, "h1": {"bytes_sent": 2, "bytes_received": 1}},
-        "total": {"bytes_sent": 19, "bytes_received": 9},
+        "per_node": {
+            "h0": {"control_bytes_sent": 17, "control_bytes_received": 8},
+            "h1": {"control_bytes_sent": 2, "control_bytes_received": 1},
+        },
+        "total": {"control_bytes_sent": 19, "control_bytes_received": 9},
     }
 
 
@@ -164,8 +167,8 @@ def test_control_bytes_reads_the_control_counters_not_the_probe_inflated_totals(
         ],
     }
     assert control_bytes(nodes) == {
-        "per_node": {"h0": {"bytes_sent": 10, "bytes_received": 5}},
-        "total": {"bytes_sent": 10, "bytes_received": 5},
+        "per_node": {"h0": {"control_bytes_sent": 10, "control_bytes_received": 5}},
+        "total": {"control_bytes_sent": 10, "control_bytes_received": 5},
     }
 
 
@@ -264,7 +267,7 @@ def test_analyze_integrates_every_section(tmp_path: Path):
     assert result["nodes"] == ["h0", "h1"]
     assert result["discovery_latency_ms"] == [{"origin": "h0", "seq": 1, "node": "h1", "latency_ms": 50}]
     assert result["all_nodes_consistent"] == {"per_origin_ts_ms": {"h0": 150}, "overall_ts_ms": 150}
-    assert result["control_bytes"]["total"] == {"bytes_sent": 15, "bytes_received": 5}
+    assert result["control_bytes"]["total"] == {"control_bytes_sent": 15, "control_bytes_received": 5}
     assert len(result["probes"]) == 1
     assert result["probes"][0]["retrieved"]["bytes"] == 42
 
