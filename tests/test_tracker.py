@@ -240,3 +240,106 @@ def test_default_backoff_initial_clears_cefores_pit_grace_window():
     # Strictly after the 1s PIT grace: nothing is due yet at 1.0s.
     assert tracker.plan_fetches("n1", now=1.0) == []
     assert tracker.plan_fetches("n1", now=2.0) == [("h0", 1)]
+
+
+# -- decision-event support (ticket 02: "判断の記録") -----------------------------
+
+
+def test_on_fetch_timeout_returns_the_chosen_wait():
+    """on_fetch_timeout returns the backoff wait it just scheduled, for SyncEngine to log
+    as a `decision` event's action -- a real, in-flight fetch that actually failed."""
+    tracker = Tracker(backoff_initial_s=3.0, jitter=lambda: 0.0)
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    assert tracker.on_fetch_timeout("h0", 1, "n1", now=10.0) == 3.0
+
+
+def test_on_fetch_rejected_returns_the_chosen_wait():
+    """on_fetch_rejected shares _fail with on_fetch_timeout, so it returns the same way."""
+    tracker = Tracker(backoff_initial_s=2.0, jitter=lambda: 0.0)
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    assert tracker.on_fetch_rejected("h0", 1, "n1", now=10.0) == 2.0
+
+
+def test_stale_fetch_timeout_returns_none():
+    """A timeout/rejection that _fail treats as stale (nothing to resolve) returns None, so
+    SyncEngine logs no `decision` event for it -- no choice was actually made."""
+    tracker = Tracker()
+    assert tracker.on_fetch_timeout("never-seen", 1, "n1", now=0.0) is None
+
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    tracker.observe_held("h0", hi=1, extra=())  # satisfied by other means
+    assert tracker.on_fetch_timeout("h0", 1, "n1", now=5.0) is None
+
+
+def test_in_flight_count_reflects_outstanding_fetches_on_a_neighbor():
+    """in_flight_count mirrors plan_fetches'/_fail's own bookkeeping, read-only."""
+    tracker = Tracker()
+    assert tracker.in_flight_count("n1") == 0
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=2, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    assert tracker.in_flight_count("n1") == 2
+    tracker.on_fetch_timeout("h0", 1, "n1", now=0.0)
+    assert tracker.in_flight_count("n1") == 1
+
+
+def test_last_fail_at_is_none_until_a_real_failure_then_tracks_it():
+    """last_fail_at(neighbor) is None until _fail actually resolves a failure on it, then
+    holds that failure's `now` -- a stale timeout (see test_stale_fetch_timeout_returns_none)
+    must not set it, since nothing actually failed."""
+    tracker = Tracker()
+    assert tracker.last_fail_at("n1") is None
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    tracker.on_fetch_timeout("h0", 1, "n1", now=7.5)
+    assert tracker.last_fail_at("n1") == 7.5
+
+    # A later stale timeout (already resolved) must not overwrite it.
+    tracker.on_fetch_timeout("h0", 1, "n1", now=99.0)
+    assert tracker.last_fail_at("n1") == 7.5
+
+
+def test_decision_state_reports_per_origin_hi_adv_and_missing():
+    """decision_state(neighbor) summarizes, per origin this tracker knows of: this node's own
+    contiguous hold (`hi`), what `neighbor` itself advertised (`adv`, None if it never did),
+    and the origin's missing count -- plus `neighbor`'s own in_flight count and last_fail_at."""
+    tracker = Tracker()
+    tracker.observe_held("h0", hi=1, extra=())
+    tracker.observe_state("h0", "n1", hi=3, extra=())  # n1 advertised up to 3
+    tracker.observe_held("origin-y", hi=0, extra=())
+    tracker.observe_state("origin-y", "n2", hi=5, extra=())  # n1 never advertised origin-y
+
+    state = tracker.decision_state("n1")
+    assert state == {
+        "in_flight": 0,
+        "last_timeout_s": None,
+        "truncated": False,
+        "origins": {
+            "h0": {"hi": 1, "adv": 3, "missing": 2},
+            "origin-y": {"hi": 0, "adv": None, "missing": 5},
+        },
+    }
+
+
+def test_decision_state_truncates_beyond_the_origin_cap():
+    """decision_state caps how many origins it reports (DECISION_STATE_MAX_ORIGINS, lowest
+    name first) so a `decision` event's size cannot grow with how many origins a run
+    tracks; `truncated` says whether any were left out."""
+    tracker = Tracker()
+    cap = Tracker.DECISION_STATE_MAX_ORIGINS
+    for i in range(cap + 3):
+        origin = f"o{i:02d}"
+        tracker.observe_held(origin, hi=0, extra=())
+        tracker.observe_state(origin, "n1", hi=1, extra=())
+
+    state = tracker.decision_state("n1")
+    assert state["truncated"] is True
+    assert sorted(state["origins"]) == [f"o{i:02d}" for i in range(cap)]
+    assert len(state["origins"]) == cap
