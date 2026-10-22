@@ -795,21 +795,37 @@ def test_a_second_life_on_the_same_state_dir_creates_no_duplicate_records_and_re
 
 def test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_step(tmp_path: Path):
     """Once elapsed time reaches stop_at_s, run() stops -- same final-counters-then-
-    close shutdown a real SIGTERM's run() loop does -- but the step that first
-    notices the deadline sends nothing: only the state-request Interest from the
-    one earlier step (elapsed=0.3, strictly before stop_at_s=0.5) ever goes out.
+    close shutdown a real SIGTERM's run() loop does.
+
+    state_poll_interval_s=0.3 (jitter_frac=0, so exactly 0.3, not +/-20%) and the
+    handle's clock advancing 0.3s per poll() put a state-poll due at exactly
+    0.3 and another at exactly 0.6 -- the same instant stop_at_s=0.6 is reached.
+    Step 1 (pre-poll elapsed 0.0, < 0.6) polls to 0.3 and sends the first poll.
+    Step 2 (pre-poll elapsed 0.3, still < 0.6 -- the check runs *before* this
+    step's own poll, not after) polls to 0.6 and sends the second poll: this
+    step is allowed to finish normally even though its own poll lands exactly
+    on the deadline, the same way a step already in progress when SIGTERM
+    arrives is allowed to finish. Step 3 (pre-poll elapsed 0.6, >= 0.6) is the
+    one that actually notices the deadline, and sends nothing at all -- if the
+    check instead ran *after* poll/tick, step 2 would stop before ever ticking
+    and only one Interest (not two) would have gone out.
     """
     clock = _FakeClock(0.0)
     handle = _FakeHandle([], clock=clock, step_s=0.3)
-    config = _config(tmp_path, neighbors=["h1"], stop_at_s=0.5)
+    config = _config(
+        tmp_path, neighbors=["h1"], stop_at_s=0.6, state_poll_interval_s=0.3, state_poll_jitter_frac=0.0
+    )
     agent = build_agent(config, handle, clock=clock)
 
-    agent.run()  # step 1 (elapsed 0->0.3): sends the poll; step 2 (elapsed 0.3->0.6... but 0.3>=0.5 is false,
-    # so step 2 also runs, advancing to 0.6; step 3 (elapsed 0.6) is >= 0.5: stops without polling again.
+    agent.run()
 
-    assert len(handle.sent_interests) == 1
-    state_name = handle.sent_interests[0][0]
-    expected_bytes = len(state_name.encode("utf-8"))
+    # Exactly two poll() calls happened: a third would have ticked the clock to
+    # 0.9 and sent a third Interest once the next 0.3s interval elapsed.
+    assert len(handle.receive_timeout_calls) == 2
+    assert clock.value == 0.6
+
+    assert len(handle.sent_interests) == 2
+    sent_bytes = sum(len(name.encode("utf-8")) for name, _, _ in handle.sent_interests)
 
     events_path = Path(config.state_dir) / "events.jsonl"
     lines = [json.loads(line) for line in events_path.read_text().splitlines()]
@@ -820,7 +836,7 @@ def test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_ste
         counters[0]["bytes_received"],
         counters[0]["control_bytes_sent"],
         counters[0]["control_bytes_received"],
-    ) == (expected_bytes, 0, expected_bytes, 0)
+    ) == (sent_bytes, 0, sent_bytes, 0)
 
 
 def test_a_relaunched_life_with_stop_at_s_already_past_stops_immediately(tmp_path: Path):
