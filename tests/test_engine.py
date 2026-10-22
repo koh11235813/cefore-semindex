@@ -355,3 +355,29 @@ def test_on_fetch_timeout_releases_the_fetch_for_retry(tmp_path: Path):
     # retry (fetch_backoff_initial_s pinned to 1.0 above) should fire at now=1.0.
     engine.on_tick(now=1.0)
     assert transport.sent == [(fetch_name, engine._config.interest_lifetime_ms)]
+
+
+def test_default_fetch_backoff_initial_clears_cefores_pit_grace_window(tmp_path: Path):
+    """Pins SyncConfig's own live default (2026-10-23: 2s, not 1s) -- the production value the
+    agent actually runs with (engine.py passes config.fetch_backoff_initial_s straight to the
+    Tracker; see tracker.py's identical pin of its own DEFAULT_BACKOFF_INITIAL_S). The first
+    same-name retry after a fetch_timeout must not be planned before 2s: a 1s retry would land
+    inside Cefore v0.12's own 1s PIT grace window after an expired Interest and be silently
+    absorbed there, never reaching the producer at all."""
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))  # no override: exercises SyncConfig's own default
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)  # claims the fetch for origin-x/1 against h1
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+    assert fetch_name in [n for n, _ in transport.sent]
+    transport.sent.clear()
+
+    engine.on_fetch_timeout(fetch_name, now=0.0)
+
+    # Strictly after the 1s PIT grace: nothing is due yet at 1.0s (the
+    # state poll isn't due again yet either -- its own interval is also
+    # 2.0s by default).
+    engine.on_tick(now=1.0)
+    assert transport.sent == []
+
+    engine.on_tick(now=2.0)
+    assert fetch_name in [n for n, _ in transport.sent]

@@ -236,10 +236,12 @@ class Tracker:
         """A fetch sent to `neighbor` for (origin, seq) got no reply in time.
 
         Releases the in-flight slot and waits the *current* backoff
-        before the next attempt (map.md "再送間隔 1 秒から倍々、16 秒で
-        頭打ち": the first wait is 1 s, not 2 s), doubling the backoff
-        for the attempt after that, capped. A timeout for a fetch
-        already resolved or reassigned elsewhere is stale and ignored.
+        before the next attempt (map.md "再送間隔 ... 倍々、16 秒で頭打
+        ち": the wait is the backoff already in effect for this attempt,
+        not the doubled value computed for the attempt after it), doubling
+        the backoff for the attempt after that, capped. A timeout for a
+        fetch already resolved or reassigned elsewhere is stale and
+        ignored.
         """
         self._fail(origin, seq, neighbor, now)
 
