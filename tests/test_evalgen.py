@@ -24,7 +24,11 @@ def test_build_experiment_has_the_fixed_five_host_line_topology():
     assert raw["links"] == [[0, 1], [1, 2], [2, 3], [3, 4]]
     assert raw["agents"] == [0, 1, 2, 3, 4]
     assert raw["publisher"]["host"] == 0
-    assert raw["duration"] == 120
+    # 2026-10-23 review r1 (finding 2): the submitted "duration" is the
+    # measured window (DURATION_S, 120) plus a pure post-measurement
+    # teardown cushion (TEARDOWN_MARGIN_S, 5) -- 125, not 120. See
+    # TEARDOWN_MARGIN_S's comment in evalgen.py.
+    assert raw["duration"] == 125
 
 
 def test_build_experiment_puts_30_records_on_h0_and_h4_only():
@@ -223,17 +227,23 @@ def test_every_link_up_follows_its_link_down_and_every_down_is_restored_by_the_e
             assert up_at <= evalgen.DISCONNECT_WINDOW_S
 
 
-def test_link_events_stay_inside_the_disconnect_window_with_margin_to_spare():
-    """Link events stay inside the disconnect window with margin to spare.
+def test_link_events_stay_inside_the_measured_window_with_teardown_margin_to_spare():
+    """Link events stay inside the measured window, with a teardown margin to spare.
 
-    Every event must land at or before DISCONNECT_WINDOW_S, not just
-    DURATION_S -- that gap (LINK_EVENT_SAFETY_MARGIN_S) is what keeps a
-    restoring link_up from racing disaster.py's teardown sleep (see
-    evalgen.py's LINK_EVENT_SAFETY_MARGIN_S comment).
+    2026-10-23 review r1 (finding 2): disconnect slots are now drawn over
+    the FULL measured window (DISCONNECT_WINDOW_S == DURATION_S, all
+    NUM_SLOTS=24 of them) -- no event, even at p=0.4's worst case, ever
+    lands past DISCONNECT_WINDOW_S. The teardown cushion this run still
+    needs (so a restoring link_up at the very end can't race disaster.py's
+    teardown sleep) now comes entirely from the submitted "duration" being
+    TEARDOWN_MARGIN_S longer than DISCONNECT_WINDOW_S, not from shrinking
+    the window p is drawn over (see TEARDOWN_MARGIN_S's comment in
+    evalgen.py for why the earlier version's shrunk window was wrong).
     """
     raw = evalgen.build_experiment(0.4, 11, "s1", "/out")
     for e in raw["events"]:
         assert 0 <= e["at"] <= evalgen.DISCONNECT_WINDOW_S
+    assert raw["duration"] == evalgen.DISCONNECT_WINDOW_S + evalgen.TEARDOWN_MARGIN_S
 
 
 # -- disconnect schedule: statistical bounds ----------------------------------
@@ -243,16 +253,19 @@ def test_link_events_stay_inside_the_disconnect_window_with_margin_to_spare():
 # `evalgen.NUM_SLOTS` slots per link, the observed down-fraction is the mean
 # of NUM_SEEDS * len(LINKS) * NUM_SLOTS i.i.d. Bernoulli(p) trials. Its
 # standard error is sqrt(p*(1-p)/n); the worst case over the tested p values
-# (p=0.4, variance 0.24) with n = 150 * 4 * 23 = 13800 gives SE ~= 0.0042. The
+# (p=0.4, variance 0.24) with n = 150 * 4 * 24 = 14400 gives SE ~= 0.0041. The
 # tolerance below (0.03) is about 7 SE, so a correct implementation fails
 # this bound with negligible probability while a broken one (e.g. a biased
 # or constant-probability draw) is still caught.
 #
-# The denominator is DISCONNECT_WINDOW_S (where disconnection is actually
-# drawn), not DURATION_S -- the always-up safety-margin tail at the end of
-# the run is not part of what `p` parameterizes, so including it would bias
-# every observed fraction low by a fixed DISCONNECT_WINDOW_S/DURATION_S
-# factor regardless of how correct the draw itself is.
+# 2026-10-23 review r1 (finding 2): the denominator is DISCONNECT_WINDOW_S,
+# which now equals the full DURATION_S (24 slots, not a shrunk 23) -- p is
+# drawn over the whole measured run, with no excluded tail. The earlier
+# version's DISCONNECT_WINDOW_S was DURATION_S minus a safety margin, which
+# would have biased every observed fraction low by a fixed factor
+# regardless of how correct the draw itself was; the margin now lives
+# entirely in the gap between DISCONNECT_WINDOW_S and the submitted
+# "duration" (TEARDOWN_MARGIN_S), outside what this statistic measures.
 NUM_SEEDS = 150
 
 

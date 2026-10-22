@@ -55,37 +55,40 @@ PROBE_START_S = 5.0
 
 # Run length (map.md "run の長さは、生成が終わってから 60 秒の余裕を取って、
 # およそ 120 秒"): last record at RECORD_START_S + (RECORD_COUNT-1)*RECORD_INTERVAL_S
-# = 3 + 58 = 61s, so 120s leaves ~59s of margin after generation ends.
+# = 3 + 58 = 61s, so 120s leaves ~59s of margin after generation ends. This
+# is the MEASURED window (record/probe timing, disconnect fraction); the
+# "duration" ReCefore is actually asked to run is RECEFORE_DURATION_S,
+# longer than this by a pure teardown cushion (see that constant).
 DURATION_S = 120
 
 # Disconnect schedule (map.md "切断の起こし方"): one Bernoulli(p) draw per
-# link per 5s slot, independent per link and slot.
-#
-# 2026-10-23: the disconnectable window stops LINK_EVENT_SAFETY_MARGIN_S
-# before DURATION_S, not at it. Read via disaster.py (our config is
-# autotest mode: `no_cli` + `results_json`): when `duration > 0` it does
-# `time.sleep(duration)` then tears the scenario down immediately, with NO
-# call to EventScheduler.wait_all() to drain the heap first (that call
-# only happens in the `duration == 0` branch). The eval EventScheduler is
-# started with `start_time=origin` -- the same `origin` the generation
-# phase (one put, one warmup get) already ran against before that sleep
-# was even reached -- so an event at `at == duration` fires at
-# `origin + duration`, while teardown begins at
-# `origin + <seed/warmup wall time> + duration`. The margin before this
-# fix was that unmeasured seed/warmup wall time: real, but accidental and
-# un-guaranteed (a slow warmup get could shrink or erase it). With p=0.4,
-# P(at least one of the 4 links still down in the final slot) =
-# 1-(1-p)**4 ~= 0.87, so most p=0.4 runs would lean entirely on that
-# accident to avoid a restoring link_up racing teardown. This constant
-# replaces the accident with an explicit, guaranteed 5s: leaving the last
-# slot's width always-up means that by the time sleep(duration) returns,
-# the event thread has had at least this long to finish handling
-# anything scheduled before it.
+# link per 5s slot, independent per link and slot, over the WHOLE measured
+# window DURATION_S -- map.md's "落ちている時間の割合の期待値が p になる" and
+# ticket 03's acceptance ("p を大きくすると落ちている時間の割合が p に近づく")
+# both say this about the run, not about some sub-window of it.
 DISCONNECT_SLOT_S = 5.0
-LINK_EVENT_SAFETY_MARGIN_S = 5.0
-DISCONNECT_WINDOW_S = DURATION_S - LINK_EVENT_SAFETY_MARGIN_S
+DISCONNECT_WINDOW_S = DURATION_S
 assert DISCONNECT_WINDOW_S % DISCONNECT_SLOT_S == 0, "DISCONNECT_WINDOW_S must be a whole number of slots"
 NUM_SLOTS = int(DISCONNECT_WINDOW_S / DISCONNECT_SLOT_S)
+
+# 2026-10-23 (review r1, finding 2) fix: an earlier version shrank
+# DISCONNECT_WINDOW_S to DURATION_S - 5 instead, which bought the same
+# teardown margin by silently changing the ticket's own disconnect model
+# (p no longer applied to the whole run) -- a reviewer caught it. Read via
+# disaster.py (our config is autotest mode: `no_cli` + `results_json`):
+# when `duration > 0` it does `time.sleep(duration)` then tears the
+# scenario down immediately, with NO call to EventScheduler.wait_all() to
+# drain the heap first (that call only happens in the `duration == 0`
+# branch) -- so an event scheduled at exactly `at == duration` races that
+# teardown. The fix below never schedules anything at `at == duration`:
+# every link event stays inside DISCONNECT_WINDOW_S (now the *whole*
+# measured run), and the experiment instead asks ReCefore to run
+# TEARDOWN_MARGIN_S longer than that -- a cushion appended AFTER
+# measurement ends, not carved out of it. Nothing this module measures
+# (disconnect fraction, record/probe timing) ever runs during that
+# appended cushion.
+TEARDOWN_MARGIN_S = 5  # int: gen.parse_experiment requires "duration" to be an int, not a float
+RECEFORE_DURATION_S = DURATION_S + TEARDOWN_MARGIN_S
 
 # The publisher body (map.md "本体を put する publisher は h0 の 1 台だけ
 # （生成器の制約）"): h0 is both the sole put publisher and an Index origin.
@@ -220,8 +223,10 @@ def _link_events(seed: int, p: float) -> list[dict]:
     link_down/link_up pair. A sentinel "up" slot appended past the last
     real slot closes any run still open at NUM_SLOTS, so every down
     interval is restored by `at <= DISCONNECT_WINDOW_S` -- never left
-    dangling, and always with LINK_EVENT_SAFETY_MARGIN_S to spare before
-    DURATION_S (see that constant's comment for why the margin exists).
+    dangling. All of this happens inside DISCONNECT_WINDOW_S (the whole
+    measured run); the separate teardown cushion that keeps a restoring
+    link_up from racing disaster.py's teardown lives in RECEFORE_DURATION_S
+    instead (see that constant's comment for why).
 
     2026-10-23 (review r1, finding 3): each link's rng stream is seeded
     from (seed, purpose) only, never p (see `_derive_seed`) -- so the same
@@ -269,7 +274,11 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
         "group": name,
         "hosts": HOSTS,
         "links": [list(pair) for pair in LINKS],
-        "duration": DURATION_S,
+        # RECEFORE_DURATION_S, not DURATION_S: ReCefore must run
+        # TEARDOWN_MARGIN_S longer than the measured window so no event
+        # (the last possible link_up included) ever sits at `at == duration`
+        # (see RECEFORE_DURATION_S's comment).
+        "duration": RECEFORE_DURATION_S,
         "output_dir": os.path.abspath(outdir),
         "agents": list(AGENTS),
         "publisher": {
