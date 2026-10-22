@@ -1,25 +1,26 @@
 # Two-host live-run kit for the cefpyco transport + agent (ADR-0002).
 #
-# Runs on an INTEGRATION checkout of ReCefore that merges three branches
-# that do not yet share a common ancestor as of 2026-10-22:
-#   - feat/host-apps      (host_apps:, the {node}/{node_dir}/{cefore_conf_dir}/{t0_ms}
-#                           placeholders)
-#   - feat/explicit-links  (links:, explicit topology instead of the seeded random mesh)
-#   - feat/prefix-routes  (prefix_routes:, FIB routes toward a registered prefix) --
-#                           this branch has no implementation committed yet as of
-#                           2026-10-22, so the `prefix_routes:` shape below is taken
-#                           directly from this baseline's own spec text (map.md), not
-#                           from a merged implementation. If that branch's final shape
-#                           differs, this key is the one to re-check first.
+# 2026-10-22 fix: runs on /home/lab_shared/wt/recefore-prefix-routes, which
+# as of this date holds host_apps + explicit links + prefix_routes all
+# merged together (the three branches this kit originally needed stitched
+# by hand, now one checkout):
+#   - host_apps:      the {node}/{node_dir}/{cefore_conf_dir}/{t0_ms} placeholders
+#   - links:          explicit topology instead of the seeded random mesh
+#   - prefix_routes:  FIB routes toward a registered prefix -- shape is
+#                      {ccnx:/prefix: host index}; every host other than
+#                      the named one gets a one-directional route toward
+#                      it (that repo's src/core/config/validator.py's own
+#                      _validate_prefix_routes), which is exactly the
+#                      shape used below.
 #
-# Usage (from the integration checkout's own root, which must also hold
-# ./sample-putfile):
+# Usage (from /home/lab_shared/wt/recefore-prefix-routes, which must also
+# hold ./sample-putfile):
 #   sudo .venv/bin/python3 -m src disaster \
 #       --config /home/lab_shared/cefore-semindex/examples/two_host_sync.yaml
 #
 # ORCHESTRATOR MUST RUN
 #
-# 1. Run the scenario (from the integration checkout's own root):
+# 1. Run the scenario (from /home/lab_shared/wt/recefore-prefix-routes):
 #      sudo .venv/bin/python3 -m src disaster \
 #          --config /home/lab_shared/cefore-semindex/examples/two_host_sync.yaml
 #
@@ -38,11 +39,12 @@
 #    checker's own exit code is 0 (1 means at least one assertion
 #    printed FAIL above; 2 means the two paths above were wrong).
 #
-# What this proves (map.md's T1, scaled to 2 hosts, no partition): h0 and
-# h1 are direct neighbors; h0 creates 3 Index records (all describing the
-# same real content body, published below via ReCefore's own `put`), h1
-# creates 2; both sides' Sync agents converge so each holds the other's
-# records; h1 then probes by an attrs value only h0's records have
+# What this proves (map.md's T1, scaled to 2 Sync-agent hosts plus one
+# idle router (h2), no partition): h0 and h1 are direct neighbors; h0
+# creates 3 Index records (all describing the same real content body,
+# published below via ReCefore's own `put`), h1 creates 2; both sides'
+# Sync agents converge so each holds the other's records; h1 then
+# probes by an attrs value only h0's records have
 # (zone=zone1) and retrieves that content body in full. See
 # check_events.py for the exact pass/fail assertions against the
 # resulting events.jsonl files.
@@ -52,7 +54,7 @@
 # sides well within 24 more seconds even allowing for host_apps starting
 # a few seconds after t0 with no readiness hook. h1's probe at t=30s and
 # this scenario's duration=45s leave a wide margin either side of that.
-hosts: 2
+hosts: 3
 seed: 42
 k: 1
 num: 9906
@@ -62,8 +64,14 @@ duration: 45
 results_json: "results.json"
 publisher_host: 0
 
+# h2 is a third, idle host: host_apps below only starts the Sync agent on
+# 0 and 1, and prefix_routes below only names those two, so h2 runs no
+# application and is not a sync participant -- it sits on the far side of
+# h1 on the link below, past where anything in this scenario reaches, so
+# h0/h1 stay direct neighbors and nothing here routes through it.
 links:
   - [0, 1]
+  - [1, 2]
 
 prefix_routes:
   "ccnx:/semidx/demo/h0": 0
@@ -77,15 +85,22 @@ debug:
 # h1's probe can actually retrieve, since h1 never creates a record for
 # it and nothing else in this scenario calls `put`.
 #
-# Caveat: no_cli + results_json puts this run in autotest mode, whose
-# warmup phase prefetches every put URI onto every cache node before any
-# host_apps process starts -- with publisher_host 0, h1 is such a node,
-# so h1's Content Store may well already hold this body before the Sync
-# agent ever fetches it by name. A successful probe_retrieved still
-# proves the chunked-fetch code path end to end; it does not by itself
-# prove the body crossed the h0-h1 link only because the agent asked for
-# it. min_explicit_line.yaml's `warmup_gets:` (restricted to a host that
-# is not h1) is the fix, left out here pending that choice.
+# 2026-10-22 fix: no_cli + results_json puts this run in autotest mode,
+# whose warmup phase by default prefetches every put URI onto every cache
+# node before any host_apps process starts -- with publisher_host 0, h1
+# is such a node by default, so h1's Content Store would already hold
+# this body before the Sync agent ever fetched it by name, and a
+# successful probe_retrieved would prove only the chunked-fetch code path
+# end to end, not that the body actually crossed the h0-h1 link because
+# the agent asked for it. warmup_gets below replaces that default (every
+# put URI x every cache host) with the one get that is harmless to run
+# early: h0 fetching its own just-published body from itself. That keeps
+# h1's Content Store empty going into the Sync agent phase, so
+# probe_retrieved there can only succeed through the agent's own fetch.
+warmup_gets:
+  - host: 0
+    uri: "ccnx:/content/h0/body"
+
 events:
   - at: 0
     type: put

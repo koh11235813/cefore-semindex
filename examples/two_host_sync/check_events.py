@@ -76,7 +76,7 @@ def run(h0_path: str, h1_path: str) -> int:
         f"seqs stored: {sorted(e['seq'] for e in h0_stored_h1)}",
     )
     ok &= _check(
-        "h0's stored h1 records all came from holder h1 (the direct neighbor; no relay in a 2-host run)",
+        "h0's stored h1 records all came from holder h1 (the direct neighbor; h2 runs no Sync agent, so there is no relay)",
         all(e["holder"] == "h1" for e in h0_stored_h1),
         f"holders seen: {sorted({e['holder'] for e in h0_stored_h1})}",
     )
@@ -88,7 +88,7 @@ def run(h0_path: str, h1_path: str) -> int:
         f"seqs stored: {sorted(e['seq'] for e in h1_stored_h0)}",
     )
     ok &= _check(
-        "h1's stored h0 records all came from holder h0 (the direct neighbor; no relay in a 2-host run)",
+        "h1's stored h0 records all came from holder h0 (the direct neighbor; h2 runs no Sync agent, so there is no relay)",
         all(e["holder"] == "h0" for e in h1_stored_h0),
         f"holders seen: {sorted({e['holder'] for e in h1_stored_h0})}",
     )
