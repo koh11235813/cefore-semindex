@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import sys
 import time
@@ -353,6 +354,19 @@ def load_config(
     return validate_config(merged)
 
 
+def _poll_jitter_rng(node: str) -> Callable[[], float]:
+    """Build the [0, 1) jitter source for one node's state-poll timing (map.md "2 秒 ±20%").
+
+    Seeded from the node's own name (random.Random(str) hashes it with
+    SHA-512 internally, so this is stable across processes and
+    independent of PYTHONHASHSEED): two agents in the same run draw
+    different jitter sequences and so poll on different offsets from the
+    2s grid, while the same node name always reproduces the exact same
+    sequence from one run to the next.
+    """
+    return random.Random(node).random
+
+
 def build_sync_config(config: AgentConfig) -> SyncConfig:
     """Build the SyncEngine's own SyncConfig from an AgentConfig, applying its timing overrides."""
     return SyncConfig(
@@ -527,7 +541,9 @@ def build_agent(config: AgentConfig, handle: CefpycoHandle, *, clock: Callable[[
     os.makedirs(config.state_dir, exist_ok=True)
     store = Store(os.path.join(config.state_dir, "index.db"))
     transport = CefpycoTransport(handle, clock=clock, receive_timeout_ms=config.receive_timeout_ms)
-    engine = SyncEngine(build_sync_config(config), store, transport)
+    engine = SyncEngine(
+        build_sync_config(config), store, transport, poll_jitter_rng=_poll_jitter_rng(config.node)
+    )
     transport.engine = engine
     events = EventWriter(os.path.join(config.state_dir, "events.jsonl"), clock=clock)
     return Agent(config, engine, store, transport, events)

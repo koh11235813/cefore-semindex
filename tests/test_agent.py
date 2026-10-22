@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import signal
 import sqlite3
 from pathlib import Path
@@ -13,6 +14,7 @@ from semindex import holder_state, names, schema
 from semindex.agent import (
     ConfigError,
     ScheduledProbe,
+    _poll_jitter_rng,
     build_agent,
     build_sync_config,
     install_signal_handlers,
@@ -360,16 +362,104 @@ def test_run_exits_and_shuts_down_cleanly_once_stop_is_requested(tmp_path: Path)
 
 
 def test_install_signal_handlers_requests_a_stop_without_raising(tmp_path: Path):
-    """SIGTERM calls request_stop() rather than the default terminate-the-process behavior."""
+    """SIGTERM calls request_stop() rather than the default terminate-the-process behavior.
+
+    Restores pytest's own prior SIGTERM/SIGINT handlers afterward (captured via
+    signal.getsignal, not assumed to be SIG_DFL): leaving SIGINT on the OS default
+    would make a later Ctrl-C raise KeyboardInterrupt instead of pytest's own handling.
+    """
+    import os
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    previous_sigint = signal.getsignal(signal.SIGINT)
     handle = _FakeHandle()
     config = _config(tmp_path)
     agent = build_agent(config, handle, clock=_FakeClock(0.0))
     install_signal_handlers(agent)
     try:
-        import os
-
         os.kill(os.getpid(), signal.SIGTERM)
         assert agent._stop_requested is True
     finally:
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        signal.signal(signal.SIGINT, previous_sigint)
+
+
+def test_poll_jitter_rng_is_deterministic_per_node_and_differs_across_nodes():
+    """The same node name reproduces the exact same jitter sequence every time; a
+    different node name draws a different one -- map.md "2 秒 ±20%" needs real
+    per-neighbor jitter, not two hosts polling in exact lockstep, but a run must
+    still be reproducible from the node names alone.
+    """
+    first_h0 = [_poll_jitter_rng("h0")() for _ in range(5)]
+    second_h0 = [_poll_jitter_rng("h0")() for _ in range(5)]
+    assert first_h0 == second_h0
+
+    h1 = [_poll_jitter_rng("h1")() for _ in range(5)]
+    assert first_h0 != h1
+
+
+def test_build_agent_seeds_the_engine_s_poll_jitter_from_the_node_name(tmp_path: Path):
+    """build_agent must not leave the engine's poll_jitter_rng at SyncEngine's own
+    zero-jitter default (lambda: 0.5), or every agent would poll on the exact same grid.
+    """
+    handle = _FakeHandle()
+    config = _config(tmp_path)
+    agent = build_agent(config, handle, clock=_FakeClock(0.0))
+    assert agent._engine._poll_jitter_rng() == random.Random(config.node).random()
+
+
+def test_two_agents_converge_their_stores_over_cross_wired_fake_handles(tmp_path: Path):
+    """Two agents, each driven by its own fake handle that this test manually bridges to
+    the other's, converge: h0's own record reaches h1 and h1's reaches h0, through the
+    real engine, store and CefpycoTransport end to end on both sides -- not just one leg
+    of the round trip tested in isolation, as the other tests in this file do.
+    """
+    clock = _FakeClock(0.0)
+    handle0 = _FakeHandle()
+    handle1 = _FakeHandle()
+    config0 = _config(
+        tmp_path / "h0",
+        node="h0",
+        neighbors=["h1"],
+        schedule=[
+            {"at_s": 0, "content_name": "ccnx:/content/h0/a", "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+    )
+    config1 = _config(
+        tmp_path / "h1",
+        node="h1",
+        neighbors=["h0"],
+        schedule=[
+            {"at_s": 0, "content_name": "ccnx:/content/h1/a", "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+    )
+    agent0 = build_agent(config0, handle0, clock=clock)
+    agent1 = build_agent(config1, handle1, clock=clock)
+
+    def _bridge(sender: _FakeHandle, receiver: _FakeHandle) -> None:
+        """Deliver everything `sender` has sent since the last bridge call into `receiver`'s queue."""
+        while sender.sent_interests:
+            name, _chunk_num, _lifetime = sender.sent_interests.pop(0)
+            receiver.packets.append(_FakePacket(is_interest=True, name=name))
+        while sender.sent_data:
+            name, payload, _chunk_num, _expiry, _cache_time = sender.sent_data.pop(0)
+            receiver.packets.append(_FakePacket(is_data=True, name=name, payload=payload))
+
+    for _round in range(10):
+        # Drain each side's queue fully before bridging again: step() reads at most one
+        # packet per call, so a round that only steps once per side would let the queue
+        # grow without bound instead of ever catching up to what the other side just sent.
+        while handle0.packets:
+            agent0.step()
+        while handle1.packets:
+            agent1.step()
+        agent0.step()  # also let on_tick fire once with an empty queue, to plan new fetches
+        agent1.step()
+        _bridge(handle0, handle1)
+        _bridge(handle1, handle0)
+        clock.value += 3.0  # past state_poll_interval_s even at its full +20% jitter
+
+    assert agent0._store.get_progress("h1").hi == 1
+    assert agent1._store.get_progress("h0").hi == 1
+    assert agent0._store.get_record("h1", 1) == agent1._store.get_record("h1", 1)
+    assert agent1._store.get_record("h0", 1) == agent0._store.get_record("h0", 1)
