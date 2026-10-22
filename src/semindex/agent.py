@@ -86,6 +86,8 @@ class AgentConfig:
     chunk_lifetime_ms: int
     # t0-relative seconds; None means never stop early (run until SIGTERM/SIGINT).
     stop_at_s: float | None
+    # t0-relative seconds, strictly increasing; empty means no mid-run snapshots.
+    counters_snapshot_at_s: tuple[float, ...]
 
 
 # The SyncConfig fields an agent config may override; map.md's "時間・サ
@@ -126,7 +128,10 @@ _REQUIRED_KEYS = (
     "probes",
 )
 _ALLOWED_KEYS = (
-    frozenset(_REQUIRED_KEYS) | {"fault", "stop_at_s"} | set(_SYNC_OVERRIDE_KEYS) | set(_AGENT_NUMERIC_KEYS)
+    frozenset(_REQUIRED_KEYS)
+    | {"fault", "stop_at_s", "counters_snapshot_at_s"}
+    | set(_SYNC_OVERRIDE_KEYS)
+    | set(_AGENT_NUMERIC_KEYS)
 )
 
 _SCHEDULE_ENTRY_REQUIRED = ("at_s", "content_name", "zone", "disaster", "media")
@@ -274,6 +279,27 @@ def _validate_fault(raw: dict) -> dict[tuple[str, int], int]:
     return result
 
 
+def _validate_counters_snapshot_at_s(raw: dict) -> tuple[float, ...]:
+    """Validate the optional top-level `counters_snapshot_at_s` key: a strictly
+    increasing list of t0-relative seconds (each >= 0), one counters_snapshot
+    event per entry (Agent._drain_counters_snapshots). Absent entirely means
+    none are scheduled -- the same "a key left out just keeps doing nothing new"
+    convention as every other optional config key here.
+    """
+    if "counters_snapshot_at_s" not in raw:
+        return ()
+    raw_list = raw["counters_snapshot_at_s"]
+    if not isinstance(raw_list, list):
+        raise ConfigError("counters_snapshot_at_s must be a list")
+    result: list[float] = []
+    for idx, value in enumerate(raw_list):
+        _check_numeric(f"counters_snapshot_at_s[{idx}]", value, float)
+        if result and value <= result[-1]:
+            raise ConfigError("counters_snapshot_at_s must be strictly increasing")
+        result.append(float(value))
+    return tuple(result)
+
+
 def validate_config(raw) -> AgentConfig:
     """Validate a merged config dict (JSON file plus any CLI overrides) and build the AgentConfig it describes.
 
@@ -335,6 +361,8 @@ def validate_config(raw) -> AgentConfig:
         _check_numeric("stop_at_s", stop_at_s_raw, float)
     stop_at_s = float(stop_at_s_raw) if stop_at_s_raw is not None else None
 
+    counters_snapshot_at_s = _validate_counters_snapshot_at_s(raw)
+
     sync_overrides: dict[str, float | int] = {}
     for key, kind in _SYNC_OVERRIDE_KEYS.items():
         if key in raw:
@@ -359,6 +387,7 @@ def validate_config(raw) -> AgentConfig:
         receive_timeout_ms=raw.get("receive_timeout_ms", DEFAULT_RECEIVE_TIMEOUT_MS),
         chunk_lifetime_ms=raw.get("chunk_lifetime_ms", DEFAULT_CHUNK_LIFETIME_MS),
         stop_at_s=stop_at_s,
+        counters_snapshot_at_s=counters_snapshot_at_s,
     )
 
 
@@ -514,6 +543,19 @@ class Agent:
 
         self._stop_at_s = config.stop_at_s
 
+        # counters_snapshot_at_s has no store-backed cursor like schedule/probes
+        # above: CefpycoTransport's byte counters are process-local and start at
+        # 0 every life, so re-emitting a "past" entry on restart would report
+        # this life's own fresh-from-zero counters under a timestamp that
+        # belongs to a different life entirely. An entry already past --
+        # strictly before this life's own start, so one landing exactly at this
+        # instant still gets its chance on the very first step -- is dropped
+        # right here, against the transport's own clock, rather than carried
+        # into the per-step drain loop where elapsed time has already
+        # overtaken it.
+        init_elapsed = self._elapsed_s(self._transport.now())
+        self._counters_snapshot_at_s = [t for t in config.counters_snapshot_at_s if t >= init_elapsed]
+
         self._stop_requested = False
 
     def request_stop(self) -> None:
@@ -592,14 +634,41 @@ class Agent:
             }
         )
 
+    def _drain_counters_snapshots(self, now: float) -> None:
+        """Emit one counters_snapshot event for every due entry of config key
+        counters_snapshot_at_s: this life's current byte counters, under the same
+        four fields shutdown()'s own `counters` line uses, but a different event
+        name on purpose -- analyze.py and check.py both key their own counters
+        handling off the exact string "counters", so this needs no special-casing
+        in either to stay invisible to them.
+
+        Called with the clock reading from *before* this step's own poll/tick
+        (see step()), so a snapshot due at exactly this instant reports the
+        counters as they stood at the end of the previous step, not whatever
+        this same step's own tick is about to add.
+        """
+        elapsed = self._elapsed_s(now)
+        while self._counters_snapshot_at_s and self._counters_snapshot_at_s[0] <= elapsed:
+            self._counters_snapshot_at_s.pop(0)
+            self._events.write(
+                {
+                    "event": "counters_snapshot",
+                    "bytes_sent": self._transport.bytes_sent,
+                    "bytes_received": self._transport.bytes_received,
+                    "control_bytes_sent": self._transport.control_bytes_sent,
+                    "control_bytes_received": self._transport.control_bytes_received,
+                }
+            )
+
     def _drain_engine_events(self) -> None:
         """Flush every event the engine has queued since the last drain."""
         for event in self._engine.drain_events():
             self._events.write(event)
 
     def step(self) -> None:
-        """One loop iteration: stop if stop_at_s has been reached, else poll the
-        transport, tick the engine, fire due schedule/probe entries, and flush events.
+        """One loop iteration: emit any due counters_snapshot, stop if stop_at_s has
+        been reached, else poll the transport, tick the engine, fire due
+        schedule/probe entries, and flush events.
 
         2026-10-23: stop_at_s is checked against `now` read *before* poll()/tick,
         and this step does none of that work at all once it is due -- unlike a
@@ -612,8 +681,14 @@ class Agent:
         itself past stop_at_s takes this same early return before ever calling
         poll() or on_tick(), so it stops immediately -- see run()/shutdown()
         for where the final `counters` line actually gets written.
+
+        2026-10-23: counters_snapshot is drained *before* the stop_at_s check,
+        both against the same pre-poll `now` -- an entry due at exactly
+        stop_at_s still gets emitted on this, the last step, before that same
+        step's early return skips everything else.
         """
         now = self._transport.now()
+        self._drain_counters_snapshots(now)
         if self._stop_at_s is not None and self._elapsed_s(now) >= self._stop_at_s:
             self.request_stop()
             return

@@ -256,6 +256,61 @@ def test_validate_config_rejects_a_negative_stop_at_s():
     assert str(exc_info.value) == "stop_at_s must be >= 0"
 
 
+def test_validate_config_defaults_counters_snapshot_at_s_to_empty_when_absent():
+    """counters_snapshot_at_s is not required: a config that omits it schedules no
+    mid-run snapshots."""
+    config = validate_config(_minimal_raw())
+    assert config.counters_snapshot_at_s == ()
+
+
+def test_validate_config_accepts_a_given_counters_snapshot_at_s():
+    """A given, strictly increasing counters_snapshot_at_s reaches the parsed
+    AgentConfig unchanged, as a tuple."""
+    raw = _minimal_raw()
+    raw["counters_snapshot_at_s"] = [10.0, 20.5]
+    config = validate_config(raw)
+    assert config.counters_snapshot_at_s == (10.0, 20.5)
+
+
+def test_validate_config_rejects_a_non_list_counters_snapshot_at_s():
+    """counters_snapshot_at_s must be a list, not a bare number."""
+    raw = _minimal_raw()
+    raw["counters_snapshot_at_s"] = 10.0
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "counters_snapshot_at_s must be a list"
+
+
+def test_validate_config_rejects_a_non_number_counters_snapshot_at_s_entry():
+    """Each counters_snapshot_at_s entry is checked the same way as any other timing value."""
+    raw = _minimal_raw()
+    raw["counters_snapshot_at_s"] = [10.0, "20"]
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "counters_snapshot_at_s[1] must be a number"
+
+
+def test_validate_config_rejects_a_negative_counters_snapshot_at_s_entry():
+    """Each counters_snapshot_at_s entry is t0-relative and must be >= 0."""
+    raw = _minimal_raw()
+    raw["counters_snapshot_at_s"] = [-1.0]
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "counters_snapshot_at_s[0] must be >= 0"
+
+
+def test_validate_config_rejects_a_non_increasing_counters_snapshot_at_s():
+    """Two equal (or out-of-order) entries would make the second never due on its own
+    -- the first drain already consumed it -- so this is rejected rather than
+    silently accepted and then silently short one snapshot.
+    """
+    raw = _minimal_raw()
+    raw["counters_snapshot_at_s"] = [10.0, 10.0]
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "counters_snapshot_at_s must be strictly increasing"
+
+
 def test_load_config_applies_cli_overrides_onto_the_file(tmp_path: Path):
     """--node/--t0-ms/--cefore-conf-dir/--state-dir override whatever the file holds for
     those four keys -- ReCefore host_apps only knows them at scenario-start time, so a
@@ -802,6 +857,109 @@ def test_a_relaunched_life_with_stop_at_s_already_past_stops_immediately(tmp_pat
         second_life[0]["control_bytes_sent"],
         second_life[0]["control_bytes_received"],
     ) == (0, 0, 0, 0)
+
+
+def test_counters_snapshot_fires_once_per_entry_when_its_time_comes(tmp_path: Path):
+    """Each counters_snapshot_at_s entry emits exactly one counters_snapshot event,
+    not before its own at_s and not more than once."""
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle()  # no neighbors, no clock wiring: fully manual timing
+    config = _config(tmp_path, counters_snapshot_at_s=[0.5, 1.0])
+    agent = build_agent(config, handle, clock=clock)
+    events_path = Path(config.state_dir) / "events.jsonl"
+
+    clock.value = 0.3
+    agent.step()
+    assert events_path.read_text() == ""  # neither entry is due yet
+
+    clock.value = 0.5
+    agent.step()
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [e["event"] for e in lines] == ["counters_snapshot"]
+
+    clock.value = 1.0
+    agent.step()
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [e["event"] for e in lines] == ["counters_snapshot", "counters_snapshot"]
+
+
+def test_counters_snapshot_reports_this_lifes_current_byte_counters(tmp_path: Path):
+    """A counters_snapshot event's four byte fields are this life's own transport
+    counters as of the end of the previous step (see _drain_counters_snapshots'
+    own docstring for why not this step's own tick) -- not placeholders, and not
+    the counters at shutdown.
+    """
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle()
+    config = _config(tmp_path, neighbors=["h1"], counters_snapshot_at_s=[1.0])
+    agent = build_agent(config, handle, clock=clock)
+    events_path = Path(config.state_dir) / "events.jsonl"
+
+    clock.value = 0.0
+    agent.step()  # sends the first state-request Interest to h1 (due immediately)
+    bytes_sent_so_far = agent._transport.bytes_sent
+    assert bytes_sent_so_far > 0
+
+    clock.value = 1.0
+    agent.step()  # counters_snapshot_at_s[0]=1.0 fires, drained before this step's own tick
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    snapshots = [e for e in lines if e["event"] == "counters_snapshot"]
+    assert len(snapshots) == 1
+    assert (
+        snapshots[0]["bytes_sent"],
+        snapshots[0]["bytes_received"],
+        snapshots[0]["control_bytes_sent"],
+        snapshots[0]["control_bytes_received"],
+    ) == (bytes_sent_so_far, 0, bytes_sent_so_far, 0)
+    assert snapshots[0]["ts_ms"] == 1000
+
+
+def test_a_counters_snapshot_entry_exactly_at_a_fresh_lifes_start_still_fires(tmp_path: Path):
+    """An entry whose at_s exactly equals elapsed time at construction is not
+    'already past' (strict '<', not '<=' -- see Agent.__init__'s own comment): it
+    is still due on this life's very first step, same as in an uninterrupted run.
+    """
+    clock = _FakeClock(2.0)
+    config = _config(tmp_path, t0_ms=2000, counters_snapshot_at_s=[0.0])  # elapsed at construction: 0.0
+    handle = _FakeHandle()
+    agent = build_agent(config, handle, clock=clock)
+    agent.step()
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [e["event"] for e in lines] == ["counters_snapshot"]
+
+
+def test_a_restarted_life_skips_counters_snapshot_entries_already_past(tmp_path: Path):
+    """counters_snapshot_at_s has no store-backed progress cursor (byte counters are
+    process-local, reset to 0 each life): an entry whose at_s has already elapsed
+    by the time a relaunched life first constructs its Agent must never fire at
+    all in that life -- re-emitting it would report this life's own
+    fresh-from-zero counters under a timestamp that belongs to a different life
+    entirely.
+    """
+    clock = _FakeClock(0.0)
+    config = _config(tmp_path, counters_snapshot_at_s=[1.0, 5.0])
+
+    handle1 = _FakeHandle()
+    agent1 = build_agent(config, handle1, clock=clock)
+    clock.value = 1.0
+    agent1.step()  # the at_s=1.0 entry fires in life 1
+    agent1.shutdown()
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    first_life = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [e["event"] for e in first_life] == ["counters_snapshot", "counters"]
+
+    # Second life: the clock is already at 20s (past both entries) *before* this
+    # life's Agent is even constructed -- the filter must see this life's own
+    # start time, not life 1's.
+    clock.value = 20.0
+    handle2 = _FakeHandle()
+    agent2 = build_agent(config, handle2, clock=clock)
+    agent2.step()
+
+    second_life = [json.loads(line) for line in events_path.read_text().splitlines()][len(first_life) :]
+    assert second_life == []
 
 
 def test_build_agent_fails_at_startup_when_the_schedule_is_shorter_than_the_persisted_own_record_count(
