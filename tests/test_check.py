@@ -848,6 +848,35 @@ def test_check_t2c_protocol_fails_when_holder_keeps_timing_out_long_after_its_re
     ) in out.splitlines()
 
 
+def test_check_t2c_protocol_fails_on_a_timeout_the_first_state_rx_as_anchor_would_have_missed(
+    tmp_path: Path, capsys
+):
+    """2026-10-22 fix (regression): discriminates the grace deadline's own anchor, not merely
+    whether a late fetch_timeout is caught at all. restart_ts (offset 11) + the 2.5s grace puts
+    the deadline at offset 13.5; this timeout at offset 15 lands after it. Anchoring the grace
+    window on the first post-restart state_rx (offset 19, as check.py's own comment above warns
+    against) instead of restart_ts would put the deadline at offset 21.5 -- after this timeout --
+    and miss it, producing a false PASS."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    events.append({"ts_ms": _ts_ms(15), "event": "fetch_timeout", "origin": "h0", "seq": 3, "neighbor": "h1"})
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's life 2 never advertised a record it could not actually serve to h2: "
+        "fetch_timeout(s) after grace: "
+        "[{'ts_ms': 1700000015000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 3, 'neighbor': 'h1'}]"
+    ) in out.splitlines()
+
+
 def test_check_t2c_protocol_fails_when_holder_never_converges(tmp_path: Path, capsys):
     """2026-10-22 fix: a restarted holder that loses one of the origin's records
     for good is a protocol failure (exit 1), not a precondition failure (exit 3) -- convergence
@@ -1026,6 +1055,33 @@ def test_check_t2c_protocol_fails_when_a_stale_downtime_state_rx_masks_a_dishone
         "exceeds what it had actually stored by then: advertised hi=4, holder's own contiguous "
         "progress at ts 1700000019000 was 2"
     ) in out.splitlines()
+
+
+def test_check_t2c_precondition_fails_when_the_only_state_rx_predates_the_restarts_actual_finish(
+    tmp_path: Path, capsys
+):
+    """2026-10-22 fix (regression): discriminates restart_ts itself as the post-restart boundary,
+    separately from the "judge every row, not just the first" fix above. With only an honest
+    state_rx at offset 9 (h1 had actually stored exactly 1-2 by then) and none later, restart_ts
+    (offset 11) correctly finds no post-restart reply to judge at all. The old boundary -- h1's
+    own first counters line at offset 8 -- would have let this same offset-9 row count as
+    "post-restart" (9 > 8) and, being honest, pass the whole check: a false PASS that never
+    actually exercised life 2's post-restart behavior."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    events = [e for e in events if e.get("event") != "state_rx"]
+    events.insert(2, {"ts_ms": _ts_ms(9), "event": "state_rx", "neighbor": "h1", "hi": {"h0": 2}})
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out
+    assert "PRECOND-FAIL: h2 heard from h1 again after its restart (state_rx)" in out.splitlines()
 
 
 def test_check_t2c_protocol_fails_when_a_later_post_restart_state_rx_is_dishonest_even_though_the_first_was_honest(
