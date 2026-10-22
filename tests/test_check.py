@@ -326,6 +326,39 @@ def test_check_t1_precondition_fails_when_post_outage_records_are_created_after_
     ) in out.splitlines()
 
 
+def test_check_t1_precondition_fails_when_link_down_fires_after_the_during_probe_by_actual_time(
+    tmp_path: Path, capsys
+):
+    """Locks in a check that already behaves correctly: timing here is
+    judged by results.json's own actual fire time, never the experiment's nominal `at:`. Moving
+    link_down's actual ts to offset 17 (after the during-outage probe's own log at offset 16)
+    must flag both the outage-window precondition on the M records and the probe-timing
+    precondition -- not silently pass because the nominal schedule still looks fine."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    results_path = run_dir / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    for row in results:
+        if row.get("event_type") == "link_down":
+            row["ts"] = _iso(17)
+    results_path.write_text(json.dumps(results), encoding="utf-8")
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out.splitlines()
+    assert (
+        "PRECOND-FAIL: all 2 post-outage records were actually created during the outage: "
+        "2 created with seq>2, 0 of those strictly between link_down (ts 1700000017000) and link_up (ts 1700000030000)"
+    ) in out
+    assert (
+        "PRECOND-FAIL: during-outage probe actually fired inside the outage window: "
+        "probe ts 1700000016000, outage (1700000017000, 1700000030000)"
+    ) in out
+
+
 def test_check_t1_precondition_fails_when_link_down_or_link_up_did_not_actually_succeed(tmp_path: Path, capsys):
     """2026-10-22 fix: link_down/link_up rows' own `success` field was
     never read, so ReCefore reporting the interface manipulation itself as FAILED still let
@@ -611,6 +644,27 @@ def test_check_t2b_precondition_fails_on_an_overdue_restart(tmp_path: Path, caps
         "PRECOND-FAIL: h0 created records on both sides of the actual restart (life 1 and life 2): "
         "4 before, 0 after (restart finished at ts 1700000025000)"
     ) in out.splitlines()
+
+
+def test_check_t2b_protocol_fails_on_a_duplicate_received_seq(tmp_path: Path, capsys):
+    """Locks in a check that already behaves correctly: a receiver logging the same
+    record_stored seq twice (e.g. two different holders racing to serve it, or a retried fetch
+    both of whose replies land) must FAIL, not silently collapse into the same stored set."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    first = next(e for e in events if e.get("event") == "record_stored")
+    events.append(dict(first, ts_ms=first["ts_ms"] + 50000))
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: h1 holds exactly 4 of h0's records, none duplicated: duplicates present: [1]" in out.splitlines()
 
 
 # -- T2c --------------------------------------------------------------------
