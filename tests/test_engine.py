@@ -614,7 +614,7 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: 
         all_events += engine.drain_events()
         sent_count_before_deadline = len(transport.sent)
 
-        # 2026-10-25 test fix: the 1.75s backoff deadline and the next poll's own
+        # 2026-10-23 test fix: the 1.75s backoff deadline and the next poll's own
         # ~1.76s due time are only a hundredth of a second apart, so a tick at 1.0
         # and the next one at 5.0 cannot tell "the retry resent exactly on time" from
         # "a state poll fired instead" -- nor would either catch a bug that nudges
