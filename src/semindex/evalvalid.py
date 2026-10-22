@@ -37,16 +37,25 @@ import sys
 from semindex import evalgen
 from semindex.check import CheckUsageError, find_one_put_record, read_events, read_results
 
-# 2026-10-23: the record-creation window check (`_check_records`) below
-# compares each record_created event's derived elapsed time against
-# evalgen's own [WINDOW_START_S, WINDOW_END_S] bounds. Those bounds are
-# not a tolerance the ticket specifies (unlike the ±0.5s/±1s margins on
-# the counters_snapshot/counters/link-event checks, which map.md and
-# ticket 04 give explicitly) -- this slack only absorbs this module's own
-# t0 estimation jitter (see _derive_t0_ms) and the agent's ~10Hz tick
-# granularity, so a record that is in truth exactly on a window edge is
-# not flagged for jitter that has nothing to do with the record itself.
-RECORD_WINDOW_SLACK_S = 0.5
+# 2026-10-23: `_check_records` (below) compares each record_created
+# event's derived elapsed time against the one `at_s` its own seq was
+# scheduled for (map.md's "予定どおりにレコードが作られた"). That
+# per-record tolerance is not something the ticket specifies explicitly
+# (unlike the ±0.5s/±1s margins on the counters_snapshot/counters/
+# link-event checks, which map.md and ticket 04 give directly) -- this
+# slack only absorbs this module's own t0 estimation jitter (see
+# _derive_t0_ms) and the agent's ~10Hz tick granularity, so a record that
+# is in truth exactly on its own scheduled tick is not flagged for jitter
+# that has nothing to do with the record itself.
+#
+# 2026-10-23 review fix: this constant used to gate a much looser check
+# -- only whether a record's elapsed time fell anywhere inside the whole
+# [WINDOW_START_S, WINDOW_END_S] measurement window, not whether it
+# matched its OWN scheduled `at_s`. A counterexample where every one of
+# an origin's 30 records landed on the same single in-window instant
+# (instead of each at its own 2s-apart tick) still passed that looser
+# check outright. It now gates the per-record comparison below instead.
+RECORD_SCHEDULE_SLACK_S = 0.5
 
 
 class ValidityUsageError(ValueError):
@@ -203,12 +212,24 @@ def _check_counters(nodes_events: dict[str, list[dict]], t0_ms: float | None) ->
             if abs(elapsed - expected_snapshot_at_s) > 0.5:
                 flags.append(f"counters_snapshot_timing:{node}")
         counters = [e for e in events if e.get("event") == "counters"]
-        if counters and t0_ms is not None:
-            # The LAST counters line, not the first: a restarted node's
-            # events.jsonl holds one per life (same reasoning as
-            # analyze.control_bytes), and stage 1's own window ends at
-            # this node's most recent stop.
-            elapsed = (counters[-1]["ts_ms"] - t0_ms) / 1000.0
+        # 2026-10-23 review fix: this used to take counters[-1] (the LAST
+        # line), on the theory that a restarted node's events.jsonl holds
+        # one `counters` line per life (same reasoning as
+        # analyze.control_bytes). But stage 1 never schedules a
+        # host_app_restart -- evalgen only ever emits link_down/link_up
+        # (see evalgen._link_events) -- so for this stage a second
+        # `counters` line can only mean an UNPLANNED restart, and
+        # CefpycoTransport's byte counters are process-local, reset to 0
+        # every life (agent.py:546). map.md's control-traffic metric
+        # ("最後の counters 行から...counters_snapshot 行を引く") assumes
+        # both lines come from the same life; taking the last line
+        # silently fed it a reset (possibly negative) number instead of
+        # flagging the run. Requiring exactly one line turns that into a
+        # flag.
+        if len(counters) != 1:
+            flags.append(f"counters_count:{node}")
+        elif t0_ms is not None:
+            elapsed = (counters[0]["ts_ms"] - t0_ms) / 1000.0
             if abs(elapsed - expected_stop_at_s) > 1.0:
                 flags.append(f"counters_timing:{node}")
     return flags
@@ -226,23 +247,43 @@ def _check_last_line(nodes_events: dict[str, list[dict]]) -> list[str]:
 
 
 def _check_records(experiment: dict, nodes_events: dict[str, list[dict]], t0_ms: float | None) -> list[str]:
-    """Per origin host: record_created count matches the schedule, and none landed outside the window."""
+    """Per origin host: record_created forms the exact expected seq set, and (once that holds)
+    each record's own creation time lands within tolerance of its own scheduled `at_s`.
+    """
     flags = []
     schedule = experiment.get("schedule") or {}
     for host in evalgen.RECORD_ORIGIN_HOSTS:
         node = _node_name(host)
-        expected_count = len(schedule.get(str(host)) or [])
+        entries = schedule.get(str(host)) or []
+        expected_count = len(entries)
         created = [
             e for e in (nodes_events.get(node) or ()) if e.get("event") == "record_created" and e.get("origin") == node
         ]
         if len(created) != expected_count:
             flags.append(f"record_count:{node}")
+            # seq/timing below compare one-to-one against the schedule; a wrong headcount
+            # has no sound 1:1 mapping to check them against.
+            continue
+
+        # 2026-10-23 review fix: a correct COUNT used to be treated as proof
+        # the right records were made. A counterexample where all 30 of
+        # h0's record_created events were stamped seq=1 (instead of 1..30)
+        # still had len(created) == expected_count and passed outright.
+        # The exact set {1..expected_count}, with no duplicate or missing
+        # seq, is what "予定どおりにレコードが作られた" (map.md) actually
+        # needs: every scheduled slot filled exactly once.
+        seqs = sorted(e.get("seq") for e in created)
+        if seqs != list(range(1, expected_count + 1)):
+            flags.append(f"record_seq_mismatch:{node}")
+            continue  # the seq -> at_s lookup below is meaningless without a 1:1 seq match
         if t0_ms is None:
             continue
         for event in created:
+            seq = event["seq"]
+            expected_at_s = entries[seq - 1]["at_s"]
             elapsed = (event["ts_ms"] - t0_ms) / 1000.0
-            if elapsed < evalgen.WINDOW_START_S - RECORD_WINDOW_SLACK_S or elapsed > evalgen.WINDOW_END_S + RECORD_WINDOW_SLACK_S:
-                flags.append(f"record_outside_window:{node}:seq{event.get('seq')}")
+            if abs(elapsed - expected_at_s) > RECORD_SCHEDULE_SLACK_S:
+                flags.append(f"record_off_schedule:{node}:seq{seq}")
     return flags
 
 

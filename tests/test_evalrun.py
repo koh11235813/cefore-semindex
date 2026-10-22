@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -190,6 +194,144 @@ def test_guarded_rmtree_refuses_root_itself(tmp_path: Path):
     with pytest.raises(ValueError):
         evalrun._guarded_rmtree(str(root), root=str(root))
     assert root.exists()
+
+
+# -- _validate_stage ------------------------------------------------------------
+
+
+def test_validate_stage_rejects_unsafe_values():
+    """Validate stage rejects anything but a single, bare path component."""
+    for bad in ["/tmp/outside", "..", ".", "", "a/b", "a" + os.sep + "b"]:
+        with pytest.raises(ValueError):
+            evalrun._validate_stage(bad)
+
+
+def test_validate_stage_accepts_a_plain_name():
+    """Validate stage accepts a plain name."""
+    evalrun._validate_stage("s1")  # must not raise
+
+
+# -- run_one: path-safety regressions (review r1) --------------------------------
+
+
+def test_run_one_rejects_an_absolute_stage_before_touching_anything(tmp_path: Path, monkeypatch):
+    """Run one rejects an absolute --stage before building or deleting any path from it.
+
+    Reviewer counterexample: `--stage /tmp/outside` with `/tmp/outside/p0.2/7` already
+    present and no DONE marker -- the deletion guard used to be reachable before `stage`
+    was ever validated, since `os.path.join(store, stage, ...)` discards `store` entirely
+    once `stage` is absolute.
+    """
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    outside_stage = tmp_path / "outside"
+    sentinel_dir = outside_stage / "p0.2" / "7"
+    sentinel_dir.mkdir(parents=True)
+    (sentinel_dir / "sentinel.txt").write_text("do not delete me", encoding="utf-8")
+
+    def _must_not_run(argv, *, cwd=None):
+        raise AssertionError("run_subprocess must not be called: stage validation should fail first")
+
+    with pytest.raises(ValueError):
+        evalrun.run_one(
+            0.2, 7, str(outside_stage), str(store), str(recefore), str(staging_root), run_subprocess=_must_not_run
+        )
+
+    assert (sentinel_dir / "sentinel.txt").exists()
+    assert not store.exists()
+
+
+def test_run_one_refuses_to_delete_through_a_symlinked_stage_dir(tmp_path: Path, monkeypatch):
+    """Run one refuses the delete when `store/<stage>` was replaced with a symlink pointing
+    outside `store`, even though `--stage` itself is a normal, already-valid name.
+
+    Reviewer counterexample: `store/s1` is a symlink to an external directory; both the
+    delete target and (before this fix) the delete's own root were derived from that same
+    symlinked path, so the containment check always passed. Anchoring the guard at `store`
+    itself (not `store/<stage>`) makes the symlinked stage dir resolve outside the root
+    the guard actually checks against.
+    """
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    store.mkdir()
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    outside = tmp_path / "outside"
+    sentinel_dir = outside / "p0.2" / "7"
+    sentinel_dir.mkdir(parents=True)
+    (sentinel_dir / "sentinel.txt").write_text("do not delete me", encoding="utf-8")
+    (store / "s1").symlink_to(outside, target_is_directory=True)
+
+    def _must_not_run(argv, *, cwd=None):
+        raise AssertionError("run_subprocess must not be called: the delete guard should fail first")
+
+    with pytest.raises(ValueError):
+        evalrun.run_one(0.2, 7, "s1", str(store), str(recefore), str(staging_root), run_subprocess=_must_not_run)
+
+    assert (sentinel_dir / "sentinel.txt").exists()
+
+
+# -- ReCefore invocation: --kill-after (review r1) -------------------------------
+
+
+def test_run_one_invokes_recefore_with_a_kill_after_timeout(tmp_path: Path, monkeypatch):
+    """Run one's ReCefore invocation uses `timeout --kill-after ...`, not a plain `timeout N`,
+    so a child that catches or ignores TERM still gets forced to exit (reviewer finding:
+    GNU `timeout` never escalates to KILL on its own without `--kill-after`)."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    calls: list = []
+    evalrun.run_one(
+        0.2,
+        7,
+        "s1",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(calls=calls),
+        capture_subprocess=_fake_capture_subprocess,
+    )
+    recefore_argv = calls[1][0]
+    assert recefore_argv[:5] == [
+        "setsid",
+        "timeout",
+        "--kill-after",
+        str(evalrun.RECEFORE_KILL_AFTER_S),
+        str(evalrun.RECEFORE_TIMEOUT_S),
+    ]
+
+
+def test_kill_after_actually_kills_a_term_ignoring_child():
+    """A live (no mock, no root, no Mininet) check that the `timeout --kill-after ...` shape
+    evalrun uses actually forces a child that ignores SIGTERM to die, rather than hanging
+    forever -- the reviewer's concrete claim about plain `timeout N`'s behavior."""
+    if shutil.which("timeout") is None:
+        pytest.skip("GNU coreutils 'timeout' is not installed")
+    ignore_term_and_sleep = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"
+    start = time.monotonic()
+    proc = subprocess.run(
+        ["timeout", "--kill-after", "1", "1", sys.executable, "-c", ignore_term_and_sleep],
+        timeout=10,
+    )
+    wall_s = time.monotonic() - start
+    assert proc.returncode in (137, -9)  # killed by SIGKILL after ignoring TERM
+    assert wall_s < 5.0
 
 
 # -- default_chown_tree --------------------------------------------------------

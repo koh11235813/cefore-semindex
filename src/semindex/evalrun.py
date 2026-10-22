@@ -48,6 +48,17 @@ from semindex import evalgen, evalvalid, gen
 # trial used, not by this module re-implementing process-group cleanup.
 RECEFORE_TIMEOUT_S = 400
 
+# 2026-10-23 review fix: `timeout 400 ...` alone only ever sends TERM at
+# the deadline -- GNU coreutils' `timeout` does not escalate to KILL on
+# its own (`timeout --help`: "-k, --kill-after=DURATION ... send a KILL
+# signal if COMMAND is still running this long after the initial
+# signal was sent"). If ReCefore or a Mininet child ignores or catches
+# TERM, `subprocess.run()` here simply blocks forever waiting for it to
+# exit, wedging the rest of an unattended overnight sweep. `--kill-after`
+# gives TERM a finite grace period before `timeout` follows up with KILL,
+# which cannot be caught or ignored.
+RECEFORE_KILL_AFTER_S = 30
+
 # ReCefore's own "num" is baked into evalgen's generated experiment
 # (evalgen.RECEFORE_NUM); its disaster.py names a run's output directory
 # `ex{num}_seed{seed}` under the YAML's own output_dir (core/artifacts.py
@@ -125,6 +136,24 @@ def default_chown_tree(path: str) -> None:
                 os.chmod(full, os.stat(full).st_mode | 0o020)  # g+w
     os.chown(path, uid, gid)
     os.chmod(path, os.stat(path).st_mode | 0o020)
+
+
+def _validate_stage(stage: str) -> None:
+    """Reject a `stage` that is not safe to use as a single, bare path component.
+
+    2026-10-23 review fix: `run_one` builds `store_run_dir` (and, until
+    this fix, its own deletion boundary) as `os.path.join(store, stage,
+    ...)` -- and does so, and may delete whatever already exists there,
+    before `evalgen.generate_run` ever gets a chance to run
+    `gen.parse_experiment`'s own rejection of a path-unsafe `name` (which
+    embeds this same `stage`; see gen.py's 2026-10-22 fix). `os.path.join`
+    discards every earlier component once it hits an absolute one, so an
+    unvalidated `--stage /tmp/outside` turned `os.path.join(store, stage,
+    ...)` into `/tmp/outside/...` outright, with no trace of `store` left
+    in it at all. Checked here, before any path is built from `stage`.
+    """
+    if not stage or os.path.isabs(stage) or "/" in stage or os.sep in stage or stage in (".", ".."):
+        raise ValueError(f"--stage must be a single, path-safe name, got {stage!r}")
 
 
 def _guarded_rmtree(path: str, *, root: str) -> None:
@@ -302,14 +331,23 @@ def run_one(
     half-wrote is not something any later step here can safely pick back
     up from the middle of.
     """
+    _validate_stage(stage)
     store_run_dir = _store_run_dir(store, stage, p, seed)
     done_marker = os.path.join(store_run_dir, "DONE")
     if os.path.exists(done_marker):
         return RunOutcome(p=p, seed=seed, status="skipped")
 
-    stage_root = os.path.join(store, stage)
+    # 2026-10-23 review fix: anchored to `store` itself, not
+    # `os.path.join(store, stage)` -- besides no longer being derived from
+    # the same (now-validated, but still caller-controlled) `stage` the
+    # delete target is, this also refuses a `store/<stage>` that was
+    # replaced with a symlink to outside `store`: `_guarded_rmtree`
+    # resolves both sides, and a symlinked `store/<stage>` makes
+    # `store_run_dir`'s real path land outside `store`'s real path, where
+    # it did not before (it landed outside the equally-symlinked
+    # `stage_root` this used to check against instead).
     if os.path.isdir(store_run_dir):
-        _guarded_rmtree(store_run_dir, root=stage_root)
+        _guarded_rmtree(store_run_dir, root=store)
 
     staging_run_dir = tempfile.mkdtemp(
         prefix=f"{stage}_p{evalgen._format_p(p)}_seed{seed}_", dir=staging_root
@@ -324,6 +362,8 @@ def run_one(
         argv = [
             "setsid",
             "timeout",
+            "--kill-after",
+            str(RECEFORE_KILL_AFTER_S),
             str(RECEFORE_TIMEOUT_S),
             recefore_python,
             "-m",
@@ -431,6 +471,13 @@ def run_all(
     """
     if out is None:
         out = sys.stdout
+    # Validated once, up front: `run_one` validates `stage` too (it is the
+    # function that actually builds and deletes paths from it, so it must
+    # never trust a caller who skipped this), but failing here as well
+    # means one bad `--stage` is one clear error instead of this loop's
+    # own per-pair try/except (below) logging the identical failure once
+    # per (p, seed) pair and still reporting the sweep as "ran".
+    _validate_stage(stage)
     os.makedirs(store, exist_ok=True)
     os.makedirs(staging_root, exist_ok=True)
     outcomes = []

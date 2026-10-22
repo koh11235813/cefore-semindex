@@ -174,10 +174,11 @@ def test_validate_flags_an_unreadable_node_events_file(tmp_path: Path):
 
 
 def test_validate_flags_an_empty_node_events_file(tmp_path: Path):
-    """Validate flags an empty node events file (and, since it logged nothing, its missing counters_snapshot too)."""
+    """Validate flags an empty node events file (and, since it logged nothing, its missing
+    counters_snapshot and counters lines too)."""
     run_dir, _raw = _build_happy_run(tmp_path)
     (run_dir / "debug" / "node_dirs" / "h1" / "semindex" / "events.jsonl").write_text("", encoding="utf-8")
-    assert validate(str(run_dir))["flags"] == sorted(["empty_events:h1", "counters_snapshot_count:h1"])
+    assert validate(str(run_dir))["flags"] == sorted(["empty_events:h1", "counters_snapshot_count:h1", "counters_count:h1"])
 
 
 def test_validate_flags_a_last_line_that_is_not_counters(tmp_path: Path):
@@ -238,6 +239,22 @@ def test_validate_flags_a_late_final_counters_line(tmp_path: Path):
     assert validate(str(run_dir))["flags"] == ["counters_timing:h1"]
 
 
+def test_validate_flags_an_unplanned_restart_even_though_the_final_counters_line_is_on_time(tmp_path: Path):
+    """Validate flags a second `counters` line (reviewer counterexample: h1 snapshots at
+    t0+10s, writes a `counters` line at t0+20s, then -- after an unplanned restart that reset
+    its process-local byte counters -- writes a second `counters` line at t0+130s). The final
+    line alone lands exactly on schedule, so only requiring exactly one line catches this."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h1"
+    events = [
+        _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]),
+        _counters_event(20.0),
+        _counters_event(evalgen.AGENT_STOP_AT_S),
+    ]
+    _write_events(run_dir, node, events)
+    assert validate(str(run_dir))["flags"] == ["counters_count:h1"]
+
+
 # -- record_created schedule --------------------------------------------------
 
 
@@ -252,20 +269,52 @@ def test_validate_flags_a_short_record_count(tmp_path: Path):
     assert validate(str(run_dir))["flags"] == ["record_count:h0"]
 
 
-def test_validate_flags_a_record_created_outside_the_window(tmp_path: Path):
-    """Validate flags a record_created event whose ts_ms lands outside the measurement window."""
+def test_validate_flags_a_record_created_at_the_wrong_scheduled_time(tmp_path: Path):
+    """Validate flags a record_created event whose ts_ms does not match its own schedule at_s,
+    even when it is still inside the measurement window and its seq/count are untouched."""
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h0"
     events = _record_events(0, raw["schedule"]["0"])
-    # Push the last record's ts_ms far outside [WINDOW_START_S, WINDOW_END_S]
-    # without changing its seq, so only the window check (not record_count)
-    # should fire.
-    events[-1] = {**events[-1], "ts_ms": _ts_ms(evalgen.WINDOW_END_S + 30.0)}
+    seq = len(raw["schedule"]["0"])
+    # Move the last record 20s off its own scheduled at_s -- still well
+    # inside [WINDOW_START_S, WINDOW_END_S], so only the per-record
+    # schedule check (not record_count/record_seq_mismatch) should fire.
+    events[-1] = {**events[-1], "ts_ms": _ts_ms(evalgen.WINDOW_START_S + 20.0)}
     events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
     events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
     _write_events(run_dir, node, events)
-    seq = len(raw["schedule"]["0"])
-    assert validate(str(run_dir))["flags"] == [f"record_outside_window:h0:seq{seq}"]
+    assert validate(str(run_dir))["flags"] == [f"record_off_schedule:h0:seq{seq}"]
+
+
+def test_validate_flags_every_record_collapsed_onto_one_instant(tmp_path: Path):
+    """Validate flags every off-schedule record even when the headcount AND the seq set are
+    both still exactly correct (reviewer counterexample: all of h0's records stamped at the
+    same single in-window instant instead of each at its own 2s-apart tick)."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h0"
+    schedule = raw["schedule"]["0"]
+    last_at_s = schedule[-1]["at_s"]
+    events = [{**entry, "ts_ms": _ts_ms(last_at_s)} for entry in _record_events(0, schedule)]
+    events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
+    events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
+    _write_events(run_dir, node, events)
+    # Every seq except the last one (whose own at_s IS last_at_s, so it
+    # lands exactly on schedule by construction) is now off schedule.
+    expected = sorted(f"record_off_schedule:h0:seq{i}" for i in range(1, len(schedule)))
+    assert validate(str(run_dir))["flags"] == expected
+
+
+def test_validate_flags_a_record_seq_mismatch_even_with_the_right_count(tmp_path: Path):
+    """Validate flags an origin whose record_created events all share one seq (reviewer
+    counterexample: h0's 30 records all stamped seq=1 instead of 1..30), even though the
+    headcount alone still matches the schedule exactly."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h0"
+    events = [{**e, "seq": 1} for e in _record_events(0, raw["schedule"]["0"])]
+    events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
+    events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
+    _write_events(run_dir, node, events)
+    assert validate(str(run_dir))["flags"] == ["record_seq_mismatch:h0"]
 
 
 def test_validate_flags_t0_undetermined_when_no_origin_created_any_record(tmp_path: Path):
