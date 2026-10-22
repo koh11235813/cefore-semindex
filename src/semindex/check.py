@@ -598,8 +598,18 @@ def check_t2a(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # check above only ever looked at (drop.origin, drop.seq) -- a timeout
     # against any OTHER seq (the holder failing to serve a record it was
     # never faulted to withhold) was invisible to this mode entirely.
+    #
+    # 2026-10-23 fix (review finding): this used to
+    # filter requester_events down to origin=drop.origin BEFORE comparing
+    # seq, so a fetch_timeout logged against any OTHER origin was
+    # invisible no matter its seq -- even one that happened to reuse
+    # drop.seq's own number. Inspect every requester fetch_timeout and
+    # reject anything whose (origin, seq) pair is not exactly the one the
+    # experiment actually dropped.
     other_timeouts = [
-        e for e in _events_of(requester_events, "fetch_timeout", origin=drop.origin) if e["seq"] != drop.seq
+        e
+        for e in _events_of(requester_events, "fetch_timeout")
+        if (e["origin"], e["seq"]) != (drop.origin, drop.seq)
     ]
     c.protocol(
         f"{requester} logged no fetch_timeout for any ({drop.origin}, seq) other than the one actually dropped",

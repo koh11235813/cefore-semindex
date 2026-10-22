@@ -835,6 +835,38 @@ def test_check_t2a_protocol_fails_on_a_fetch_timeout_for_a_seq_that_was_never_dr
     ) in out.splitlines()
 
 
+def test_check_t2a_protocol_fails_on_a_fetch_timeout_for_an_origin_that_was_never_dropped(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix (review finding): the
+    unexpected-timeout check used to filter requester events down to origin=drop.origin BEFORE
+    checking seq, so a fetch_timeout logged against any OTHER origin was invisible to this mode
+    no matter its seq -- including one that happens to share drop.seq's own number, which this
+    test pins directly. The check must inspect every requester fetch_timeout and allow only the
+    exact (origin, seq) pair the experiment actually dropped."""
+    experiment_path = tmp_path / "t2a.json"
+    _write_experiment(experiment_path, _t2a_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2a_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    # drop.origin is "h0", drop.seq is 2 -- this timeout is for a
+    # different origin ("h1") but reuses seq 2, the exact combination
+    # the old origin-first filter let slip through unnoticed.
+    events.append({"ts_ms": _ts_ms(12), "event": "fetch_timeout", "origin": "h1", "seq": 2, "neighbor": "h0"})
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t2a", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1 logged no fetch_timeout for any (h0, seq) other than the one actually dropped: "
+        "unexpected timeout(s): [{'ts_ms': 1700000012000, 'event': 'fetch_timeout', 'origin': 'h1', "
+        "'seq': 2, 'neighbor': 'h0'}]"
+    ) in out.splitlines()
+
+
 def test_check_t2a_precondition_fails_when_the_holder_never_wrote_a_counters_line(tmp_path: Path, capsys):
     """2026-10-23 fix: see check_t1's identical fix -- T2(a) never checked
     that every node actually finished its shutdown (wrote a counters line) either."""
