@@ -992,6 +992,17 @@ def main(argv: list[str] | None = None) -> int:
         # malformed-input case here gets.
         print(f"semindex.check: missing required field: {exc}", file=sys.stderr)
         return 2
+    except (TypeError, ValueError) as exc:
+        # 2026-10-23 fix: a malformed events.jsonl row whose field has the
+        # wrong TYPE (e.g. state_rx's `hi` holding a string instead of an
+        # int, so the advertised-vs-stored comparison in check_t2c cannot
+        # even run `<=` on it) used to raise an unhandled traceback
+        # instead of this same exit-2-with-a-message every other
+        # malformed-input case here gets. CheckUsageError/ExperimentError
+        # are ValueError subclasses already caught by name above, so this
+        # clause only ever sees something neither of them was.
+        print(f"semindex.check: malformed input: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

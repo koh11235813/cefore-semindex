@@ -1613,3 +1613,101 @@ def test_main_exits_2_with_a_message_when_an_event_is_missing_seq(tmp_path: Path
 
     assert rc == 2
     assert capsys.readouterr().err == "semindex.check: missing required field: 'seq'\n"
+
+
+def test_main_exits_2_with_a_message_on_a_malformed_state_rx_hi_value(tmp_path: Path, capsys):
+    """2026-10-23 fix: state_rx's `hi` value is normally an int; a malformed
+    row holding a string there (e.g. a hand-edited fixture, or a holder_state.decode bug) made
+    the advertised-vs-stored `<=` comparison in check_t2c raise an unhandled TypeError instead of
+    exiting 2 with a message like every other malformed-input case here."""
+    from semindex.check import main
+
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "state_rx":
+            event["hi"]["h0"] = "2"
+    _write_jsonl(h2_path, events)
+
+    rc = main(["t2c", str(experiment_path), str(run_dir)])
+
+    assert rc == 2
+    assert capsys.readouterr().err == (
+        "semindex.check: malformed input: '<=' not supported between instances of 'str' and 'int'\n"
+    )
+
+
+# -- live-data regression (ReCefore host_app_restart worktree) -------------
+#
+# 2026-10-23: these four runs were generated from this repo's own
+# experiments/*.json against a real ReCefore host_app_restart checkout
+# before this round's fixes landed, and are kept as a standing regression
+# check that none of the new assertions above turns a real, already-known
+# run result into a DIFFERENT one. They are skipped (not failed) when that
+# worktree is not present on the machine running the tests.
+
+_LIVE_RUN_DIR_BASE = "/home/lab_shared/wt/recefore-host-app-restart/logs/semindex"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(f"{_LIVE_RUN_DIR_BASE}/ex9911_seed42"),
+    reason="live ReCefore host_app_restart run directory not present on this machine",
+)
+def test_check_t1_still_passes_against_the_live_ex9911_run():
+    """Regression fixture, recorded 2026-10-23: a real `disaster --config
+    t1.yaml` run against ReCefore host_app_restart's own checkout exited 0 before this round's
+    fixes. Every new check added here (holder labels, relay order, the outage-leak and counters
+    preconditions) must still pass against this real data, not just the synthetic fixtures
+    above."""
+    experiment_path = _REPO_ROOT / "experiments" / "t1.json"
+    run_dir = f"{_LIVE_RUN_DIR_BASE}/ex9911_seed42"
+    assert run_check("t1", str(experiment_path), run_dir) == 0
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(f"{_LIVE_RUN_DIR_BASE}/ex9912_seed42"),
+    reason="live ReCefore host_app_restart run directory not present on this machine",
+)
+def test_check_t2a_live_ex9912_run_has_exactly_the_one_known_fail_line(capsys):
+    """Regression fixture, recorded 2026-10-23: this real run already fails
+    with one known FAIL line (an under-investigation Cefore PIT effect, not something this round
+    touches -- the fetch_timeout-count assertion itself is explicitly out of scope here). Pins
+    that this round's new checks (store-after-timeout, other-seq-timeout) add no FAIL line on
+    top of it. Update this pin, not the assertion it is pinning, once that investigation lands."""
+    experiment_path = _REPO_ROOT / "experiments" / "t2a.json"
+    run_dir = f"{_LIVE_RUN_DIR_BASE}/ex9912_seed42"
+    rc = run_check("t2a", str(experiment_path), run_dir)
+    fail_lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("FAIL")]
+    assert rc == 1
+    assert fail_lines == ["FAIL: h1 logged exactly 2 fetch_timeout(s) for (h0, 3): got 3"]
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(f"{_LIVE_RUN_DIR_BASE}/ex9913_seed42"),
+    reason="live ReCefore host_app_restart run directory not present on this machine",
+)
+def test_check_t2b_still_passes_against_the_live_ex9913_run():
+    """Regression fixture, recorded 2026-10-23 (see
+    test_check_t1_still_passes_against_the_live_ex9911_run for why): a real T2(b) run must still
+    exit 0 with the new receiver-progress and restart-grace checks in place."""
+    experiment_path = _REPO_ROOT / "experiments" / "t2b.json"
+    run_dir = f"{_LIVE_RUN_DIR_BASE}/ex9913_seed42"
+    assert run_check("t2b", str(experiment_path), run_dir) == 0
+
+
+@pytest.mark.skipif(
+    not os.path.isdir(f"{_LIVE_RUN_DIR_BASE}/ex9914_seed42"),
+    reason="live ReCefore host_app_restart run directory not present on this machine",
+)
+def test_check_t2c_still_passes_against_the_live_ex9914_run():
+    """Regression fixture, recorded 2026-10-23 (see
+    test_check_t1_still_passes_against_the_live_ex9911_run for why): a real T2(c) run must still
+    exit 0 with the new far-holder-label check in place."""
+    experiment_path = _REPO_ROOT / "experiments" / "t2c.json"
+    run_dir = f"{_LIVE_RUN_DIR_BASE}/ex9914_seed42"
+    assert run_check("t2c", str(experiment_path), run_dir) == 0
