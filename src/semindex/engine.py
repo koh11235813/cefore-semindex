@@ -71,7 +71,19 @@ class SyncEngine:
         maps to zero offset, so engines are deterministic unless a real
         source of randomness is injected. `backoff_jitter` is passed
         straight through to the Tracker.
+
+        2026-10-22 fix: `config.group` and `config.node` already failed
+        here with an exact diagnostic -- the registration_prefix call
+        below validates both -- but a malformed neighbor went
+        unchecked until whichever later on_tick first tried to build a
+        name with it, raising "holder must be..." from inside
+        names.build_state_name: a diagnostic that names the wrong
+        thing from this config's point of view. Validating every
+        neighbor up front, before that first on_tick, surfaces the
+        same error at construction instead.
         """
+        for neighbor in config.neighbors:
+            names.validate_component(neighbor, "neighbor")
         self._config = config
         self._store = store
         self._transport = transport

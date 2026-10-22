@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from semindex import holder_state, names, schema
 from semindex.engine import SyncConfig, SyncEngine
 from semindex.store import OriginProgress, Store
@@ -34,6 +36,24 @@ def _engine(tmp_path: Path, node: str = "h0", neighbors: tuple[str, ...] = ("h1"
 def test_registers_its_own_prefix_on_construction(tmp_path: Path):
     _, transport, _ = _engine(tmp_path)
     assert transport.registered == ["ccnx:/semidx/g/h0"]
+
+
+def test_construction_rejects_a_neighbor_containing_a_slash(tmp_path: Path):
+    """2026-10-22 regression: a malformed neighbor used to pass
+    unchecked through __init__ and only surface once some later
+    on_tick tried to build a name with it -- and then with a
+    "holder must be..." diagnostic that names the wrong thing from
+    this config's point of view. It must now fail at construction,
+    before anything is registered, with a diagnostic that names the
+    neighbor.
+    """
+    store = Store(tmp_path / "x.db")
+    config = SyncConfig(group="g", node="h0", neighbors=("h1/evil",))
+    transport = RecordingTransport()
+    with pytest.raises(names.MalformedNameError) as exc_info:
+        SyncEngine(config, store, transport)
+    assert str(exc_info.value) == "neighbor must be a non-empty name component without '/'"
+    assert transport.registered == []
 
 
 def test_create_record_allocates_sequential_seqs_and_emits_events(tmp_path: Path):

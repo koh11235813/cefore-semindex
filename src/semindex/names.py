@@ -55,7 +55,7 @@ class RecordName:
     seq: int
 
 
-def _validate_component(value: str, label: str) -> None:
+def validate_component(value: str, label: str) -> None:
     """Raise MalformedNameError unless `value` is a single, non-empty path segment.
 
     A '/' inside it would silently change how many segments split() sees,
@@ -79,16 +79,16 @@ def _parse_int_component(value: str, label: str) -> int:
 
 def registration_prefix(group: str, node: str) -> str:
     """The single prefix a node registers for itself as holder."""
-    _validate_component(group, "group")
-    _validate_component(node, "node")
+    validate_component(group, "group")
+    validate_component(node, "node")
     return f"{PREFIX}/{group}/{node}"
 
 
 def build_state_name(group: str, holder: str, requester: str, epoch_ms: int) -> str:
     """Build a state-request name: `requester` asking `holder` for its progress."""
-    _validate_component(group, "group")
-    _validate_component(holder, "holder")
-    _validate_component(requester, "requester")
+    validate_component(group, "group")
+    validate_component(holder, "holder")
+    validate_component(requester, "requester")
     # 2026-10-22 fix: the `< 0` check below passes for a bool (True < 0
     # is False) or a float (1.5 < 0 is False) just as it does for a
     # plain int, so without this check build_state_name could silently
@@ -104,9 +104,9 @@ def build_state_name(group: str, holder: str, requester: str, epoch_ms: int) -> 
 
 def build_record_name(group: str, holder: str, origin: str, seq: int) -> str:
     """Build a record name: `holder`'s copy of (origin, seq)."""
-    _validate_component(group, "group")
-    _validate_component(holder, "holder")
-    _validate_component(origin, "origin")
+    validate_component(group, "group")
+    validate_component(holder, "holder")
+    validate_component(origin, "origin")
     if not isinstance(seq, int) or isinstance(seq, bool):
         raise MalformedNameError("seq must be an integer")
     if seq < 1:
@@ -123,14 +123,14 @@ def parse(name: str) -> StateName | RecordName:
     if len(segments) != 5:
         raise MalformedNameError("name must have exactly 5 segments after the fixed prefix")
     group, holder, kind, third, fourth = segments
-    _validate_component(group, "group")
-    _validate_component(holder, "holder")
+    validate_component(group, "group")
+    validate_component(holder, "holder")
     if kind == "sv":
-        _validate_component(third, "requester")
+        validate_component(third, "requester")
         epoch_ms = _parse_int_component(fourth, "epoch_ms")
         return StateName(group=group, holder=holder, requester=third, epoch_ms=epoch_ms)
     if kind == "rec":
-        _validate_component(third, "origin")
+        validate_component(third, "origin")
         seq = _parse_int_component(fourth, "seq")
         if seq < 1:
             raise MalformedNameError("seq must be >= 1")
