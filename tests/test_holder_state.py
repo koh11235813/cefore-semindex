@@ -94,3 +94,46 @@ def test_decode_rejects_origin_key_containing_slash():
     with pytest.raises(holder_state.HolderStateError) as exc_info:
         holder_state.decode(payload)
     assert str(exc_info.value) == "holder state origin keys must be non-empty name components without '/'"
+
+
+def test_encode_truncates_extras_origin_by_origin_once_overall_size_exceeds_8kib():
+    # Every one of these origins individually fits the 64-entry cap, but
+    # encoding all 40 together exceeds MAX_ENCODED_BYTES, so encode()
+    # must fall back to emptying extras origin by origin, in sorted
+    # origin-name order, until the whole payload fits. hi must never be
+    # dropped, and an origin that was not touched must keep its full
+    # extra list intact.
+    origins = [f"o{i:02d}" for i in range(40)]
+    progress = {name: OriginProgress(hi=0, extra=tuple(range(1, 65))) for name in origins}
+    payload = holder_state.encode(progress)
+    assert len(payload) <= holder_state.MAX_ENCODED_BYTES
+    decoded = holder_state.decode(payload)
+
+    assert all(decoded[name]["hi"] == 0 for name in origins)
+    truncated_names = [name for name in origins if decoded[name]["truncated"]]
+    kept_names = [name for name in origins if not decoded[name]["truncated"]]
+    # The fallback loop walks sorted(body), so the dropped origins are
+    # an exact sorted-order prefix of the full set -- pinned exactly
+    # rather than just checked non-empty, so this fails if the loop is
+    # ever removed (the un-truncated encoding is 40*~218 =~ 8126..8900
+    # bytes, over the limit, so it would raise HolderStateError instead).
+    assert truncated_names == ["o00", "o01", "o02", "o03", "o04"]
+    assert kept_names == origins[5:]
+    for name in truncated_names:
+        assert decoded[name]["extra"] == []
+    for name in kept_names:
+        assert decoded[name]["extra"] == list(range(1, 65))
+
+
+def test_encode_raises_when_state_cannot_fit_even_with_every_extra_dropped():
+    # Enough origins, each with a long-enough name, that even emptying
+    # every extra (map.md "ページングは無し": there is no further
+    # fallback) cannot bring the payload under MAX_ENCODED_BYTES.
+    origins = [f"origin-{i:04d}" for i in range(400)]
+    progress = {name: OriginProgress(hi=0, extra=()) for name in origins}
+    with pytest.raises(holder_state.HolderStateError) as exc_info:
+        holder_state.encode(progress)
+    assert str(exc_info.value) == (
+        f"holder state for {len(origins)} origins cannot fit in "
+        f"{holder_state.MAX_ENCODED_BYTES} bytes even with all extras dropped"
+    )
