@@ -202,8 +202,28 @@ def test_handle_interest_returns_none_for_unheld_record(tmp_path: Path):
 
 
 def test_handle_interest_returns_none_when_holder_segment_is_not_self(tmp_path: Path):
+    """2026-10-22 regression: this used to ask for (h0, 1) without the
+    engine ever having created it, so the test passed even with the
+    holder check deleted -- the "not held" branch alone already
+    returns None for an unheld record, regardless of the holder
+    segment. Holding the record this engine is asked about isolates
+    the holder check itself.
+    """
     engine, _, _ = _engine(tmp_path)
-    name = names.build_record_name("g", "someone-else", "h0", 1)
+    created = engine.create_record(
+        content_name="a", zone="zone1", disaster="flood", media="image", observed_at=1
+    )
+    name = names.build_record_name("g", "someone-else", "h0", created.seq)
+    assert engine.handle_interest(name) is None
+
+
+def test_handle_interest_returns_none_for_a_state_request_not_addressed_to_self(tmp_path: Path):
+    """The state branch has its own holder check, mirroring the record
+    branch's; nothing elsewhere exercises holder != self for a state
+    request, only holder == self.
+    """
+    engine, _, _ = _engine(tmp_path)
+    name = names.build_state_name("g", "someone-else", "h1", 1700000000000)
     assert engine.handle_interest(name) is None
 
 
