@@ -182,6 +182,20 @@ def test_poll_catches_a_holder_state_error_from_handle_interest_and_lets_the_int
     assert handle.sent_data == []
 
 
+def test_poll_routes_data_with_no_payload_tlv_without_crashing():
+    """cefpyco's CcnPacketInfo.payload is None for a Data TLV with no payload at all
+    (its own payload_s property guards the same way); len(None) must not reach
+    _route_data's byte-counting and crash the loop.
+    """
+    name = "ccnx:/semidx/g/h1/rec/h0/3"
+    handle = _FakeHandle([_FakePacket(is_data=True, name=name, payload=None)])
+    engine = _StubEngine()
+    transport = CefpycoTransport(handle, engine, clock=_FakeClock(5.0))
+    transport.poll()  # must not raise
+    assert engine.on_record_calls == [(name, b"", 5.0)]
+    assert transport.bytes_received == len(name.encode("utf-8"))
+
+
 def test_poll_refuses_to_send_a_response_payload_over_the_wire_limit_for_its_kind():
     """A record Response over schema.MAX_RECORD_BYTES is dropped rather than handed to
     send_data -- the last line of defense map.md calls out (cefpyco's send_data itself
@@ -312,3 +326,42 @@ def test_fetch_content_dispatches_sync_traffic_seen_while_waiting_for_a_chunk():
     assert (ok, total) == (True, 1)
     assert engine.handle_interest_calls == [sync_name]
     assert handle.sent_data == [(sync_name, b"{}", -1, 1000, 0)]
+
+
+def test_fetch_content_treats_a_chunk_with_no_payload_tlv_as_empty_not_a_crash():
+    """The same payload=None case as the poll()/on_record test above, but on
+    fetch_content's own chunk-matching path: a chunk Data with no payload TLV
+    (chunk_num present, payload None) must count as 0 bytes, not raise.
+    """
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [_FakePacket(is_data=True, name=name, payload=None, chunk_num=0, end_chunk_num=0)],
+        clock=clock,
+    )
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
+    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
+    assert (ok, total) == (True, 0)
+
+
+def test_fetch_content_stops_promptly_when_should_stop_becomes_true_mid_wait():
+    """A chunk wait that would otherwise burn its full chunk_lifetime_ms exits as
+    soon as should_stop() reports true, instead of only being noticed on the agent
+    loop's next step() -- the SIGTERM-while-mid-fetch case ticket requirement 5's
+    well-under-2s shutdown budget depends on (map.md's T1 partition-phase probe is
+    exactly this: content that is unreachable by design).
+    """
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    calls = {"n": 0}
+
+    def should_stop() -> bool:
+        calls["n"] += 1
+        return calls["n"] >= 3  # let one receive() happen first, then stop mid-wait
+
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock, should_stop=should_stop)
+    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
+    assert (ok, total) == (False, 0)
+    # Stopped after one 0.1s receive tick, nowhere near the 2s chunk_lifetime_ms deadline.
+    assert clock.value < 1.0

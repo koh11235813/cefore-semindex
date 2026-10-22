@@ -15,6 +15,15 @@ needs that an in-memory one does not:
   like that must not crash the single-threaded loop that also serves every
   other neighbor -- it is treated the same as handle_interest returning
   None: the Interest is left to expire.
+- A should_stop check inside fetch_content's own wait loop. The agent
+  loop's run() only checks its stop flag between step()s, but
+  fetch_content can otherwise block inside a single step() for up to
+  chunk_lifetime_ms per chunk waiting on content that never arrives (a
+  partition, or T1's partition-phase probe by design) -- that is already
+  the entire SIGTERM-to-SIGKILL budget a ReCefore host_apps process gets.
+  should_stop, when given, is polled before every chunk's Interest and
+  before every receive() inside the wait, so a stop request lands within
+  one receive_timeout_ms instead of up to chunk_lifetime_ms.
 - A payload-size check before every send_data. cefpyco's send_data does
   not check payload length itself (map.md); the engine already keeps every
   Response within schema.MAX_RECORD_BYTES / holder_state.MAX_ENCODED_BYTES
@@ -27,6 +36,12 @@ needs that an in-memory one does not:
   a reply (sync Data here, content chunks from fetch_content). An Interest
   Return is not specially counted or dispatched; it is left for the
   Interest's own deadline to resolve as an ordinary timeout.
+- A payload=None coercion on every incoming Data. cefpyco's own
+  CcnPacketInfo.payload is None for a Data TLV with no payload at all
+  (its own payload_s property guards the same way), and len(None) would
+  crash this module's single-threaded loop exactly the way an unguarded
+  handle_interest would -- every read of a received Data's payload treats
+  a falsy payload as b"".
 
 cefpyco's receive() holds the GIL and reads into one process-wide static
 buffer (map.md), so exactly one call site may ever call it: poll() and
@@ -87,6 +102,7 @@ class CefpycoTransport:
         *,
         clock: Callable[[], float] = time.time,
         receive_timeout_ms: int = DEFAULT_RECEIVE_TIMEOUT_MS,
+        should_stop: Callable[[], bool] | None = None,
     ) -> None:
         """Wrap `handle`; `engine` is the SyncEngine this transport delivers replies, incoming
         Interests and timeouts into. `clock` is the single time source shared with the
@@ -100,11 +116,21 @@ class CefpycoTransport:
         are only ever called once construction has finished, so the
         agent's wiring code builds the transport, builds the engine from
         it, then sets transport.engine = engine before the loop starts.
+
+        `should_stop` has the same construction-order problem as `engine`
+        (the Agent that owns the real stop flag is built from this
+        transport, not the other way around) and the same fix: it
+        defaults to a callable that always says "keep going", and the
+        agent's wiring code replaces it with the real agent's stop check
+        once the agent itself exists. fetch_content polls it so a probe's
+        chunk-wait loop can never block a stop request for its own
+        chunk_lifetime_ms.
         """
         self._handle = handle
         self._engine = engine
         self._clock = clock
         self._receive_timeout_ms = receive_timeout_ms
+        self._should_stop = should_stop if should_stop is not None else (lambda: False)
         self._deadlines: dict[str, float] = {}
         self.bytes_sent = 0
         self.bytes_received = 0
@@ -117,6 +143,15 @@ class CefpycoTransport:
     @engine.setter
     def engine(self, value: SyncEngine) -> None:
         self._engine = value
+
+    @property
+    def should_stop(self) -> Callable[[], bool]:
+        """The callable fetch_content polls to end its chunk-wait loop early; see __init__."""
+        return self._should_stop
+
+    @should_stop.setter
+    def should_stop(self, value: Callable[[], bool]) -> None:
+        self._should_stop = value
 
     def now(self) -> float:
         """The transport's own clock reading, for the agent loop to pass to engine.on_tick."""
@@ -169,16 +204,24 @@ class CefpycoTransport:
         has been collected, or (False, bytes_so_far) if any one chunk's
         Interest lifetime elapses with no matching Data, or if max_chunks
         is exhausted without ever seeing an end_chunk_num (a guard against
-        spinning forever on an object published without one at all).
+        spinning forever on an object published without one at all), or
+        if should_stop() reports true at any point -- checked here (before
+        sending the next chunk's Interest) and inside the wait loop below
+        (before every receive()), so a stop request is noticed within one
+        receive_timeout_ms rather than after up to chunk_lifetime_ms.
         """
         total = 0
         chunk_num = 0
         while chunk_num < max_chunks:
+            if self._should_stop():
+                return False, total
             self._handle.send_interest(name, chunk_num=chunk_num, lifetime=chunk_lifetime_ms)
             self.bytes_sent += len(name.encode("utf-8"))
             deadline = self._clock() + chunk_lifetime_ms / 1000.0
             got: CefpycoPacket | None = None
             while self._clock() < deadline:
+                if self._should_stop():
+                    return False, total
                 info = self._handle.receive(timeout_ms=self._receive_timeout_ms)
                 now = self._clock()
                 if info.is_data and info.name == name and info.chunk_num == chunk_num:
@@ -188,8 +231,9 @@ class CefpycoTransport:
                 self._check_timeouts(now)
             if got is None:
                 return False, total
-            self.bytes_received += len(name.encode("utf-8")) + len(got.payload)
-            total += len(got.payload)
+            payload = got.payload or b""
+            self.bytes_received += len(name.encode("utf-8")) + len(payload)
+            total += len(payload)
             if got.end_chunk_num is not None and got.end_chunk_num == chunk_num:
                 return True, total
             chunk_num += 1
@@ -213,7 +257,7 @@ class CefpycoTransport:
             # timeout, so on_record/on_state handle a late arrival the
             # same as an on-time one.
             self._deadlines.pop(info.name, None)
-            self._route_data(info.name, info.payload, now)
+            self._route_data(info.name, info.payload or b"", now)
 
     def _serve(self, name: str, now: float) -> None:
         """Answer an incoming Interest addressed to this node, as holder."""

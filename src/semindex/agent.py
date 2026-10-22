@@ -435,6 +435,17 @@ class Agent:
         """Ask the loop to exit after its current step; safe to call from a signal handler."""
         self._stop_requested = True
 
+    def is_stop_requested(self) -> bool:
+        """Whether request_stop() has already been called.
+
+        build_agent wires this in as the transport's should_stop, so a
+        probe's fetch_content call -- which runs synchronously inside one
+        step(), unlike every other transport call -- notices a stop
+        request within one receive_timeout_ms instead of blocking for up
+        to its own chunk_lifetime_ms.
+        """
+        return self._stop_requested
+
     def _elapsed_s(self, now: float) -> float:
         """Seconds since this agent's t0, given `now` in the same wall-clock seconds as t0_ms."""
         return now - self._config.t0_ms / 1000.0
@@ -546,7 +557,12 @@ def build_agent(config: AgentConfig, handle: CefpycoHandle, *, clock: Callable[[
     )
     transport.engine = engine
     events = EventWriter(os.path.join(config.state_dir, "events.jsonl"), clock=clock)
-    return Agent(config, engine, store, transport, events)
+    agent = Agent(config, engine, store, transport, events)
+    # Same construction-order reason as transport.engine above: the Agent
+    # that owns the real stop flag can only be built from this transport,
+    # not the other way around.
+    transport.should_stop = agent.is_stop_requested
+    return agent
 
 
 def install_signal_handlers(agent: Agent) -> None:

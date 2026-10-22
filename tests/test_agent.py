@@ -339,6 +339,55 @@ def test_probe_retrieval_failure_does_not_block_the_loop(tmp_path: Path):
     agent.step()  # the loop is still usable afterward; this must not raise
 
 
+def test_a_stop_request_mid_probe_fetch_ends_the_wait_promptly_and_still_shuts_down(tmp_path: Path):
+    """request_stop() landing while a probe's fetch_content is mid-wait for an
+    unreachable chunk must not block that one step() for the full
+    chunk_lifetime_ms -- a real SIGTERM can land at exactly that point (a signal
+    handler calls request_stop() between bytecode instructions, same as here),
+    and host_apps only gives a process 2s between SIGTERM and SIGKILL. run()
+    must then also exit and shut down (flush events, close the store) rather
+    than needing a second, separate SIGTERM.
+    """
+    content_name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+        chunk_lifetime_ms=2000,
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    # Simulate a SIGTERM landing on the second receive() this step() makes:
+    # the first is step()'s own poll(), the second is inside the probe's
+    # fetch_content wait loop.
+    real_receive = handle.receive
+    calls = {"n": 0}
+
+    def receive_then_stop(timeout_ms: int):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            agent.request_stop()
+        return real_receive(timeout_ms)
+
+    handle.receive = receive_then_stop
+
+    agent.step()  # must return promptly, not block for chunk_lifetime_ms (2s of fake-clock ticks)
+    assert clock.value < 1.0
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
+    assert (retrieved["success"], retrieved["bytes"]) == (False, 0)
+
+    agent.run()  # _stop_requested is already True, so this exits immediately and shuts down
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert lines[-1]["event"] == "counters"
+
+
 def test_run_exits_and_shuts_down_cleanly_once_stop_is_requested(tmp_path: Path):
     """run() exits its loop and shuts down (flush remaining events, write the counters
     line, close the store) once request_stop() has been called -- the SIGTERM path,
