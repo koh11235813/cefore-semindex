@@ -8,8 +8,9 @@ run's results.json, then prints one line per assertion and exits:
     0  every assertion passed
     1  at least one PROTOCOL assertion failed (the sync/fault/restart
        behavior itself is wrong)
-    2  usage error (bad arguments, or the experiment/run directory do not
-       match what this mode expects)
+    2  usage error (bad arguments, the experiment/run directory do not
+       match what this mode expects, or a results.json/events.jsonl row
+       is missing a field this check needs)
     3  at least one PRECONDITION assertion failed (the scenario's own
        timing did not hold up -- e.g. records had not finished
        propagating before a link_down actually fired -- so the protocol
