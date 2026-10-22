@@ -268,6 +268,15 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
     far_node = prober
 
     non_origin_nodes = [f"h{h}" for h in spec.agents if h != origin_host]
+    # 2026-10-23 fix: map.md's T1 is specifically
+    # a single-relay scenario ("relay through a partition"); every
+    # generated and hand-written t1.json has exactly one relay host
+    # between the origin and the prober. Pinning that down here is what
+    # lets the holder-label and relay-order checks below name a single
+    # node as "the" relay instead of just trusting whichever one shows up.
+    if len(non_origin_nodes) != 2:
+        raise CheckUsageError("t1 requires exactly one relay host besides the origin and the prober")
+    relay_node = next(n for n in non_origin_nodes if n != far_node)
 
     events_by_node = {f"h{h}": read_events(_node_events_path(run_dir, f"h{h}")) for h in spec.agents}
     results = read_results(run_dir)
@@ -316,11 +325,33 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
         f"link_down (ts {link_down_ts:.0f}) and link_up (ts {link_up_ts:.0f})",
     )
 
+    # 2026-10-23 fix: nothing here ever checked that
+    # the partition actually held for the M records THEMSELVES -- only
+    # that the during-outage probe fired inside the window and that the M
+    # records were created inside it. A relay that kept forwarding
+    # despite link_down (or a link_down that only affected one direction)
+    # could still let an M record (seq > n) reach a non-origin node while
+    # link_down_ts < ts < link_up_ts; the only thing that caught this
+    # before was the during-outage probe happening to run before the leak
+    # did, a property of this experiment's own probe timing, not
+    # something this checker verified directly.
+    leaked_during_outage = [
+        (node, e["seq"], e["ts_ms"])
+        for node in non_origin_nodes
+        for e in _record_stored(events_by_node[node], origin)
+        if e["seq"] > n and link_down_ts < e["ts_ms"] < link_up_ts
+    ]
+    c.precondition(
+        f"no node stored a post-outage (seq > {n}) record strictly inside the outage window",
+        leaked_during_outage == [],
+        f"leaked: {leaked_during_outage}",
+    )
+
     prober_events = events_by_node[prober]
-    discovered = _events_of(prober_events, "probe_discovered")
-    if len(discovered) != 2:
-        raise CheckUsageError(f"expected exactly 2 probe_discovered events at {prober}, found {len(discovered)}")
-    during_discovered, after_discovered = discovered[0], discovered[1]
+    discovered_with_index = [(i, e) for i, e in enumerate(prober_events) if e.get("event") == "probe_discovered"]
+    if len(discovered_with_index) != 2:
+        raise CheckUsageError(f"expected exactly 2 probe_discovered events at {prober}, found {len(discovered_with_index)}")
+    (_, during_discovered), (after_idx, after_discovered) = discovered_with_index
 
     c.precondition(
         "during-outage probe actually fired inside the outage window",
@@ -345,6 +376,40 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
         issue = _contiguous_unique([e["seq"] for e in stored], n + m)
         c.protocol(f"{node} holds exactly {n + m} of {origin}'s records after recovery", issue is None, issue or "")
 
+    # 2026-10-23 fix: check_t2c already asserts far's
+    # holder label against the restarted node by name; this mode never
+    # asserted either non-origin node's holder label at all, so a relay
+    # bypass (e.g. every record h2 "stores" claims it came straight from
+    # h0, the origin it is not even linked to) was invisible here.
+    for node, expected_holder in ((relay_node, origin), (far_node, relay_node)):
+        holders_seen = {e["holder"] for e in _record_stored(events_by_node[node], origin)}
+        c.protocol(
+            f"every record {node} stored for {origin} came from holder {expected_holder}",
+            holders_seen <= {expected_holder},
+            f"holders seen: {sorted(holders_seen)}",
+        )
+
+    # 2026-10-23 fix: the same "progress not ahead"
+    # property check_t2c already enforces between a restarted holder and
+    # far was never enforced here between the relay and the far node --
+    # far holding a seq before the relay itself had stored it would have
+    # passed silently. >=, not >: these are two different files written
+    # by two different processes, so an exact tie is not itself suspicious.
+    relay_first_ts_by_seq: dict[int, float] = {}
+    for e in _record_stored(events_by_node[relay_node], origin):
+        if e["seq"] not in relay_first_ts_by_seq or e["ts_ms"] < relay_first_ts_by_seq[e["seq"]]:
+            relay_first_ts_by_seq[e["seq"]] = e["ts_ms"]
+    early = [
+        e["seq"]
+        for e in _record_stored(events_by_node[far_node], origin)
+        if e["seq"] in relay_first_ts_by_seq and e["ts_ms"] < relay_first_ts_by_seq[e["seq"]]
+    ]
+    c.protocol(
+        f"{far_node} never stored a record before {relay_node} itself had stored it",
+        early == [],
+        f"seqs stored early: {early}",
+    )
+
     after_matches = {(mm["origin"], mm["seq"]) for mm in after_discovered["matches"]}
     c.protocol(
         "after-recovery probe discovers all N+M records",
@@ -352,27 +417,82 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
         f"got {sorted(after_matches)}",
     )
 
-    # 2026-10-22 fix: this used to judge whichever probe_retrieved row
-    # happened to be LAST in the file, with no tie to after_discovered at
-    # all. A run whose after-recovery retrieval never fires (or never
-    # arrives) still passed on the strength of a leftover during-outage
-    # row, once that row's own `success` happened to be true -- exactly
-    # the row map.md says "本体取得の結果は記録するが合否に使わない"
-    # (recorded, but never judged) about. Requiring ts_ms strictly after
-    # after_discovered's own ts (itself already required > link_up_ts by
-    # the precondition above) ties this check to the SAME after-recovery
-    # probe the two checks above it are about, not to file order.
-    retrieved_after = _events_of(prober_events, "probe_retrieved")
-    post_recovery_retrieved = [r for r in retrieved_after if r["ts_ms"] > after_discovered["ts_ms"]]
-    c.protocol(
-        "after-recovery probe retrieves the content body",
-        any(r.get("success") is True for r in post_recovery_retrieved),
-        f"{[r.get('success') for r in post_recovery_retrieved]}",
+    # 2026-10-23 fix: the check above only ever
+    # compared the after-probe's matches against the SPEC's own (origin,
+    # seq) set -- never against what far_node itself had actually stored,
+    # and never against the content name those matches claim. A phantom
+    # match (a seq the Index returned before far_node's own store for it
+    # landed) or a match naming some other content than the publisher's
+    # own still satisfied the count-only check above. Compared as SETS,
+    # deliberately not by ts_ms: Agent.step() runs poll() (queues a due
+    # store), then _drain_probes() (answers a due probe), then
+    # _drain_engine_events() (writes the queued record_stored) -- so a
+    # record stored in the SAME step a probe discovers it legitimately
+    # has record_stored.ts_ms > probe_discovered.ts_ms (see the same
+    # ordering note on check_t2c's holder/far comparison below).
+    far_stored_seqs = {e["seq"] for e in _record_stored(events_by_node[far_node], origin)}
+    after_match_seqs = {mm["seq"] for mm in after_discovered["matches"] if mm["origin"] == origin}
+    bad_content_names = sorted(
+        {mm["content_name"] for mm in after_discovered["matches"] if mm["content_name"] != spec.publisher.uri}
     )
+    c.protocol(
+        f"after-recovery probe's matches are all records {far_node} actually stored, naming the publisher's own content",
+        after_match_seqs <= far_stored_seqs and not bad_content_names,
+        f"matched seqs {far_node} never actually stored: {sorted(after_match_seqs - far_stored_seqs)}, "
+        f"content name(s) other than {spec.publisher.uri!r}: {bad_content_names}",
+    )
+
+    # 2026-10-23 fix: this used to accept
+    # ANY post-discovery probe_retrieved row with success=True anywhere
+    # later in the file, with no tie to the after-recovery discovery it is
+    # supposed to be the body fetch FOR -- a retrieval of some other
+    # (origin, seq, content_name) entirely still satisfied it. ts_ms is no
+    # longer compared at all (dropped the old strict `>`): EventWriter
+    # rounds to whole milliseconds, so a fast in-process fetch can
+    # legitimately land on the exact same ts_ms as its own discovery.
+    # Agent.step()'s own _run_probe writes a successful discovery's
+    # retrieval synchronously, right after it, so the row that actually
+    # answers THIS discovery is the very next probe_retrieved event h2
+    # logs -- never a later success found by scanning the whole file.
+    retrieved_after = next(
+        (e for e in prober_events[after_idx + 1 :] if e.get("event") == "probe_retrieved"), None
+    )
+    after_match_tuples = [(mm["origin"], mm["seq"]) for mm in after_discovered["matches"]]
+    if not after_match_tuples:
+        # An empty discovery is already flagged above ("discovers all N+M
+        # records" cannot pass with zero matches); there is simply
+        # nothing here for a retrieval to be the fetch FOR.
+        retrieval_ok = False
+        detail = "after-recovery discovery had no matches to retrieve"
+    else:
+        min_match = min(after_match_tuples)
+        retrieval_ok = (
+            retrieved_after is not None
+            and (retrieved_after.get("origin"), retrieved_after.get("seq")) == min_match
+            and retrieved_after.get("content_name") == spec.publisher.uri
+            and retrieved_after.get("success") is True
+        )
+        detail = (
+            f"{retrieved_after!r}" if retrieved_after is not None
+            else "no probe_retrieved row followed the after-recovery discovery"
+        )
+    c.protocol("after-recovery probe retrieves the content body", retrieval_ok, detail)
 
     for node in [origin] + non_origin_nodes:
         conflicts = _events_of(events_by_node[node], "conflict")
         c.protocol(f"{node} logged no conflict", conflicts == [], f"{len(conflicts)} conflict event(s)")
+
+    # 2026-10-23 fix: a node SIGKILLed before its own
+    # shutdown finished never writes a `counters` line at all; nothing in
+    # this mode ever checked for that, so a run with incomplete byte
+    # accounting for one or more nodes still printed a clean PASS.
+    for node in [origin] + non_origin_nodes:
+        has_counters = bool(_events_of(events_by_node[node], "counters"))
+        c.precondition(
+            f"{node} wrote a counters line before this run ended",
+            has_counters,
+            "" if has_counters else f"{node} wrote no counters line (shutdown did not finish)",
+        )
 
     return c
 

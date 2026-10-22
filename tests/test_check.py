@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -177,6 +178,7 @@ def _write_t1_happy_path(run_dir: Path) -> None:
             {"ts_ms": _ts_ms(5), "event": "record_created", "origin": "h0", "seq": 2},
             {"ts_ms": _ts_ms(12), "event": "record_created", "origin": "h0", "seq": 3},
             {"ts_ms": _ts_ms(14), "event": "record_created", "origin": "h0", "seq": 4},
+            {"ts_ms": _ts_ms(50), "event": "counters", "control_bytes_sent": 20, "control_bytes_received": 0},
         ],
     )
     _write_jsonl(
@@ -186,6 +188,7 @@ def _write_t1_happy_path(run_dir: Path) -> None:
             {"ts_ms": _ts_ms(6), "event": "record_stored", "origin": "h0", "seq": 2, "holder": "h0"},
             {"ts_ms": _ts_ms(32), "event": "record_stored", "origin": "h0", "seq": 3, "holder": "h0"},
             {"ts_ms": _ts_ms(34), "event": "record_stored", "origin": "h0", "seq": 4, "holder": "h0"},
+            {"ts_ms": _ts_ms(50), "event": "counters", "control_bytes_sent": 10, "control_bytes_received": 10},
         ],
     )
     _write_jsonl(
@@ -228,6 +231,7 @@ def _write_t1_happy_path(run_dir: Path) -> None:
                 "success": True,
                 "bytes": 433390,
             },
+            {"ts_ms": _ts_ms(50), "event": "counters", "control_bytes_sent": 5, "control_bytes_received": 15},
         ],
     )
     _write_results(
@@ -274,7 +278,10 @@ def test_check_t1_protocol_fails_when_the_only_surviving_retrieval_is_the_during
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "FAIL: after-recovery probe retrieves the content body: []" in out.splitlines()
+    assert (
+        "FAIL: after-recovery probe retrieves the content body: "
+        "no probe_retrieved row followed the after-recovery discovery"
+    ) in out.splitlines()
 
 
 def test_check_t1_precondition_fails_when_far_node_has_not_converged_before_link_down(tmp_path: Path, capsys):
@@ -407,6 +414,199 @@ def test_check_t1_precondition_fails_when_link_down_or_link_up_did_not_actually_
     out = capsys.readouterr().out.splitlines()
     assert "PRECOND-FAIL: link_down actually succeeded: success=False" in out
     assert "PRECOND-FAIL: link_up actually succeeded: success=False" in out
+
+
+def test_check_t1_protocol_fails_on_a_wrong_target_after_recovery_retrieval(tmp_path: Path, capsys):
+    """2026-10-23 fix: the after-recovery retrieval check used to accept ANY
+    later probe_retrieved row with success=True, with no tie to the discovery it is supposed to
+    be the body fetch for. Swaps the real retrieval (offset 46, origin h0 seq 1) for one naming a
+    completely different (origin, seq, content_name) that still reports success."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    events = [e for e in events if not (e.get("event") == "probe_retrieved" and e["ts_ms"] == _ts_ms(46))]
+    events.append(
+        {
+            "ts_ms": _ts_ms(46),
+            "event": "probe_retrieved",
+            "origin": "wrong",
+            "seq": 99,
+            "content_name": "ccnx:/wrong",
+            "success": True,
+            "bytes": 5,
+        }
+    )
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: after-recovery probe retrieves the content body: "
+        "{'ts_ms': 1700000046000, 'event': 'probe_retrieved', 'origin': 'wrong', 'seq': 99, "
+        "'content_name': 'ccnx:/wrong', 'success': True, 'bytes': 5}"
+    ) in out.splitlines()
+
+
+def test_check_t1_all_pass_when_discovery_and_retrieval_share_one_ts_ms(tmp_path: Path):
+    """2026-10-23 fix: EventWriter rounds ts_ms to whole milliseconds, so a
+    fast in-process retrieval can legitimately land on the exact same ts_ms as its own
+    discovery. Pairing by file order (not by a strict `>` on ts_ms) must still pass this
+    otherwise-honest run."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "probe_retrieved" and event["ts_ms"] == _ts_ms(46):
+            event["ts_ms"] = _ts_ms(45)
+    _write_jsonl(h2_path, events)
+
+    assert run_check("t1", str(experiment_path), str(run_dir)) == 0
+
+
+def test_check_t1_precondition_fails_when_m_records_leak_to_relay_and_far_during_the_outage(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix: nothing checked that the partition actually held for
+    the M records THEMSELVES -- only that the during-outage probe fired inside the window and
+    that the M records were created inside it. Moves h1's and h2's M-record stores to inside the
+    outage window (10..30s), after the during-outage probe (offset 16) so the probe-based check
+    cannot see the leak."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    for node, holder, base in (("h1", "h0", 17), ("h2", "h1", 18)):
+        path = _node_events_path(run_dir, node)
+        events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        events = [e for e in events if not (e.get("event") == "record_stored" and e["seq"] in (3, 4))]
+        events.append({"ts_ms": _ts_ms(base), "event": "record_stored", "origin": "h0", "seq": 3, "holder": holder})
+        events.append(
+            {"ts_ms": _ts_ms(base + 2), "event": "record_stored", "origin": "h0", "seq": 4, "holder": holder}
+        )
+        _write_jsonl(path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out
+    assert (
+        "PRECOND-FAIL: no node stored a post-outage (seq > 2) record strictly inside the outage window: "
+        "leaked: [('h1', 3, 1700000017000), ('h1', 4, 1700000019000), "
+        "('h2', 3, 1700000018000), ('h2', 4, 1700000020000)]"
+    ) in out.splitlines()
+
+
+def test_check_t1_protocol_fails_when_far_claims_every_record_came_straight_from_the_origin(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix: holder labels were never asserted in T1 at all. h2 is
+    not even linked to h0 (the links are h0-h1-h2), so every h2 record_stored row claiming
+    holder=h0 means the relay (h1) was bypassed entirely."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "record_stored":
+            event["holder"] = "h0"
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "FAIL: every record h2 stored for h0 came from holder h1: holders seen: ['h0']" in out.splitlines()
+
+
+def test_check_t1_protocol_fails_when_far_stores_a_record_before_the_relay_itself_did(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix: nothing enforced that h2 (far) never holds a record
+    before h1 (the relay) itself had stored it -- the same "progress not ahead" property
+    check_t2c already enforces between a restarted holder and far. Delays every one of h1's own
+    stores well past h2's (unaffected) ones."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    new_ts = {1: _ts_ms(50), 2: _ts_ms(51), 3: _ts_ms(52), 4: _ts_ms(53)}
+    for event in events:
+        if event.get("event") == "record_stored":
+            event["ts_ms"] = new_ts[event["seq"]]
+    _write_jsonl(h1_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h2 never stored a record before h1 itself had stored it: seqs stored early: [1, 2, 3, 4]"
+    ) in out.splitlines()
+
+
+def test_check_t1_protocol_fails_when_after_probe_matches_name_a_stale_content(tmp_path: Path, capsys):
+    """2026-10-23 fix: the after-recovery discovery's own matches were never
+    checked against what far_node actually stored or against the publisher's own content name --
+    only the (origin, seq) set was compared to the spec's N+M count. Every match here names a
+    stale/other content instead of the publisher's own body."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "probe_discovered" and event["ts_ms"] == _ts_ms(45):
+            for match in event["matches"]:
+                match["content_name"] = "ccnx:/stale/other"
+        if event.get("event") == "probe_retrieved" and event["ts_ms"] == _ts_ms(46):
+            event["content_name"] = "ccnx:/stale/other"
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: after-recovery probe's matches are all records h2 actually stored, naming the "
+        "publisher's own content: matched seqs h2 never actually stored: [], content name(s) "
+        "other than 'ccnx:/content/h0/body': ['ccnx:/stale/other']"
+    ) in out.splitlines()
+
+
+def test_check_t1_precondition_fails_when_a_node_never_wrote_a_counters_line(tmp_path: Path, capsys):
+    """2026-10-23 fix: a node SIGKILLed before its own shutdown finished
+    never writes a `counters` line; T1 never checked for this at all before. Drops h0's own line
+    only -- h1 and h2 still have theirs."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h0_path = _node_events_path(run_dir, "h0")
+    events = [json.loads(line) for line in h0_path.read_text(encoding="utf-8").splitlines()]
+    events = [e for e in events if e.get("event") != "counters"]
+    _write_jsonl(h0_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 3
+    out = capsys.readouterr().out
+    assert (
+        "PRECOND-FAIL: h0 wrote a counters line before this run ended: "
+        "h0 wrote no counters line (shutdown did not finish)"
+    ) in out.splitlines()
 
 
 # -- T2a --------------------------------------------------------------------
