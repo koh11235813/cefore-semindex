@@ -132,6 +132,8 @@ class ExperimentSpec:
     probes: dict[int, tuple[ProbeSpec, ...]]
     fault: dict[int, tuple[FaultDropRecSpec, ...]]
     events: tuple[EventSpec, ...]
+    stop_at_s: float | None
+    counters_snapshot_at_s: tuple[float, ...]
 
 
 _TOP_LEVEL_REQUIRED = (
@@ -146,7 +148,7 @@ _TOP_LEVEL_REQUIRED = (
     "agents",
     "publisher",
 )
-_TOP_LEVEL_OPTIONAL = ("schedule", "probes", "fault", "events")
+_TOP_LEVEL_OPTIONAL = ("schedule", "probes", "fault", "events", "stop_at_s", "counters_snapshot_at_s")
 _TOP_LEVEL_ALLOWED = frozenset(_TOP_LEVEL_REQUIRED) | frozenset(_TOP_LEVEL_OPTIONAL)
 
 _PUBLISHER_REQUIRED = ("host", "uri", "file", "expiry", "cache_time")
@@ -441,6 +443,32 @@ def _parse_events(raw, hosts: int) -> tuple[EventSpec, ...]:
     return tuple(parsed)
 
 
+def _parse_stop_at_s(raw) -> float | None:
+    """Validate the optional `stop_at_s` top-level key and return it, or None if absent.
+
+    Forwarded verbatim into every generated agent config; this module
+    checks only that the value is a number, never what an agent process
+    does with it.
+    """
+    if raw is None:
+        return None
+    return _require_number(raw, "stop_at_s")
+
+
+def _parse_counters_snapshot_at_s(raw) -> tuple[float, ...]:
+    """Validate the optional `counters_snapshot_at_s` top-level key and build the tuple it describes.
+
+    Forwarded verbatim into every generated agent config; this module
+    checks only that the value is a list of numbers. An absent key builds
+    an empty tuple, which is indistinguishable from an explicit `[]`.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ExperimentError("counters_snapshot_at_s must be a list of numbers")
+    return tuple(_require_number(v, f"counters_snapshot_at_s[{idx}]") for idx, v in enumerate(raw))
+
+
 def parse_experiment(raw: dict) -> ExperimentSpec:
     """Validate an experiment description dict and build the `ExperimentSpec` it describes.
 
@@ -497,6 +525,8 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
     probes = _parse_probes(raw.get("probes"), hosts, agents)
     fault = _parse_fault(raw.get("fault"), hosts, agents)
     events = _parse_events(raw.get("events"), hosts)
+    stop_at_s = _parse_stop_at_s(raw.get("stop_at_s"))
+    counters_snapshot_at_s = _parse_counters_snapshot_at_s(raw.get("counters_snapshot_at_s"))
 
     all_at_s = [entry.at_s for entries in schedule.values() for entry in entries]
     if all_at_s and min(all_at_s) < MIN_FIRST_RECORD_MARGIN_S:
@@ -520,6 +550,8 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         probes=probes,
         fault=fault,
         events=events,
+        stop_at_s=stop_at_s,
+        counters_snapshot_at_s=counters_snapshot_at_s,
     )
 
 
@@ -625,6 +657,14 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
         "schedule": schedule,
         "probes": probes,
     }
+
+    # Both optional and, when present, identical for every agent host --
+    # this experiment description has no per-host notion of "stop" or
+    # "snapshot" times, only one shared measurement boundary.
+    if spec.stop_at_s is not None:
+        config["stop_at_s"] = spec.stop_at_s
+    if spec.counters_snapshot_at_s:
+        config["counters_snapshot_at_s"] = list(spec.counters_snapshot_at_s)
 
     drop_rec = spec.fault.get(host, ())
     if drop_rec:
