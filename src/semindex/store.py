@@ -107,6 +107,37 @@ class Store:
         ).fetchone()
         return row[0] if row is not None else None
 
+    def query_by_attrs(
+        self,
+        *,
+        zone: str | None = None,
+        disaster: str | None = None,
+        media: str | None = None,
+    ) -> list[schema.IndexRecord]:
+        """Every held record whose attrs match the given filters, ordered by (origin, seq).
+
+        A filter left None matches any value (CONTEXT.md "Sync agent": this
+        is a probe's local query against this node's own copy of the
+        Semantic Index, never a remote lookup -- map.md explicitly excludes
+        remote lookup from this baseline). `attrs` is not a separate column:
+        this baseline's record counts do not justify duplicating it out of
+        the stored payload just to index it, so this decodes every row and
+        filters in Python. The fixed (origin, seq) ordering gives a probe a
+        deterministic "first match" without needing its own tie-break rule.
+        """
+        rows = self._conn.execute("SELECT payload FROM records ORDER BY origin, seq").fetchall()
+        matches: list[schema.IndexRecord] = []
+        for (payload,) in rows:
+            record = schema.decode(payload)
+            if zone is not None and record.zone != zone:
+                continue
+            if disaster is not None and record.disaster != disaster:
+                continue
+            if media is not None and record.media != media:
+                continue
+            matches.append(record)
+        return matches
+
     # -- writes ----------------------------------------------------------------
 
     def append_received(self, origin: str, seq: int, payload: bytes, content_hash: str) -> StoreResult:
