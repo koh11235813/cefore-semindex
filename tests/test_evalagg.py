@@ -1,10 +1,10 @@
 """Tests for the semindex.evalagg stage-1 evaluation aggregator.
 
-Hand-computed-expected-value coverage for every output table (ticket 05's
-own acceptance criterion), plus a smoke test against the real
-trial-manual sample at /home/lab_shared/semindex-eval (skipped if that
-path is absent -- it is a manually-stored fixture outside this repo, not
-something this test suite can create).
+Hand-computed-expected-value coverage for every output table, plus a
+smoke test against the real trial-manual sample at
+/home/lab_shared/semindex-eval (skipped if that path is absent -- it is
+a manually-stored fixture outside this repo, not something this test
+suite can create).
 """
 
 from __future__ import annotations
@@ -199,8 +199,9 @@ def test_wilson_interval_zero_successes_of_ten_matches_hand_computed_bound():
     """Wilson interval zero successes of ten matches hand computed bound."""
     lo, hi = wilson_interval(0, 10)
     assert lo == 0.0
-    # z^2 / (n + z^2) with z = 1.959963984540054 -> 3.8414588206...  / 13.8414588206...
-    assert hi == pytest.approx(0.27760, abs=1e-4)
+    # Exact closed form at x=0: z^2 / (n + z^2).
+    z2 = 1.959963984540054**2
+    assert hi == pytest.approx(z2 / (10 + z2))
 
 
 def test_wilson_interval_n_zero_is_none():
@@ -227,7 +228,7 @@ def test_kaplan_meier_matches_naive_fraction_when_nothing_is_censored():
 
 
 def test_kaplan_meier_censoring_discriminates_from_naive_fraction():
-    """Kaplan meier censoring discriminates from naive fraction: the advisor-worked example.
+    """Kaplan meier censoring discriminates from naive fraction.
 
     Samples at durations (1, delivered), (2, censored), (3, delivered),
     (5, censored). A naive fraction-delivered-by-t=3 would read 2/4 = 0.5
@@ -313,8 +314,11 @@ def test_derive_t0_ms_falls_back_to_first_event_when_nothing_else_available():
 
 def test_derive_t0_ms_raises_when_there_is_no_evidence_at_all():
     """Derive t0 ms raises when there is no evidence at all."""
-    with pytest.raises(CheckUsageError):
+    with pytest.raises(CheckUsageError) as exc_info:
         derive_t0_ms({"h0": []}, results=None)
+    assert str(exc_info.value) == (
+        "no results.json events, counters lines, or any other ts_ms found to derive t0 from"
+    )
 
 
 # -- full pipeline: hand-computed synthetic run tree -----------------------
@@ -793,14 +797,25 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
     assert len(analyses) == 1
     run = analyses[0]
     assert run.status == "unknown"  # trial-manual has no meta.json
+    # This sample has link_down/link_up events in its results.json, so
+    # t0 is derived via the most precise rung.
+    assert run.t0_source == "scheduler"
     # 60 records (30 each from h0 and h4), all well inside the window
-    # (created between offsets 13s and 71s, the window being [10, 130]s).
+    # (created between offsets 13s and 71s, the window being [10, 130]s),
+    # each reaching all 4 non-origin nodes with nothing censored -- this
+    # particular seed's disconnect schedule never kept a record out past
+    # the window's close.
     assert run.n_records_created == 60
+    assert len(run.discovery_rows) == 240
+    assert sum(1 for r in run.discovery_rows if r["censored"]) == 0
     # Independently confirmed via `grep -c '"event": "probe_discovered"'`
-    # on h2's own events.jsonl: 12 probe_discovered lines, 11 with a
-    # non-empty match, all with ts_ms inside the derived window.
+    # and `grep -c '"event": "probe_retrieved"'` on h2's own events.jsonl:
+    # 12 probe_discovered lines (11 with a non-empty match) and 11
+    # probe_retrieved lines, of which only 7 have `"success": true` --
+    # all fall inside the derived window.
     assert run.probe_issued == 12
     assert run.probe_discovered == 11
+    assert run.probe_retrieved == 7
 
     for name in ("runs.csv", "discovery.csv", "survival.csv", "consistency.csv", "summary.csv", "decisions.csv"):
         assert (outdir / name).is_file()

@@ -9,13 +9,13 @@ it for event-reading, (origin, seq) creation times, control-byte summing
 and probe pairing, and only adds the window cut, censoring, and the
 across-run pooling analyze.py has no reason to know about.
 
-Figures: map.md's own ticket also asks for plots, but this venv has no
-matplotlib (checked at import time, see FIGURES_AVAILABLE below) and the
-operator's hard rule for this effort forbids installing anything. Every
-output here is written as a plain CSV instead, chosen so each one is
-already in long/tidy form a plotting tool can read directly without
-reshaping -- survival.csv in particular is one row per (p, hop, t) grid
-point, exactly the shape a line-per-hop plot needs.
+Figures: a plot of each table would still be useful, but this venv has no
+matplotlib (checked at import time, see FIGURES_AVAILABLE below) and
+nothing may be installed to get one. Every output here is written as a
+plain CSV instead, chosen so each one is already in long/tidy form a
+plotting tool can read directly without reshaping -- survival.csv in
+particular is one row per (p, hop, t) grid point, exactly the shape a
+line-per-hop plot needs.
 
 t0 (map.md "計測の窓"): every agent's own `elapsed_s` is `now -
 t0_ms/1000`, and `t0_ms` only ever reaches the agent as a CLI override
@@ -137,13 +137,13 @@ def discover_runs(store: str, stage: str) -> list[RunRef]:
 def run_has_done_marker(run_dir: str) -> bool:
     """Whether `<run_dir>/DONE` exists.
 
-    DONE is the runner's own sentinel for "this run finished and its
-    retained files are complete" (map.md's runner ticket, 04, is still
-    open as of this module -- this is this module's own interface
-    expectation of it, not yet something any committed code writes). A
-    run missing it is skipped by default (ticket 05's "skip runs without
-    a DONE file"); `--include-undone` overrides that for exactly the
-    hand-stored trial-manual sample, which has neither DONE nor meta.json.
+    DONE is meant to be a run's own sentinel for "this run finished and
+    its retained files are complete" -- no committed code writes it yet
+    (the runner that would is not written), so this is this module's own
+    interface expectation of a file that does not exist on disk today. A
+    run missing it is skipped by default; `--include-undone` overrides
+    that for exactly the hand-stored trial-manual sample, which has
+    neither DONE nor meta.json.
     """
     return os.path.isfile(os.path.join(run_dir, "DONE"))
 
@@ -154,15 +154,16 @@ def run_has_done_marker(run_dir: str) -> bool:
 def read_meta(run_dir: str) -> tuple[str, list[str]]:
     """This run's validity status and flags from `<run_dir>/meta.json`.
 
-    Status is one of "valid", "flagged" or "unknown". `meta.json` is the
-    runner's own output (ticket 04, still open): map.md only commits to
-    it holding `{"valid": bool, "flags": [...]}` "under some key" -- so a
-    dict with both keys is accepted whether it sits at the top level or
-    one level down (e.g. `{"check": {"valid": ..., "flags": [...]}}`).
-    Missing the file, an unparsable file, or a file whose shape matches
-    neither all mean "unknown", never "flagged": there is no evidence
-    here that the run's own preconditions actually failed, only that this
-    module could not read a verdict.
+    Status is one of "valid", "flagged" or "unknown". `meta.json` is
+    meant to be a run validity-checker's own output; no committed code
+    writes one yet, and its shape is only committed to holding
+    `{"valid": bool, "flags": [...]}` "under some key" -- so a dict with
+    both keys is accepted whether it sits at the top level or one level
+    down (e.g. `{"check": {"valid": ..., "flags": [...]}}`). Missing the
+    file, an unparsable file, or a file whose shape matches neither all
+    mean "unknown", never "flagged": there is no evidence here that the
+    run's own preconditions actually failed, only that this module could
+    not read a verdict.
     """
     path = os.path.join(run_dir, "meta.json")
     if not os.path.isfile(path):
@@ -605,7 +606,7 @@ def _write_csv(path: str, fieldnames: list[str], rows: list[dict]) -> None:
 
 
 def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
-    """runs.csv: one row per run (map.md's own run-level fields, ticket 05's own column list)."""
+    """runs.csv: one row per run -- counts, control bytes in/out of the window, and probe counts."""
     rows = []
     for run in analyses:
         n_pairs = len(run.discovery_rows)
@@ -727,12 +728,15 @@ CONSISTENCY_FIELDS = ["p", "seed", "origin", "seq", "time_ms", "censored"]
 
 
 def _included(analyses: list[RunAnalysis]) -> list[RunAnalysis]:
-    """Every run except flagged ones (map.md "印つきの run は集計から外す"; "unknown" runs are kept --
+    """Every run except flagged ones (map.md "印つきの run は集計から外す").
 
-    see the module's report for why: excluding every run this module
-    cannot positively confirm as passing would also exclude the one real
-    sample run this effort has to check against, which has no meta.json
-    at all).
+    2026-10-23: "unknown" runs (no meta.json at all -- its producer does
+    not exist yet, see `read_meta`) are kept, not excluded, on purpose:
+    map.md's own text only ever names FLAGGED runs as the ones to leave
+    out of aggregates. Excluding every run this module cannot positively
+    confirm as passing would also exclude the only run with real
+    (non-synthetic) data this module has to check against, which has no
+    meta.json at all and would otherwise aggregate to nothing.
     """
     return [run for run in analyses if run.status != "flagged"]
 
