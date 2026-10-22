@@ -857,7 +857,7 @@ def test_check_t2c_precondition_fails_on_an_overdue_restart(tmp_path: Path, caps
 
 def test_check_t2c_protocol_fails_when_holder_advertises_a_seq_it_had_not_yet_stored(tmp_path: Path, capsys):
     """2026-10-22 fix: the false-advertisement bug this check now catches
-    directly -- h1's life 2 claims hi=3 in its first post-restart state_rx to h2, but by that
+    directly -- h1's life 2 claims hi=3 in its post-restart state_rx to h2, but by that
     reply's own ts (offset 19) h1's events.jsonl shows it had actually stored only seqs 1-2 (its
     seq-3 store does not land until offset 20). The old checks alone would miss this: h2's own
     seq-3 record_stored still lands after h1's (not "served early"), and no fetch_timeout
@@ -879,9 +879,9 @@ def test_check_t2c_protocol_fails_when_holder_advertises_a_seq_it_had_not_yet_st
     assert rc == 1
     out = capsys.readouterr().out
     assert (
-        "FAIL: h1's advertised hi for h0 at its first post-restart state_rx never exceeds what "
-        "it had actually stored by then: advertised hi=3, holder's own contiguous progress at "
-        "ts 1700000019000 was 2"
+        "FAIL: h1's advertised hi for h0 in its post-restart state_rx at ts 1700000019000 never "
+        "exceeds what it had actually stored by then: advertised hi=3, holder's own contiguous "
+        "progress at ts 1700000019000 was 2"
     ) in out.splitlines()
 
 
@@ -906,7 +906,73 @@ def test_check_t2c_precondition_fails_when_the_state_rx_never_mentions_the_origi
     assert rc == 3
     out = capsys.readouterr().out
     assert (
-        "PRECOND-FAIL: h2's first post-restart state_rx from h1 actually advertised a hi for h0: hi={}"
+        "PRECOND-FAIL: h2's post-restart state_rx from h1 at ts 1700000019000 actually advertised a hi for h0: hi={}"
+    ) in out.splitlines()
+
+
+def test_check_t2c_protocol_fails_when_a_stale_downtime_state_rx_masks_a_dishonest_post_restart_one(
+    tmp_path: Path, capsys
+):
+    """2026-10-22 fix: a state_rx h2 received DURING h1's downtime (offset
+    9, strictly before the restart's actual finish at offset 11) used to be misclassified as
+    "post-restart" because the old selection compared against h1's own first counters line
+    (offset 8) instead of restart_ts. An honest-but-stale reply there used to satisfy the whole
+    check on its own (it was always index 0 of the sorted list), leaving the genuinely dishonest
+    post-restart advertisement at offset 19 (hi=4 while h1 had only stored 1-2 by then) never
+    examined at all."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    # h1 had actually stored exactly seqs 1-2 by offset 9 (its seq-3
+    # store does not land until offset 20), so hi: {"h0": 2} here is
+    # honest -- but it arrived during the downtime (restart finishes at
+    # offset 11), not after it.
+    events.insert(2, {"ts_ms": _ts_ms(9), "event": "state_rx", "neighbor": "h1", "hi": {"h0": 2}})
+    for event in events:
+        if event.get("event") == "state_rx" and event["ts_ms"] == _ts_ms(19):
+            event["hi"] = {"h0": 4}  # dishonest: h1 had only stored 1-2 by offset 19
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's advertised hi for h0 in its post-restart state_rx at ts 1700000019000 never "
+        "exceeds what it had actually stored by then: advertised hi=4, holder's own contiguous "
+        "progress at ts 1700000019000 was 2"
+    ) in out.splitlines()
+
+
+def test_check_t2c_protocol_fails_when_a_later_post_restart_state_rx_is_dishonest_even_though_the_first_was_honest(
+    tmp_path: Path, capsys
+):
+    """2026-10-22 fix: the old check only ever judged the FIRST
+    post-restart state_rx (index 0 of the sorted list). A holder whose first reply after
+    restarting is honest but whose later one overstates its progress used to pass undetected."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    # h1 stored seq 3 at offset 20 and seq 4 at offset 26 (see
+    # _write_t2c_happy_path); this second state_rx at offset 21 claims
+    # hi=4 while h1's own contiguous progress at that ts is still 3.
+    events.insert(3, {"ts_ms": _ts_ms(21), "event": "state_rx", "neighbor": "h1", "hi": {"h0": 4}})
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's advertised hi for h0 in its post-restart state_rx at ts 1700000021000 never "
+        "exceeds what it had actually stored by then: advertised hi=4, holder's own contiguous "
+        "progress at ts 1700000021000 was 3"
     ) in out.splitlines()
 
 

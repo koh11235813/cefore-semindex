@@ -628,32 +628,46 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
     )
 
     counters_holder = _events_of(holder_events, "counters")
-    life1_end = counters_holder[0]["ts_ms"] if counters_holder else None
-    c.precondition(f"{holder} wrote at least one counters line (its life 1 shut down cleanly)", life1_end is not None)
 
+    # 2026-10-22 fix: "post-restart" used to be decided against holder's
+    # own first `counters` line (its life-1 shutdown), not against
+    # restart_ts. far can log a state_rx from holder DURING the downtime
+    # itself (a reply already in flight when holder went down) whose ts
+    # still lands after that counters line if the restart happens to
+    # finish quickly -- that stale, often-honest reply was then the ONLY
+    # one ever judged (index 0 of the old sorted list), so a genuinely
+    # dishonest advertisement sent once life 2 actually started went
+    # unexamined. restart_ts (results.json's own host_app_restart row,
+    # which restart_record_and_ts's docstring says marks the restart's
+    # actual FINISH) is sampled by ReCefore's own scheduler, not by
+    # anything holder or far wrote, so it is the only boundary here that
+    # cannot itself be stale.
     post_restart_state_rx = sorted(
-        (e for e in _events_of(far_events, "state_rx", neighbor=holder) if life1_end is not None and e["ts_ms"] > life1_end),
+        (e for e in _events_of(far_events, "state_rx", neighbor=holder) if e["ts_ms"] > restart_ts),
         key=lambda e: e["ts_ms"],
     )
-    first_post_restart_state_rx = post_restart_state_rx[0] if post_restart_state_rx else None
-    c.precondition(f"{far} heard from {holder} again after its restart (state_rx)", first_post_restart_state_rx is not None)
+    c.precondition(f"{far} heard from {holder} again after its restart (state_rx)", bool(post_restart_state_rx))
 
-    if first_post_restart_state_rx is not None:
-        state_rx_ts = first_post_restart_state_rx["ts_ms"]
+    # 2026-10-22 fix: judge EVERY post-restart state_rx, not just the
+    # first -- a holder whose first reply after coming back up is honest
+    # but whose next one overstates its progress was invisible to a check
+    # that only ever looked at the first row.
+    for state_rx in post_restart_state_rx:
+        state_rx_ts = state_rx["ts_ms"]
 
-        # 2026-10-22 fix: the actual bug shape -- a life-2 holder
-        # advertising a higher hi than it has actually stored -- is now
-        # checked directly against what the holder's own events.jsonl
-        # shows it had stored as of this same reply, instead of only
-        # inferred indirectly through a fetch_timeout that may or may not
-        # follow. A reply that never mentions `origin` at all (decode
-        # failure -> `{}`, or a reply sent before any progress existed to
-        # advertise) is a PRECONDITION gap, not a passing advertised_hi=0:
-        # defaulting silently would make this whole check a no-op for
-        # exactly the malformed/empty-reply runs it most needs to catch.
-        advertised = first_post_restart_state_rx.get("hi", {})
+        # The actual bug shape -- a life-2 holder advertising a higher hi
+        # than it has actually stored -- is checked directly against what
+        # the holder's own events.jsonl shows it had stored as of this
+        # same reply, instead of only inferred indirectly through a
+        # fetch_timeout that may or may not follow. A reply that never
+        # mentions `origin` at all (decode failure -> `{}`, or a reply
+        # sent before any progress existed to advertise) is a
+        # PRECONDITION gap, not a passing advertised_hi=0: defaulting
+        # silently would make this whole check a no-op for exactly the
+        # malformed/empty-reply runs it most needs to catch.
+        advertised = state_rx.get("hi", {})
         have_advertised_hi = c.precondition(
-            f"{far}'s first post-restart state_rx from {holder} actually advertised a hi for {origin}",
+            f"{far}'s post-restart state_rx from {holder} at ts {state_rx_ts:.0f} actually advertised a hi for {origin}",
             origin in advertised,
             f"hi={advertised!r}",
         )
@@ -663,30 +677,32 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
                 [e["seq"] for e in holder_stored_events if e["ts_ms"] <= state_rx_ts]
             )
             c.protocol(
-                f"{holder}'s advertised hi for {origin} at its first post-restart state_rx never exceeds what it had actually stored by then",
+                f"{holder}'s advertised hi for {origin} in its post-restart state_rx at ts {state_rx_ts:.0f} never exceeds what it had actually stored by then",
                 advertised_hi <= holder_contiguous_as_of,
                 f"advertised hi={advertised_hi}, holder's own contiguous progress at ts {state_rx_ts:.0f} was {holder_contiguous_as_of}",
             )
 
-        # "progress not ahead", the second-order case: a false
-        # advertisement whose seq the holder (now caught up) manages to
-        # serve correctly before the check above's own ts snapshot would
-        # still show up here too, through the retries it costs -- 2500ms
-        # grace (interest_lifetime_ms's own 2000ms default, plus slack for
-        # one retry sent just as holder came back up) excludes timeouts
-        # that only mean holder was still down, not yet evidence of a
-        # false advertisement.
-        grace_deadline = state_rx_ts + 2500
-        late_timeouts = [
-            e
-            for e in _events_of(far_events, "fetch_timeout", origin=origin, neighbor=holder)
-            if e["ts_ms"] > grace_deadline
-        ]
-        c.protocol(
-            f"{holder}'s life 2 never advertised a record it could not actually serve to {far}",
-            late_timeouts == [],
-            f"fetch_timeout(s) after grace: {late_timeouts}",
-        )
+    # "progress not ahead", the second-order case: a false advertisement
+    # whose seq the holder (now caught up) manages to serve correctly
+    # before being caught above would still show up here too, through the
+    # retries it costs -- 2500ms grace (interest_lifetime_ms's own 2000ms
+    # default, plus slack for one retry sent just as holder came back up)
+    # excludes timeouts that only mean holder was still down, not yet
+    # evidence of a false advertisement. Anchored on restart_ts itself,
+    # not on the first state_rx row (which may arrive late, or not at
+    # all), so this check still runs even when the precondition above
+    # already failed.
+    grace_deadline = restart_ts + 2500
+    late_timeouts = [
+        e
+        for e in _events_of(far_events, "fetch_timeout", origin=origin, neighbor=holder)
+        if e["ts_ms"] > grace_deadline
+    ]
+    c.protocol(
+        f"{holder}'s life 2 never advertised a record it could not actually serve to {far}",
+        late_timeouts == [],
+        f"fetch_timeout(s) after grace: {late_timeouts}",
+    )
 
     c.protocol(f"{holder} (restarted) wrote exactly 2 counters lines, one per life", len(counters_holder) == 2, f"got {len(counters_holder)}")
     for node in (origin, far):
