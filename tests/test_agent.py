@@ -278,6 +278,10 @@ def test_a_scheduled_record_fires_only_once_its_at_s_has_come_due(tmp_path: Path
     created = [e for e in lines if e["event"] == "record_created"]
     assert len(created) == 1
     assert (created[0]["origin"], created[0]["seq"]) == ("h0", 1)
+    # map.md "時刻は壁時計": every event line gets a wall-clock ts_ms, stamped by
+    # EventWriter.write from the agent's own injected clock (1005.0s here) --
+    # not merely present, but the exact value that clock reads at this step.
+    assert created[0]["ts_ms"] == 1_005_000
 
 
 def test_a_record_fetch_that_gets_no_reply_in_time_emits_fetch_timeout(tmp_path: Path):
@@ -344,6 +348,12 @@ def test_fault_drop_rec_withholds_exactly_n_replies_then_answers(tmp_path: Path)
 def test_probe_discovers_and_retrieves_the_first_matching_record(tmp_path: Path):
     """A probe emits probe_discovered with every match, then fetches the first match's
     content body in full, emitting probe_retrieved with success=True and the byte count.
+
+    Also pins down that the agent's own receive_timeout_ms/chunk_lifetime_ms config
+    overrides actually reach CefpycoTransport, rather than silently falling back to
+    its module-level defaults: both are given distinguishing values below (not equal
+    to either default), and every receive() call and the fetch's own Interest must
+    carry them.
     """
     content_name = "ccnx:/content/h0/body"
     handle = _FakeHandle(
@@ -358,6 +368,8 @@ def test_probe_discovers_and_retrieves_the_first_matching_record(tmp_path: Path)
             {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
         ],
         probes=[{"at_s": 0, "zone": "zone1"}],
+        receive_timeout_ms=55,
+        chunk_lifetime_ms=777,
     )
     agent = build_agent(config, handle, clock=_FakeClock(0.0))
     agent.step()
@@ -368,6 +380,8 @@ def test_probe_discovers_and_retrieves_the_first_matching_record(tmp_path: Path)
     assert discovered["matches"] == [{"origin": "h0", "seq": 1, "content_name": content_name}]
     retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
     assert (retrieved["success"], retrieved["bytes"]) == (True, 5)
+    assert handle.sent_interests[-1] == (content_name, 0, 777)
+    assert handle.receive_timeout_calls == [55, 55]
 
 
 def test_probe_retrieval_failure_does_not_block_the_loop(tmp_path: Path):
@@ -394,6 +408,58 @@ def test_probe_retrieval_failure_does_not_block_the_loop(tmp_path: Path):
     assert (retrieved["success"], retrieved["bytes"]) == (False, 0)
 
     agent.step()  # the loop is still usable afterward; this must not raise
+
+
+def test_probe_targets_the_lowest_origin_seq_match_not_the_highest(tmp_path: Path):
+    """_run_probe fetches matches[0], and query_by_attrs itself orders its results by
+    (origin, seq) ascending -- so with two equally-matching records from different
+    origins, the probe must always target the lower (origin, seq) pair
+    deterministically, not whichever happened to be inserted or discovered last.
+    """
+    content_name_h0 = "ccnx:/content/h0/body"
+    content_name_h1 = "ccnx:/content/h1/body"  # never backed by any Data below
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [
+            _FakePacket(),  # absorbed by step()'s own poll()
+            _FakePacket(is_data=True, name=content_name_h0, payload=b"from-h0", chunk_num=0, end_chunk_num=0),
+        ],
+        # Correct code resolves the fetch on the second packet above without ever
+        # waiting out a deadline; a clock is still wired here (ticking, not frozen)
+        # so that IF a regression picked matches[-1] (h1's unreachable content) the
+        # fetch would time out cleanly instead of spinning forever against a clock
+        # that can never reach its own deadline.
+        clock=clock,
+        step_s=0.2,
+    )
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 0, "content_name": content_name_h0, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+    )
+    agent = build_agent(config, handle, clock=clock)
+    # Seed a second, received record from a *later* origin with the same zone (as if
+    # h1 had synced it from a neighbor), so the probe's own query sees two matches.
+    record_h1 = schema.IndexRecord(
+        origin="h1", seq=1, content_name=content_name_h1, zone="zone1", disaster="flood", media="image",
+        observed_at=1,
+    )
+    payload_h1 = schema.encode(record_h1)
+    agent._store.append_received("h1", 1, payload_h1, schema.content_hash(payload_h1))
+
+    agent.step()  # fires the h0 schedule entry (creating ("h0", 1)) and then the probe
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    discovered = next(e for e in lines if e["event"] == "probe_discovered")
+    assert [(m["origin"], m["seq"]) for m in discovered["matches"]] == [("h0", 1), ("h1", 1)]
+    retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
+    # If the probe targeted matches[-1] (h1's record) instead, this would be
+    # ("h1", 1) and the fetch would fail (no Data for content_name_h1 above).
+    assert (retrieved["origin"], retrieved["seq"]) == ("h0", 1)
+    assert retrieved["success"] is True
 
 
 def test_a_stop_request_mid_probe_fetch_ends_the_wait_promptly_and_still_shuts_down(tmp_path: Path):

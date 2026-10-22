@@ -63,6 +63,11 @@ class _FakeHandle:
         self.registered: list[str] = []
         self.sent_interests: list[tuple[str, int, int]] = []  # (name, chunk_num, lifetime)
         self.sent_data: list[tuple[str, bytes, int, int, int]] = []  # (name, payload, chunk_num, expiry, cache_time)
+        # 2026-10-22 fix: nothing recorded what timeout_ms a caller actually
+        # passed to receive(), so a config's receive_timeout_ms silently
+        # failing to reach CefpycoTransport (and hitting the module's own
+        # DEFAULT_RECEIVE_TIMEOUT_MS instead) would still pass every test.
+        self.receive_timeout_calls: list[int] = []
 
     def register(self, name: str) -> None:
         """Record that `name` was registered."""
@@ -78,6 +83,7 @@ class _FakeHandle:
 
     def receive(self, timeout_ms: int) -> _FakePacket:
         """Pop and return the next queued packet, or _NOTHING once the queue is empty."""
+        self.receive_timeout_calls.append(timeout_ms)
         if self._clock is not None:
             self._clock.tick(self._step_s)
         if self.packets:
@@ -313,6 +319,31 @@ def test_late_data_after_the_deadline_already_fired_is_still_routed_not_dropped(
     assert engine.on_record_calls == [(name, payload, 1.6)]
 
 
+def test_on_time_data_pops_the_deadline_so_a_later_poll_reports_no_timeout():
+    """Data that arrives before its own deadline must remove that deadline from
+    tracking, not just deliver the reply -- a later poll() at a time past where
+    the deadline would have been must then report no timeout for that name. The
+    reassembly path (_dispatch's Data branch) must actually execute the pop; a
+    version that delivered the reply without popping would still pass every
+    other test here (the deadline is correct until the next poll() re-checks it),
+    which is why it needs this test of its own.
+    """
+    name = "ccnx:/semidx/g/h1/rec/h0/3"
+    payload = _record_payload()
+    handle = _FakeHandle()
+    engine = _StubEngine()
+    clock = _FakeClock(0.0)
+    transport = CefpycoTransport(handle, engine, clock=clock)
+    transport.send_interest(name, 1000)  # deadline at clock=1.0
+    handle.packets.append(_FakePacket(is_data=True, name=name, payload=payload))
+    clock.value = 0.5
+    transport.poll()  # on-time Data: delivered, and its deadline must be gone
+    assert engine.on_record_calls == [(name, payload, 0.5)]
+    clock.value = 2.0  # past the original (now-stale) deadline
+    transport.poll()
+    assert engine.on_fetch_timeout_calls == []
+
+
 def test_fetch_content_reassembles_every_chunk_and_stops_at_end_chunk_num():
     """Fetches chunk 0..end one Interest at a time and counts bytes both ways."""
     name = "ccnx:/content/h0/body"
@@ -320,6 +351,29 @@ def test_fetch_content_reassembles_every_chunk_and_stops_at_end_chunk_num():
     handle = _FakeHandle(
         [
             _FakePacket(is_data=True, name=name, payload=b"hello-", chunk_num=0, end_chunk_num=None),
+            _FakePacket(is_data=True, name=name, payload=b"world!", chunk_num=1, end_chunk_num=1),
+        ],
+        clock=clock,
+    )
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
+    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
+    assert (ok, total) == (True, len(b"hello-world!"))
+    assert [chunk_num for (_name, chunk_num, _lifetime) in handle.sent_interests] == [0, 1]
+
+
+def test_fetch_content_does_not_stop_early_when_a_later_chunk_advertises_the_end():
+    """end_chunk_num == chunk_num (equality, not merely `is not None`) is what decides
+    the fetch is complete. cefputfile only sets end_chunk_num on the last chunk, so
+    this is latent today, but chunk 0 advertising end_chunk_num=1 (the real end is
+    chunk 1) must not stop the fetch after chunk 0 -- the earlier reassembly test
+    above has end_chunk_num=None on chunk 0 and so cannot catch a regression to
+    `is not None` alone.
+    """
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [
+            _FakePacket(is_data=True, name=name, payload=b"hello-", chunk_num=0, end_chunk_num=1),
             _FakePacket(is_data=True, name=name, payload=b"world!", chunk_num=1, end_chunk_num=1),
         ],
         clock=clock,
@@ -383,9 +437,10 @@ def test_fetch_content_treats_a_chunk_with_no_payload_tlv_as_empty_not_a_crash()
 def test_fetch_content_stops_promptly_when_should_stop_becomes_true_mid_wait():
     """A chunk wait that would otherwise burn its full chunk_lifetime_ms exits as
     soon as should_stop() reports true, instead of only being noticed on the agent
-    loop's next step() -- the SIGTERM-while-mid-fetch case ticket requirement 5's
-    well-under-2s shutdown budget depends on (map.md's T1 partition-phase probe is
-    exactly this: content that is unreachable by design).
+    loop's next step() -- the SIGTERM-while-mid-fetch case this well-under-2s
+    shutdown budget depends on: the 2 s SIGTERM-to-SIGKILL budget a ReCefore
+    host_apps process gets (map.md's T1 partition-phase probe is exactly this:
+    content that is unreachable by design).
     """
     name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
