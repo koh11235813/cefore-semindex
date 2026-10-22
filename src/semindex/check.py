@@ -442,21 +442,22 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
         f"content name(s) other than {spec.publisher.uri!r}: {bad_content_names}",
     )
 
-    # 2026-10-23 fix: this used to accept
-    # ANY post-discovery probe_retrieved row with success=True anywhere
-    # later in the file, with no tie to the after-recovery discovery it is
-    # supposed to be the body fetch FOR -- a retrieval of some other
-    # (origin, seq, content_name) entirely still satisfied it. ts_ms is no
-    # longer compared at all (dropped the old strict `>`): EventWriter
+    # 2026-10-23 fix (review finding): the
+    # previous version of this fix still used `next(... for e in
+    # prober_events[after_idx + 1:] if e.get("event") == "probe_retrieved")`,
+    # which SKIPS any intervening row that is not itself a probe_retrieved
+    # (e.g. h2's own shutdown `counters` line) and keeps scanning until it
+    # finds one -- a real after-recovery retrieval moved past such a row
+    # still satisfied this check, with nothing between it and the
+    # discovery actually required. Agent.step()'s own _run_probe writes a
+    # successful discovery's retrieval synchronously, right after it, with
+    # nothing else from this node logged in between, so the row that
+    # actually answers THIS discovery is the IMMEDIATE next row in h2's
+    # own events.jsonl -- indexed directly, never found by scanning past
+    # whatever sits in between. ts_ms is still not compared (EventWriter
     # rounds to whole milliseconds, so a fast in-process fetch can
-    # legitimately land on the exact same ts_ms as its own discovery.
-    # Agent.step()'s own _run_probe writes a successful discovery's
-    # retrieval synchronously, right after it, so the row that actually
-    # answers THIS discovery is the very next probe_retrieved event h2
-    # logs -- never a later success found by scanning the whole file.
-    retrieved_after = next(
-        (e for e in prober_events[after_idx + 1 :] if e.get("event") == "probe_retrieved"), None
-    )
+    # legitimately land on the exact same ts_ms as its own discovery).
+    retrieved_after = prober_events[after_idx + 1] if after_idx + 1 < len(prober_events) else None
     after_match_tuples = [(mm["origin"], mm["seq"]) for mm in after_discovered["matches"]]
     if not after_match_tuples:
         # An empty discovery is already flagged above ("discovers all N+M
@@ -468,13 +469,14 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
         min_match = min(after_match_tuples)
         retrieval_ok = (
             retrieved_after is not None
+            and retrieved_after.get("event") == "probe_retrieved"
             and (retrieved_after.get("origin"), retrieved_after.get("seq")) == min_match
             and retrieved_after.get("content_name") == spec.publisher.uri
             and retrieved_after.get("success") is True
         )
         detail = (
             f"{retrieved_after!r}" if retrieved_after is not None
-            else "no probe_retrieved row followed the after-recovery discovery"
+            else "no row followed the after-recovery discovery"
         )
     c.protocol("after-recovery probe retrieves the content body", retrieval_ok, detail)
 

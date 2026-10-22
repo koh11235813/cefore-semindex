@@ -278,9 +278,13 @@ def test_check_t1_protocol_fails_when_the_only_surviving_retrieval_is_the_during
 
     assert rc == 1
     out = capsys.readouterr().out
+    # 2026-10-23 fix (review finding): pairing is by the
+    # literal next ROW now (see the fix comment above retrieved_after in check.py), so once the
+    # real retrieval is gone, the row right after the after-recovery discovery is h2's own
+    # shutdown `counters` line -- shown here, not a generic "nothing followed" message.
     assert (
         "FAIL: after-recovery probe retrieves the content body: "
-        "no probe_retrieved row followed the after-recovery discovery"
+        "{'ts_ms': 1700000050000, 'event': 'counters', 'control_bytes_sent': 5, 'control_bytes_received': 15}"
     ) in out.splitlines()
 
 
@@ -419,7 +423,8 @@ def test_check_t1_precondition_fails_when_link_down_or_link_up_did_not_actually_
 def test_check_t1_protocol_fails_on_a_wrong_target_after_recovery_retrieval(tmp_path: Path, capsys):
     """2026-10-23 fix: the after-recovery retrieval check used to accept ANY
     later probe_retrieved row with success=True, with no tie to the discovery it is supposed to
-    be the body fetch for. Swaps the real retrieval (offset 46, origin h0 seq 1) for one naming a
+    be the body fetch for. Replaces the real retrieval (offset 46, origin h0 seq 1), IN PLACE so
+    it is still the immediate next row after the after-recovery discovery, with one naming a
     completely different (origin, seq, content_name) that still reports success."""
     experiment_path = tmp_path / "t1.json"
     _write_experiment(experiment_path, _t1_experiment())
@@ -427,18 +432,17 @@ def test_check_t1_protocol_fails_on_a_wrong_target_after_recovery_retrieval(tmp_
     _write_t1_happy_path(run_dir)
     h2_path = _node_events_path(run_dir, "h2")
     events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
-    events = [e for e in events if not (e.get("event") == "probe_retrieved" and e["ts_ms"] == _ts_ms(46))]
-    events.append(
-        {
-            "ts_ms": _ts_ms(46),
-            "event": "probe_retrieved",
-            "origin": "wrong",
-            "seq": 99,
-            "content_name": "ccnx:/wrong",
-            "success": True,
-            "bytes": 5,
-        }
-    )
+    for i, event in enumerate(events):
+        if event.get("event") == "probe_retrieved" and event["ts_ms"] == _ts_ms(46):
+            events[i] = {
+                "ts_ms": _ts_ms(46),
+                "event": "probe_retrieved",
+                "origin": "wrong",
+                "seq": 99,
+                "content_name": "ccnx:/wrong",
+                "success": True,
+                "bytes": 5,
+            }
     _write_jsonl(h2_path, events)
 
     rc = run_check("t1", str(experiment_path), str(run_dir))
@@ -469,6 +473,38 @@ def test_check_t1_all_pass_when_discovery_and_retrieval_share_one_ts_ms(tmp_path
     _write_jsonl(h2_path, events)
 
     assert run_check("t1", str(experiment_path), str(run_dir)) == 0
+
+
+def test_check_t1_protocol_fails_when_an_intervening_row_separates_the_retrieval_from_its_discovery(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix (review finding): the previous fix
+    for the wrong-target case above still scanned forward with `next(...)` for the next
+    probe_retrieved EVENT, skipping any intervening row that is not itself one -- a reviewer
+    reproduced this by moving the REAL after-recovery retrieval (offset 46, the correct target)
+    past h2's own shutdown `counters` line (offset 50) instead of leaving it immediately after
+    the discovery. Both flags this check reads stayed true; the retrieval simply had no adjacent
+    discovery any more. Pairing by the literal next ROW, not the next matching event, must catch
+    this."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    retrieved = next(e for e in events if e.get("event") == "probe_retrieved" and e["ts_ms"] == _ts_ms(46))
+    events.remove(retrieved)
+    events.append(retrieved)  # now follows the counters line instead of the discovery
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: after-recovery probe retrieves the content body: "
+        "{'ts_ms': 1700000050000, 'event': 'counters', 'control_bytes_sent': 5, 'control_bytes_received': 15}"
+    ) in out.splitlines()
 
 
 def test_check_t1_precondition_fails_when_m_records_leak_to_relay_and_far_during_the_outage(
