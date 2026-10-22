@@ -21,7 +21,7 @@ from semindex.agent import (
     load_config,
     validate_config,
 )
-from semindex.store import OriginProgress
+from semindex.store import OriginProgress, Store
 
 from test_cefpyco_transport import _FakeClock, _FakeHandle, _FakePacket
 
@@ -512,3 +512,100 @@ def test_two_agents_converge_their_stores_over_cross_wired_fake_handles(tmp_path
     assert agent1._store.get_progress("h0").hi == 1
     assert agent0._store.get_record("h1", 1) == agent1._store.get_record("h1", 1)
     assert agent1._store.get_record("h0", 1) == agent0._store.get_record("h0", 1)
+
+
+# -- restart re-fire: a second life on the same state_dir must not redo the first's work ---
+
+
+def test_a_second_life_on_the_same_state_dir_creates_no_duplicate_records_and_reprobes_nothing_past(
+    tmp_path: Path,
+):
+    """Two lives of the same node, same config, same state_dir (ReCefore's host_apps
+    gives no other way to stop/restart one host app than SIGTERM then relaunch): the
+    first life runs two schedule entries and one probe, then stops (shutdown(), the
+    same flush+close a real SIGTERM's run() does); a second life, built fresh against
+    the same state_dir and a later clock, must not recreate the two already-made
+    records and must not re-emit the already-run probe -- but it must still run the
+    schedule entry and probe that are genuinely new in this life.
+    """
+    clock = _FakeClock(0.0)
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 1, "content_name": "ccnx:/content/h0/a", "zone": "zone1", "disaster": "flood", "media": "image"},
+            {"at_s": 2, "content_name": "ccnx:/content/h0/b", "zone": "zone1", "disaster": "flood", "media": "image"},
+            {"at_s": 10, "content_name": "ccnx:/content/h0/c", "zone": "zone1", "disaster": "flood", "media": "image"},
+        ],
+        probes=[{"at_s": 1, "zone": "zone1"}, {"at_s": 10, "zone": "zone1"}],
+    )
+
+    # First life: elapsed reaches 3s, so only the at_s=1 and at_s=2 schedule entries
+    # and the at_s=1 probe are due; at_s=10 entries are not reached yet. The probe's
+    # own fetch_content has nothing to retrieve (no Data queued), so the handle's
+    # clock must auto-tick (as in the probe-failure tests above) or that wait loop's
+    # deadline, compared against an otherwise-frozen clock, would never be crossed.
+    handle1 = _FakeHandle([], clock=clock, step_s=0.2)
+    agent1 = build_agent(config, handle1, clock=clock)
+    clock.value = 3.0
+    agent1.step()
+    agent1.shutdown()  # same flush+close a real SIGTERM's run() would have done
+
+    events_path = Path(config.state_dir) / "events.jsonl"
+    first_life = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [(e["origin"], e["seq"]) for e in first_life if e["event"] == "record_created"] == [
+        ("h0", 1),
+        ("h0", 2),
+    ]
+    assert len([e for e in first_life if e["event"] == "probe_discovered"]) == 1
+
+    # Second life: a fresh Agent/CefpycoTransport/EventWriter (a real relaunch would
+    # reopen events.jsonl too) built against the *same* state_dir, with elapsed
+    # already at 20s by the time it first steps -- every at_s <= 20 entry would be
+    # "due" if nothing were skipped, including the two already fired in the first life.
+    handle2 = _FakeHandle([], clock=clock, step_s=0.2)
+    agent2 = build_agent(config, handle2, clock=clock)
+    clock.value = 20.0
+    agent2.step()
+
+    second_life = [json.loads(line) for line in events_path.read_text().splitlines()][len(first_life) :]
+    created_second = [e for e in second_life if e["event"] == "record_created"]
+    # Only the at_s=10 entry ("c", seq 3) is new in this life; seq 1/2 must not reappear.
+    assert [(e["origin"], e["seq"]) for e in created_second] == [("h0", 3)]
+    assert agent2._store.get_progress("h0").hi == 3  # 2 from the first life + 1 new, never 4+
+
+    discovered_second = [e for e in second_life if e["event"] == "probe_discovered"]
+    # Only the at_s=10 probe is new; the at_s=1 probe must not re-fire.
+    assert len(discovered_second) == 1
+
+
+def test_build_agent_fails_at_startup_when_the_schedule_is_shorter_than_the_persisted_own_record_count(
+    tmp_path: Path,
+):
+    """A state_dir already holding more own records than the given config's schedule
+    has entries is not a timing question -- it is the config no longer matching the
+    state_dir it was paired with (e.g. the wrong config file after an edit). This
+    must fail at startup with an exact diagnostic, not silently run a truncated
+    schedule or crash later on a negative slice doing something unintended.
+    """
+    import os
+
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 1, "content_name": "ccnx:/content/h0/a", "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+    )
+    os.makedirs(config.state_dir, exist_ok=True)
+    pre_seeded = Store(Path(config.state_dir) / "index.db")
+    pre_seeded.append_own(
+        origin="h0", content_name="x", zone="zone1", disaster="flood", media="image", observed_at=1
+    )
+    pre_seeded.append_own(
+        origin="h0", content_name="y", zone="zone1", disaster="flood", media="image", observed_at=2
+    )
+    pre_seeded.close()
+
+    handle = _FakeHandle()
+    with pytest.raises(ConfigError) as exc_info:
+        build_agent(config, handle, clock=_FakeClock(0.0))
+    assert str(exc_info.value) == "h0: state_dir already holds 2 own record(s) but schedule has only 1 entries"

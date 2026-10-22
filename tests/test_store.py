@@ -234,3 +234,43 @@ def test_query_by_attrs_on_an_empty_store_returns_empty_list(tmp_path: Path):
     """Querying a store with no records at all returns an empty list."""
     store = Store(tmp_path / "store.db")
     assert store.query_by_attrs() == []
+
+
+def test_query_by_attrs_filters_on_media_alone(tmp_path: Path):
+    """media is one of three independent filters; a record matching zone and disaster
+    but not media must still be excluded (the existing multi-filter test above never
+    exercises media on its own, so a media filter that silently no-ops would still
+    pass it).
+    """
+    store = Store(tmp_path / "store.db")
+    _own_record(store, origin="h0", seq_hint="a", zone="zone1", disaster="flood", media="image")
+    _own_record(store, origin="h0", seq_hint="b", zone="zone1", disaster="flood", media="sensor")
+    matches = store.query_by_attrs(media="sensor")
+    assert [(m.origin, m.seq) for m in matches] == [("h0", 2)]
+
+
+# -- probe restart cursor (agent.py's own _drain_probes skip-on-restart) ------------
+
+
+def test_get_probe_count_is_zero_on_a_fresh_store(tmp_path: Path):
+    """A store that has never recorded a probe reports a count of 0, not an error."""
+    store = Store(tmp_path / "store.db")
+    assert store.get_probe_count() == 0
+
+
+def test_record_probe_executed_increments_and_persists_across_a_restart(tmp_path: Path):
+    """Each call increments the counter by exactly one, and the count survives closing
+    and reopening the same database file -- the same restart guarantee progress.hi
+    already has, now extended to probes.
+    """
+    db_path = tmp_path / "store.db"
+    store = Store(db_path)
+    store.record_probe_executed()
+    store.record_probe_executed()
+    assert store.get_probe_count() == 2
+    store.close()
+
+    reopened = Store(db_path)
+    assert reopened.get_probe_count() == 2
+    reopened.record_probe_executed()
+    assert reopened.get_probe_count() == 3

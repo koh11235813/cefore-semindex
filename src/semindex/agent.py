@@ -421,7 +421,17 @@ class Agent:
         transport: CefpycoTransport,
         events: EventWriter,
     ) -> None:
-        """Wire the four already-constructed pieces together; schedule/probe entries are consumed in time order."""
+        """Wire the four already-constructed pieces together; schedule/probe entries are consumed in time order.
+
+        2026-10-22 fix: a restart (SIGTERM, then relaunched with the same
+        config and state_dir -- ReCefore's host_apps gives no other way to
+        stop/start a node) used to re-fire every schedule/probe entry whose
+        at_s had already come due in a prior life, duplicating that node's
+        own records and re-emitting past probe_discovered/probe_retrieved
+        events. Both fixes below skip exactly the entries a prior life
+        already ran, using progress durably persisted in `store` (which
+        outlives this process) rather than anything held only in memory.
+        """
         self._config = config
         self._engine = engine
         self._store = store
@@ -429,6 +439,41 @@ class Agent:
         self._events = events
         self._schedule = sorted(config.schedule, key=lambda e: e.at_s)
         self._probes = sorted(config.probes, key=lambda e: e.at_s)
+
+        # Own records are created 1:1 with schedule entries, in at_s order
+        # (_drain_schedule pops exactly one entry per create_record call,
+        # and received records never add to this count: a neighbor can
+        # never advertise a higher seq for this node's own origin than
+        # this node itself already holds, since that neighbor only knows
+        # of a seq because this node created and propagated it first --
+        # so the tracker never plans a fetch for this node's own origin),
+        # so store.get_progress(node).hi -- the count of this node's own
+        # records already durably written -- is exactly how many of the
+        # earliest (lowest at_s) schedule entries a prior life already
+        # fired. A schedule shorter than that is not a timing question at
+        # all, it is the config no longer matching the state_dir it was
+        # paired with (e.g. the wrong config file after an edit), so this
+        # fails at startup rather than silently running a truncated
+        # schedule or re-deriving the wrong entries to skip.
+        already_created = self._store.get_progress(self._config.node).hi
+        if already_created > len(self._schedule):
+            raise ConfigError(
+                f"{self._config.node}: state_dir already holds {already_created} own "
+                f"record(s) but schedule has only {len(self._schedule)} entries"
+            )
+        self._schedule = self._schedule[already_created:]
+
+        # Probes have no per-origin progress counter to reuse (they are not
+        # records), so the store keeps a dedicated cursor instead -- see
+        # Store.get_probe_count/record_probe_executed. A persisted count
+        # ahead of this life's probe list simply leaves no probes to run
+        # (list slicing past the end yields []); that is a config/state
+        # mismatch of the same shape as the schedule one above, but no
+        # restart scenario in this baseline exercises it yet, so it is
+        # left unenforced here rather than guessed at ahead of need.
+        already_probed = self._store.get_probe_count()
+        self._probes = self._probes[already_probed:]
+
         self._stop_requested = False
 
     def request_stop(self) -> None:
@@ -484,6 +529,12 @@ class Agent:
                 "matches": [{"origin": m.origin, "seq": m.seq, "content_name": m.content_name} for m in matches],
             }
         )
+        # A probe counts as executed once its probe_discovered line is
+        # written (map.md's restart contract), regardless of whether a
+        # match or a retrieval followed -- so this is recorded right here,
+        # not after the retrieval below, and unconditionally on the early
+        # `return` for no matches.
+        self._store.record_probe_executed()
         if not matches:
             return
         target = matches[0]
