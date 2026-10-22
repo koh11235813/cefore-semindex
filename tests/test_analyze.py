@@ -172,6 +172,28 @@ def test_control_bytes_reads_the_control_counters_not_the_probe_inflated_totals(
     }
 
 
+def test_control_bytes_reports_null_for_a_node_that_never_wrote_a_counters_line():
+    """2026-10-23 fix: a node SIGKILLed before Agent.shutdown() could run
+    never writes a `counters` line at all; reporting 0 there used to be indistinguishable from a
+    node that cleanly shut down having truly sent/received nothing. The grand total only sums
+    the nodes that actually reported a number."""
+    nodes = {
+        "h0": [
+            {"ts_ms": 100, "event": "counters", "control_bytes_sent": 10, "control_bytes_received": 5},
+        ],
+        "h1": [
+            {"ts_ms": 100, "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h0"},
+        ],
+    }
+    assert control_bytes(nodes) == {
+        "per_node": {
+            "h0": {"control_bytes_sent": 10, "control_bytes_received": 5},
+            "h1": {"control_bytes_sent": None, "control_bytes_received": None},
+        },
+        "total": {"control_bytes_sent": 10, "control_bytes_received": 5},
+    }
+
+
 # -- probe_pairs -----------------------------------------------------------
 
 

@@ -155,19 +155,35 @@ def control_bytes(nodes: dict[str, list[dict]]) -> dict:
     content-body fetch (cefpyco_transport.py's "Byte counters" docstring
     entry), so this section's name ("control") would otherwise be wrong
     whenever a run's probe retrieved a large body.
+
+    2026-10-23 fix: a node that never wrote a `counters` line at all (an
+    unclean shutdown -- SIGKILLed before Agent.shutdown() could run) used
+    to report 0 here, indistinguishable from a node that cleanly shut
+    down having truly sent/received nothing. `None` marks "no data",
+    never silently "zero traffic"; the grand total only sums the nodes
+    that actually reported a number.
     """
     per_node = {}
     for node, events in nodes.items():
-        sent = sum(e["control_bytes_sent"] for e in events if e.get("event") == "counters")
-        received = sum(e["control_bytes_received"] for e in events if e.get("event") == "counters")
+        counters = [e for e in events if e.get("event") == "counters"]
+        if not counters:
+            per_node[node] = {"control_bytes_sent": None, "control_bytes_received": None}
+            continue
         # 2026-10-22 fix: these dict keys were bytes_sent/bytes_received
         # even though the values are the control-only counters -- a reader of this JSON alone
         # (no docstring in hand) could misread them as the probe-inflated totals this whole
         # function exists to exclude.
-        per_node[node] = {"control_bytes_sent": sent, "control_bytes_received": received}
+        per_node[node] = {
+            "control_bytes_sent": sum(e["control_bytes_sent"] for e in counters),
+            "control_bytes_received": sum(e["control_bytes_received"] for e in counters),
+        }
     total = {
-        "control_bytes_sent": sum(v["control_bytes_sent"] for v in per_node.values()),
-        "control_bytes_received": sum(v["control_bytes_received"] for v in per_node.values()),
+        "control_bytes_sent": sum(
+            v["control_bytes_sent"] for v in per_node.values() if v["control_bytes_sent"] is not None
+        ),
+        "control_bytes_received": sum(
+            v["control_bytes_received"] for v in per_node.values() if v["control_bytes_received"] is not None
+        ),
     }
     return {"per_node": per_node, "total": total}
 
