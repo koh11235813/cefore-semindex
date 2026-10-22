@@ -1366,6 +1366,83 @@ def test_check_t2b_allows_registration_lag_when_early_delivery_is_only_relayed(
     ) in out.splitlines()
 
 
+def test_check_t2b_allows_registration_lag_when_early_evidence_is_only_a_cached_pre_restart_delivery(
+    tmp_path: Path, capsys
+):
+    """2026-10-23 fix (review finding, #2): record
+    Data is cached (300s default in this fixture's publisher config) and a name carries no
+    life/generation, so a record_stored logged with holder == origin can be a PRE-restart
+    (life 1) record served again from cache after the restart -- that proves nothing about
+    whether origin's life 2 is actually reachable, same as a relayed delivery (holder != origin,
+    see the test above) proves nothing either. Reproduces the reviewer's exact scenario: h0's
+    restart finishes at offset 11, life 1's own seq 1 (created at offset 3, long before the
+    restart) arrives at h1 from cache at offset 12, a registration-wait retry for life 2's seq 3
+    times out at offset 15, and the genuine retry succeeds at offset 18 -- h1's own FIRST direct
+    post-restart contact with h0. Counting the cached seq-1 arrival as readiness evidence anchors
+    the deadline at 14.5 and turns the offset-15 timeout into a false protocol failure; restricting
+    readiness evidence to records origin generated AFTER the restart (seq 3 and 4, from
+    origin's own record_created ts_ms) correctly anchors it at 20.5 instead, so rc must be 0."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    h1_events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    for event in h1_events:
+        if event.get("event") == "record_stored" and event.get("seq") == 1:
+            # life 1's own seq 1 (record_created at offset 3, well before
+            # the restart) served again from cache, holder == origin
+            # unchanged -- irrelevant to whether h0's life 2 is reachable.
+            event["ts_ms"] = _ts_ms(12)
+    h1_events.append({"ts_ms": _ts_ms(15), "event": "fetch_timeout", "origin": "h0", "seq": 3, "neighbor": "h0"})
+    _write_jsonl(h1_path, h1_events)
+    # seq 3's record_stored at h1 stays at the happy path's own offset 18
+    # -- h1's own first direct post-restart contact with h0 -- which is
+    # the genuine readiness evidence this check must fall back on.
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert (
+        "PASS: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: "
+        "fetch_timeout(s) after grace: []"
+    ) in out.splitlines()
+
+
+def test_check_t2b_rejects_a_cached_pre_restart_delivery_as_readiness_evidence_in_general(
+    tmp_path: Path, capsys
+):
+    """Companion to the test above, using a
+    different pre-restart seq (seq 2, created at offset 5) to show the exclusion is not special-
+    cased to seq 1: moves seq 2's cached re-delivery to offset 13 (just after the restart, holder
+    == origin unchanged) and adds a timeout at offset 16 for seq 4 -- after the (wrong) deadline a
+    cached seq-2 arrival would produce (13 + 2.5 = 15.5) but before the genuine one seq 3's own
+    offset-18 delivery produces (18 + 2.5 = 20.5). If the cached seq-2 delivery were still counted
+    as readiness evidence, this would wrongly fail; excluding it (seq 2 was created before the
+    restart) must pass."""
+    experiment_path = tmp_path / "t2b.json"
+    _write_experiment(experiment_path, _t2b_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2b_happy_path(run_dir)
+    h1_path = _node_events_path(run_dir, "h1")
+    h1_events = [json.loads(line) for line in h1_path.read_text(encoding="utf-8").splitlines()]
+    for event in h1_events:
+        if event.get("event") == "record_stored" and event.get("seq") == 2:
+            event["ts_ms"] = _ts_ms(13)  # life 1's own seq 2, cached and re-served after the restart
+    h1_events.append({"ts_ms": _ts_ms(16), "event": "fetch_timeout", "origin": "h0", "seq": 4, "neighbor": "h0"})
+    _write_jsonl(h1_path, h1_events)
+
+    rc = run_check("t2b", str(experiment_path), str(run_dir))
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert (
+        "PASS: h0's life 2 left no fetch_timeout against it standing after the restart's grace window: "
+        "fetch_timeout(s) after grace: []"
+    ) in out.splitlines()
+
+
 # -- T2c --------------------------------------------------------------------
 
 

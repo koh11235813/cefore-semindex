@@ -794,6 +794,24 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # nothing about whether origin's own life 2 is reachable, and folding
     # it in anyway can anchor the deadline on an arbitrary relay instead
     # of real evidence, in either direction.
+    #
+    # 2026-10-23 fix (review finding): holder == origin
+    # alone still isn't enough. Record Data is cached (cache_time in the
+    # publisher config, 300s by default) and a name carries no
+    # life/generation, so csmgrd can keep answering a request for a
+    # LIFE-1 seq straight out of cache after origin has already restarted
+    # into life 2 -- that response still logs holder == origin even
+    # though it says nothing about whether life 2 itself is reachable
+    # (the reviewer's exact counterexample: life 1's seq 1 arrives from
+    # cache at offset 12, which would anchor the deadline at 14.5 and
+    # misread a genuine registration-lag retry at offset 15 as a
+    # protocol failure). Restrict the record-delivery side of readiness
+    # evidence to seqs origin itself generated AFTER the restart --
+    # derived from origin's own record_created ts_ms, the same signal
+    # the "both lives" precondition above already reads -- since only
+    # those seqs could not possibly have been served from a pre-restart
+    # cache entry.
+    post_restart_seqs = {e["seq"] for e in after_restart}
     post_restart_readiness_ts = [
         e["ts_ms"]
         for node in other_nodes
@@ -803,7 +821,7 @@ def check_t2b(spec: ExperimentSpec, run_dir: str) -> _Checker:
         e["ts_ms"]
         for node in other_nodes
         for e in _record_stored(events_by_node[node], origin)
-        if e["ts_ms"] > restart_ts and e.get("holder") == origin
+        if e["ts_ms"] > restart_ts and e.get("holder") == origin and e.get("seq") in post_restart_seqs
     ]
     grace_deadline = min(post_restart_readiness_ts, default=restart_ts) + 2500
     late_timeouts = [
