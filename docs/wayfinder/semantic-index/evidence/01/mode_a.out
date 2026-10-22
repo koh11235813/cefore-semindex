@@ -1,0 +1,104 @@
+SMOKE_CONF=/tmp/semindex-smoke-conf.N3sAmM
+72:CS_MODE=2
+72:CS_MODE=2
+srwxr-xr-x 1 root root 0 Oct 22 19:31 /tmp/cef_9695.0
+*****   Connection Status Report   *****
+All Connection Num             : 1
+
+*****   Cache Status Report        *****
+Number of Cached Contents      : 0
+
+Cache Mode       : Excache
+=== item1-3 producer
+=== consumer
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.N3sAmM
+name=ccnx:/semidx/smoke/a/hello counter=0
+
+real	0m0.052s
+user	0m0.027s
+sys	0m0.022s
+consumer exit: 0
+=== item4 freshness
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.N3sAmM
+[state_freshness] request 0: counter=1 OK
+[state_freshness] request 1: counter=2 OK
+[state_freshness] request 2: counter=3 OK
+[state_freshness] request 3: counter=4 OK
+[state_freshness] request 4: counter=5 OK
+[state_freshness] request 5: counter=6 OK
+[state_freshness] request 6: counter=7 OK
+[state_freshness] request 7: counter=8 OK
+[state_freshness] request 8: counter=9 OK
+[state_freshness] request 9: counter=10 OK
+[state_freshness] request 10: counter=11 OK
+[state_freshness] request 11: counter=12 OK
+[state_freshness] request 12: counter=13 OK
+[state_freshness] request 13: counter=14 OK
+[state_freshness] request 14: counter=15 OK
+[state_freshness] request 15: counter=16 OK
+[state_freshness] request 16: counter=17 OK
+[state_freshness] request 17: counter=18 OK
+[state_freshness] request 18: counter=19 OK
+[state_freshness] request 19: counter=20 OK
+[state_freshness] PASS: 20 requests, counters strictly increasing
+
+real	0m0.065s
+user	0m0.049s
+sys	0m0.006s
+state_freshness exit: 0
+=== extra: same name twice (CS answer check, cache_time 0)
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.N3sAmM
+name=ccnx:/semidx/smoke/a/same counter=21
+exit 0
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.N3sAmM
+name=ccnx:/semidx/smoke/a/same counter=21
+exit 0
+--- producer log
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.N3sAmM
+[producer] registered ccnx:/semidx/smoke/a
+[producer] answered ccnx:/semidx/smoke/a/hello counter=0
+[producer] answered ccnx:/semidx/smoke/a/sv/0/1792665101874 counter=1
+[producer] answered ccnx:/semidx/smoke/a/sv/1/1792665101878 counter=2
+[producer] answered ccnx:/semidx/smoke/a/sv/2/1792665101879 counter=3
+[producer] answered ccnx:/semidx/smoke/a/sv/3/1792665101879 counter=4
+[producer] answered ccnx:/semidx/smoke/a/sv/4/1792665101879 counter=5
+[producer] answered ccnx:/semidx/smoke/a/sv/5/1792665101880 counter=6
+[producer] answered ccnx:/semidx/smoke/a/sv/6/1792665101880 counter=7
+[producer] answered ccnx:/semidx/smoke/a/sv/7/1792665101881 counter=8
+[producer] answered ccnx:/semidx/smoke/a/sv/8/1792665101881 counter=9
+[producer] answered ccnx:/semidx/smoke/a/sv/9/1792665101881 counter=10
+[producer] answered ccnx:/semidx/smoke/a/sv/10/1792665101882 counter=11
+[producer] answered ccnx:/semidx/smoke/a/sv/11/1792665101882 counter=12
+[producer] answered ccnx:/semidx/smoke/a/sv/12/1792665101883 counter=13
+[producer] answered ccnx:/semidx/smoke/a/sv/13/1792665101883 counter=14
+[producer] answered ccnx:/semidx/smoke/a/sv/14/1792665101883 counter=15
+[producer] answered ccnx:/semidx/smoke/a/sv/15/1792665101884 counter=16
+[producer] answered ccnx:/semidx/smoke/a/sv/16/1792665101884 counter=17
+[producer] answered ccnx:/semidx/smoke/a/sv/17/1792665101885 counter=18
+[producer] answered ccnx:/semidx/smoke/a/sv/18/1792665101885 counter=19
+[producer] answered ccnx:/semidx/smoke/a/sv/19/1792665101885 counter=20
+[producer] answered ccnx:/semidx/smoke/a/same counter=21
+[producer] stopped
+=== item5 chunk fetch
+[cefputfile] Start
+[cefputfile] Parsing parameters ... OK
+[cefputfile] Init Cefore Client package ... OK
+[cefputfile] Conversion from URI into Name ... OK
+[cefputfile] Checking the input file ... OK
+[cefputfile] Connect to cefnetd ... OK
+[cefputfile] URI         = ccnx:/semidx/smoke/file
+[cefputfile] File        = /tmp/semindex-smoke-src.bin
+[cefputfile] Rate        = 5.000 Mbps
+[cefputfile] Block Size  = 1024 Bytes
+[cefputfile] Cache Time  = 300 sec
+[cefputfile] Expiration  = 3600 sec
+[cefputfile] Start creating Content Objects
+[cefputfile] Unconnect to cefnetd ... OK
+[cefputfile] Terminate
+[cefputfile] Tx Frames  = 5
+[cefputfile] Tx Bytes   = 5000
+[cefputfile] Duration   = 0.011 sec
+[cefputfile] Throughput = 3780718 bps
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.N3sAmM
+[chunk_fetch] PASS: 5 chunks, 5000 bytes match /tmp/semindex-smoke-src.bin
+chunk_fetch exit: 0

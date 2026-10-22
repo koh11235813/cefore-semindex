@@ -1,0 +1,65 @@
+SMOKE_CONF=/tmp/semindex-smoke-conf.njwIZi
+72:CS_MODE=2
+72:CS_MODE=2
+srwxr-xr-x 1 root root 0 Oct 22 18:28 /tmp/cef_9695.0
+*****   Connection Status Report   *****
+All Connection Num             : 1
+
+*****   Cache Status Report        *****
+Number of Cached Contents      : 0
+
+Cache Mode       : Excache
+=== item1-3 producer
+=== consumer
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.njwIZi
+[consumer] FAIL: answer carries chunk_num=0, expected no chunk TLV
+
+real	0m0.059s
+user	0m0.041s
+sys	0m0.014s
+consumer exit: 1
+=== item4 freshness
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.njwIZi
+[state_freshness] FAIL: request 0: answer carries chunk_num=0, expected no chunk TLV
+
+real	0m0.059s
+user	0m0.056s
+sys	0m0.002s
+state_freshness exit: 1
+=== extra: same name twice (CS answer check, cache_time 0)
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.njwIZi
+[consumer] FAIL: answer carries chunk_num=0, expected no chunk TLV
+exit 1
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.njwIZi
+[consumer] FAIL: answer carries chunk_num=0, expected no chunk TLV
+exit 1
+--- producer log
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.njwIZi
+[producer] registered ccnx:/semidx/smoke/a
+[producer] answered ccnx:/semidx/smoke/a/hello counter=0
+[producer] answered ccnx:/semidx/smoke/a/sv/0/1792661301968 counter=1
+[producer] answered ccnx:/semidx/smoke/a/same counter=2
+[producer] stopped
+=== item5 chunk fetch
+[cefputfile] Start
+[cefputfile] Parsing parameters ... OK
+[cefputfile] Init Cefore Client package ... OK
+[cefputfile] Conversion from URI into Name ... OK
+[cefputfile] Checking the input file ... OK
+[cefputfile] Connect to cefnetd ... OK
+[cefputfile] URI         = ccnx:/semidx/smoke/file
+[cefputfile] File        = /tmp/semindex-smoke-src.bin
+[cefputfile] Rate        = 5.000 Mbps
+[cefputfile] Block Size  = 1024 Bytes
+[cefputfile] Cache Time  = 300 sec
+[cefputfile] Expiration  = 3600 sec
+[cefputfile] Start creating Content Objects
+[cefputfile] Unconnect to cefnetd ... OK
+[cefputfile] Terminate
+[cefputfile] Tx Frames  = 5
+[cefputfile] Tx Bytes   = 5000
+[cefputfile] Duration   = 0.010 sec
+[cefputfile] Throughput = 4226542 bps
+[cefpyco] Configure directory is /tmp/semindex-smoke-conf.njwIZi
+[chunk_fetch] PASS: 5 chunks, 5000 bytes match /tmp/semindex-smoke-src.bin
+chunk_fetch exit: 0

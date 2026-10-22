@@ -2,7 +2,7 @@
 status: open
 type: task
 claimed-by:
-blocked-by: [02, 03, 04, 06]
+blocked-by: [02, 03, 04, 06, 08]
 ---
 
 ## Task
