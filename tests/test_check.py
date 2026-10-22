@@ -2140,22 +2140,27 @@ def test_main_exits_2_with_a_message_on_a_malformed_state_rx_hi_value(tmp_path: 
     )
 
 
-# -- live-data regression (ReCefore host_app_restart worktree) -------------
+# -- live-data regression (real ReCefore runs) ------------------------------
 #
 # 2026-10-23: these four runs were generated from this repo's own
 # experiments/*.json against a real ReCefore host_app_restart checkout
 # before this round's fixes landed, and are kept as a standing regression
 # check that none of the new assertions above turns a real, already-known
-# run result into a DIFFERENT one. They are skipped (not failed) when that
-# worktree is not present on the machine running the tests.
+# run result into a DIFFERENT one. They are skipped (not failed) when the
+# fixture directory is not present on the machine running the tests.
+#
+# The fixtures hold only what semindex.check reads (results.json and each
+# node's semindex/events.jsonl), copied out of the run directories so the
+# ReCefore worktree that produced them can be removed; the rest of a run's
+# node_dirs is deliberately not kept, since it includes Cefore key material.
 
-_LIVE_RUN_DIR_BASE = "/home/lab_shared/wt/recefore-host-app-restart/logs/semindex"
+_LIVE_RUN_DIR_BASE = "/home/lab_shared/semindex-fixtures"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.skipif(
     not os.path.isdir(f"{_LIVE_RUN_DIR_BASE}/ex9911_seed42"),
-    reason="live ReCefore host_app_restart run directory not present on this machine",
+    reason="live ReCefore run fixtures not present on this machine",
 )
 def test_check_t1_still_passes_against_the_live_ex9911_run():
     """Regression fixture, recorded 2026-10-23: a real `disaster --config
@@ -2170,7 +2175,7 @@ def test_check_t1_still_passes_against_the_live_ex9911_run():
 
 @pytest.mark.skipif(
     not os.path.isdir(f"{_LIVE_RUN_DIR_BASE}/ex9912_seed42"),
-    reason="live ReCefore host_app_restart run directory not present on this machine",
+    reason="live ReCefore run fixtures not present on this machine",
 )
 def test_check_t2a_live_ex9912_run_has_exactly_the_one_known_fail_line(capsys):
     """Regression fixture, recorded 2026-10-23: this real run already fails
@@ -2188,7 +2193,7 @@ def test_check_t2a_live_ex9912_run_has_exactly_the_one_known_fail_line(capsys):
 
 @pytest.mark.skipif(
     not os.path.isdir(f"{_LIVE_RUN_DIR_BASE}/ex9913_seed42"),
-    reason="live ReCefore host_app_restart run directory not present on this machine",
+    reason="live ReCefore run fixtures not present on this machine",
 )
 def test_check_t2b_still_passes_against_the_live_ex9913_run():
     """Regression fixture, recorded 2026-10-23 (see
@@ -2201,7 +2206,7 @@ def test_check_t2b_still_passes_against_the_live_ex9913_run():
 
 @pytest.mark.skipif(
     not os.path.isdir(f"{_LIVE_RUN_DIR_BASE}/ex9914_seed42"),
-    reason="live ReCefore host_app_restart run directory not present on this machine",
+    reason="live ReCefore run fixtures not present on this machine",
 )
 def test_check_t2c_still_passes_against_the_live_ex9914_run():
     """Regression fixture, recorded 2026-10-23 (see
