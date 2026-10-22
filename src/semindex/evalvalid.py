@@ -35,7 +35,14 @@ import os
 import sys
 
 from semindex import evalgen
-from semindex.check import CheckUsageError, find_one_put_record, read_events, read_results
+from semindex.check import (
+    CheckUsageError,
+    agent_start_t0,
+    agent_start_t0_values,
+    find_one_put_record,
+    read_events,
+    read_results,
+)
 
 # 2026-10-23: `_check_records` (below) compares each record_created
 # event's derived elapsed time against the one `at_s` its own seq was
@@ -132,10 +139,19 @@ def _read_node_events(run_dir: str, agents: list[int]) -> tuple[dict[str, list[d
     return events_by_node, flags
 
 
-def _derive_t0_ms(experiment: dict, nodes_events: dict[str, list[dict]]) -> float | None:
-    """Estimate t0 (epoch ms, the same origin every agent's `--t0-ms` was launched with).
+def _estimate_t0_ms_from_records(experiment: dict, nodes_events: dict[str, list[dict]]) -> float | None:
+    """Estimate t0 (epoch ms) from h0/h4's own record_created timings -- the FALLBACK rung.
 
-    No stored artifact ever records the real t0 value directly: it is a
+    2026-10-23 fix: this used to be the ONLY t0 estimate `_check_records` compared
+    records against. But it is derived FROM those same records, so a delay affecting an entire origin's
+    schedule uniformly (every one of h0's records landing some fixed amount later than its own
+    scheduled `at_s`) shifts this median by that same amount and cancels out of every per-record
+    residual below -- a generation delay large enough to matter was passing outright. `_derive_t0_ms`
+    (below) now only reaches this estimator when no node wrote an `agent_start` line at all (an older
+    run captured before agent.py started doing so); every call site that uses the result is responsible
+    for flagging that this weaker rung was used (`t0_estimated`), never silently.
+
+    No stored artifact other than `agent_start` ever records the real t0 value directly: it is a
     `time.time()` reading ReCefore's own disaster.py takes once per run
     and splices into each agent's argv (host_apps.py's `{t0_ms}`
     placeholder) -- never written to a file, and never echoed by the
@@ -193,6 +209,42 @@ def _derive_t0_ms(experiment: dict, nodes_events: dict[str, list[dict]]) -> floa
     return (residuals[mid - 1] + residuals[mid]) / 2.0
 
 
+def _derive_t0_ms(experiment: dict, nodes_events: dict[str, list[dict]]) -> tuple[float | None, list[str]]:
+    """This run's t0 (epoch ms), plus any flags describing how it was derived.
+
+    2026-10-23 fix: `agent_start.t0_ms` -- one line every agent process writes before anything else in
+    its own life, carrying the literal value it was launched with -- is now the PRIMARY rung, not
+    `_estimate_t0_ms_from_records`'s median. That estimator is derived from the very records
+    `_check_records` goes on to compare against it, so it cannot catch a delay that shifts an origin's
+    whole schedule uniformly (see that function's own docstring for the exact counterexample);
+    `agent_start.t0_ms` is independent evidence written by the agent itself, so it exposes that delay
+    instead of absorbing it.
+
+    `agent_start_t0` (semindex.check) takes every node's own `agent_start.t0_ms` and returns the median
+    plus whether they disagree -- a "t0_agent_start_disagreement" flag is added whenever they do not
+    all match exactly (map.md launches every node's agent with one shared t0_ms, so any difference is
+    an anomaly worth surfacing, not something to resolve by silently falling back to the weaker
+    estimator below).
+
+    `_estimate_t0_ms_from_records` is reached only when NO node wrote an agent_start line at all (an
+    older run captured before agent.py started writing one); its result comes back tagged with a
+    "t0_estimated" flag, so a weaker, self-referential estimate is never mistaken for one measured
+    directly. `(None, [])` when neither rung produced anything at all -- the caller adds its own
+    "t0_undetermined" flag in that case, as before this fix.
+    """
+    agent_start_values = agent_start_t0_values(nodes_events)
+    agent_start_result = agent_start_t0(agent_start_values)
+    if agent_start_result is not None:
+        t0_ms, disagreement = agent_start_result
+        flags = ["t0_agent_start_disagreement"] if disagreement else []
+        return t0_ms, flags
+
+    estimated = _estimate_t0_ms_from_records(experiment, nodes_events)
+    if estimated is None:
+        return None, []
+    return estimated, ["t0_estimated"]
+
+
 def _check_counters(nodes_events: dict[str, list[dict]], t0_ms: float | None) -> list[str]:
     """Per node: exactly one counters_snapshot (at t0+10s ±0.5s) and a final counters line (at t0+130s ±1s)."""
     flags: list[str] = []
@@ -234,6 +286,67 @@ def _check_counters(nodes_events: dict[str, list[dict]], t0_ms: float | None) ->
             elapsed = (counters[0]["ts_ms"] - t0_ms) / 1000.0
             if abs(elapsed - expected_stop_at_s) > 1.0:
                 flags.append(f"counters_timing:{node}")
+    return flags
+
+
+# Byte counters CefpycoTransport tracks and `semindex.agent.Agent` writes into both the
+# counters_snapshot and the final counters line -- reused by name here (never re-derived) so
+# `_check_counter_decrease` compares exactly the fields map.md's control-traffic metric (final minus
+# snapshot) actually subtracts.
+_COUNTER_FIELDS = ("bytes_sent", "bytes_received", "control_bytes_sent", "control_bytes_received")
+
+
+def _check_agent_lives(nodes_events: dict[str, list[dict]]) -> list[str]:
+    """Per node: exactly one `agent_start` line.
+
+    2026-10-23 fix: stage 1 never schedules a host_app_restart (evalgen only ever emits
+    link_down/link_up -- see `_check_counters`'s own note on why this stage treats a second
+    `counters` line as unplanned), so a node that wrote more than one `agent_start` -- or, just as
+    badly, a node whose log never shows one at all -- had an unplanned restart (e.g. a SIGKILL) or
+    crashed before logging its first life. A SIGKILL between a life's counters_snapshot and its own
+    final `counters` line, followed by a restart whose NEW life writes the only final `counters` line,
+    still leaves exactly one snapshot and exactly one counters line overall -- a shape
+    `_check_counters` alone cannot tell apart from a clean single life. Counting lives directly, rather
+    than counting the lines a life happens to produce, catches that shape regardless of how many of
+    each line either life wrote.
+    """
+    flags = []
+    for node, events in nodes_events.items():
+        lives = sum(1 for e in events if e.get("event") == "agent_start")
+        if lives != 1:
+            flags.append(f"agent_lives:{node}")
+    return flags
+
+
+def _check_counter_decrease(nodes_events: dict[str, list[dict]]) -> list[str]:
+    """Per node: no byte counter may be lower in the final `counters` line than in counters_snapshot.
+
+    2026-10-23 fix: a second, independent line of defense alongside `agent_lives`
+    above -- CefpycoTransport's byte counters are process-local and reset to 0 every life
+    (Agent.__init__'s own comment on why counters_snapshot_at_s has no store-backed restart cursor), so
+    an unplanned restart between the snapshot and the final line can leave the final numbers BELOW the
+    snapshot's. map.md's control-traffic metric subtracts snapshot from final; left unchecked that
+    metric can go negative. Only compared when there is exactly one of each line (requires
+    `_check_counters`'s own counts to already hold) -- with any other count, this flag would be
+    comparing lines that do not correspond to a single before/after pair in the first place.
+    """
+    flags = []
+    for node, events in nodes_events.items():
+        snapshots = [e for e in events if e.get("event") == "counters_snapshot"]
+        counters = [e for e in events if e.get("event") == "counters"]
+        if len(snapshots) != 1 or len(counters) != 1:
+            continue
+        snapshot, final = snapshots[0], counters[0]
+        for field_name in _COUNTER_FIELDS:
+            snap_value = snapshot.get(field_name)
+            final_value = final.get(field_name)
+            if (
+                isinstance(snap_value, (int, float))
+                and isinstance(final_value, (int, float))
+                and final_value < snap_value
+            ):
+                flags.append(f"counters_decreased:{node}")
+                break
     return flags
 
 
@@ -388,10 +501,13 @@ def validate(run_dir: str) -> dict:
     nodes_events, flags = _read_node_events(run_dir, agents)
     flags += _check_last_line(nodes_events)
 
-    t0_ms = _derive_t0_ms(experiment, nodes_events)
+    t0_ms, t0_flags = _derive_t0_ms(experiment, nodes_events)
+    flags += t0_flags
     if t0_ms is None:
         flags.append("t0_undetermined")
     flags += _check_counters(nodes_events, t0_ms)
+    flags += _check_agent_lives(nodes_events)
+    flags += _check_counter_decrease(nodes_events)
     flags += _check_records(experiment, nodes_events, t0_ms)
     flags += _check_tracebacks(run_dir, agents)
 

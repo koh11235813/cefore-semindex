@@ -56,6 +56,14 @@ def _counters_fields() -> dict:
     return {"bytes_sent": 100, "bytes_received": 100, "control_bytes_sent": 100, "control_bytes_received": 100}
 
 
+def _agent_start_event(node: str, t0_ms: float = _T0_MS) -> dict:
+    """The first line every real agent life writes (semindex.agent.Agent.__init__), carrying the
+    literal `t0_ms` it was launched with. EventWriter.write stamps every event, this one included,
+    with its own wall-clock `ts_ms` -- this fixture reuses `t0_ms` as that stamp, since a real agent
+    writes this line within a tick or two of its own launch."""
+    return {"ts_ms": round(t0_ms), "event": "agent_start", "node": node, "t0_ms": t0_ms}
+
+
 def _record_events(host: int, schedule_entries: list[dict]) -> list[dict]:
     node = f"h{host}"
     return [
@@ -68,8 +76,8 @@ def _snapshot_event(elapsed_s: float) -> dict:
     return {"ts_ms": _ts_ms(elapsed_s), "event": "counters_snapshot", **_counters_fields()}
 
 
-def _counters_event(elapsed_s: float) -> dict:
-    return {"ts_ms": _ts_ms(elapsed_s), "event": "counters", **_counters_fields()}
+def _counters_event(elapsed_s: float, **overrides) -> dict:
+    return {"ts_ms": _ts_ms(elapsed_s), "event": "counters", **_counters_fields(), **overrides}
 
 
 def _link_row(event: dict, *, actual_at: float | None = None, success: bool = True) -> dict:
@@ -98,7 +106,7 @@ def _build_happy_run(tmp_path: Path, *, p: float = 0.2, seed: int = 7, stage: st
 
     for host in raw["agents"]:
         node = f"h{host}"
-        events = []
+        events = [_agent_start_event(node)]
         if host in evalgen.RECORD_ORIGIN_HOSTS:
             events += _record_events(host, raw["schedule"][str(host)])
         events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
@@ -175,10 +183,12 @@ def test_validate_flags_an_unreadable_node_events_file(tmp_path: Path):
 
 def test_validate_flags_an_empty_node_events_file(tmp_path: Path):
     """Validate flags an empty node events file (and, since it logged nothing, its missing
-    counters_snapshot and counters lines too)."""
+    agent_start, counters_snapshot and counters lines too)."""
     run_dir, _raw = _build_happy_run(tmp_path)
     (run_dir / "debug" / "node_dirs" / "h1" / "semindex" / "events.jsonl").write_text("", encoding="utf-8")
-    assert validate(str(run_dir))["flags"] == sorted(["empty_events:h1", "counters_snapshot_count:h1", "counters_count:h1"])
+    assert validate(str(run_dir))["flags"] == sorted(
+        ["empty_events:h1", "counters_snapshot_count:h1", "counters_count:h1", "agent_lives:h1"]
+    )
 
 
 def test_validate_flags_a_last_line_that_is_not_counters(tmp_path: Path):
@@ -197,7 +207,7 @@ def test_validate_flags_a_missing_counters_snapshot(tmp_path: Path):
     """Validate flags a missing counters_snapshot (zero, not one)."""
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h1"
-    events = [_counters_event(evalgen.AGENT_STOP_AT_S)]
+    events = [_agent_start_event(node), _counters_event(evalgen.AGENT_STOP_AT_S)]
     _write_events(run_dir, node, events)
     assert validate(str(run_dir))["flags"] == ["counters_snapshot_count:h1"]
 
@@ -207,6 +217,7 @@ def test_validate_flags_a_duplicate_counters_snapshot(tmp_path: Path):
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h1"
     events = [
+        _agent_start_event(node),
         _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]),
         _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0] + 1.0),
         _counters_event(evalgen.AGENT_STOP_AT_S),
@@ -220,6 +231,7 @@ def test_validate_flags_a_late_counters_snapshot(tmp_path: Path):
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h1"
     events = [
+        _agent_start_event(node),
         _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0] + 2.0),
         _counters_event(evalgen.AGENT_STOP_AT_S),
     ]
@@ -232,6 +244,7 @@ def test_validate_flags_a_late_final_counters_line(tmp_path: Path):
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h1"
     events = [
+        _agent_start_event(node),
         _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]),
         _counters_event(evalgen.AGENT_STOP_AT_S + 3.0),
     ]
@@ -247,6 +260,7 @@ def test_validate_flags_an_unplanned_restart_even_though_the_final_counters_line
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h1"
     events = [
+        _agent_start_event(node),
         _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]),
         _counters_event(20.0),
         _counters_event(evalgen.AGENT_STOP_AT_S),
@@ -262,7 +276,7 @@ def test_validate_flags_a_short_record_count(tmp_path: Path):
     """Validate flags an origin whose record_created count falls short of its schedule."""
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h0"
-    events = _record_events(0, raw["schedule"]["0"])[:-1]  # drop the last record
+    events = [_agent_start_event(node)] + _record_events(0, raw["schedule"]["0"])[:-1]  # drop the last record
     events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
     events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
     _write_events(run_dir, node, events)
@@ -274,7 +288,7 @@ def test_validate_flags_a_record_created_at_the_wrong_scheduled_time(tmp_path: P
     even when it is still inside the measurement window and its seq/count are untouched."""
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h0"
-    events = _record_events(0, raw["schedule"]["0"])
+    events = [_agent_start_event(node)] + _record_events(0, raw["schedule"]["0"])
     seq = len(raw["schedule"]["0"])
     # Move the last record 20s off its own scheduled at_s -- still well
     # inside [WINDOW_START_S, WINDOW_END_S], so only the per-record
@@ -294,7 +308,9 @@ def test_validate_flags_every_record_collapsed_onto_one_instant(tmp_path: Path):
     node = "h0"
     schedule = raw["schedule"]["0"]
     last_at_s = schedule[-1]["at_s"]
-    events = [{**entry, "ts_ms": _ts_ms(last_at_s)} for entry in _record_events(0, schedule)]
+    events = [_agent_start_event(node)] + [
+        {**entry, "ts_ms": _ts_ms(last_at_s)} for entry in _record_events(0, schedule)
+    ]
     events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
     events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
     _write_events(run_dir, node, events)
@@ -310,8 +326,8 @@ def test_validate_flags_a_missing_seq_without_crashing(tmp_path: Path):
     be reported."""
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h0"
-    events = _record_events(0, raw["schedule"]["0"])
-    del events[0]["seq"]
+    events = [_agent_start_event(node)] + _record_events(0, raw["schedule"]["0"])
+    del events[1]["seq"]  # events[0] is agent_start; the first record_created is at index 1
     events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
     events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
     _write_events(run_dir, node, events)
@@ -324,22 +340,104 @@ def test_validate_flags_a_record_seq_mismatch_even_with_the_right_count(tmp_path
     headcount alone still matches the schedule exactly."""
     run_dir, raw = _build_happy_run(tmp_path)
     node = "h0"
-    events = [{**e, "seq": 1} for e in _record_events(0, raw["schedule"]["0"])]
+    events = [_agent_start_event(node)] + [{**e, "seq": 1} for e in _record_events(0, raw["schedule"]["0"])]
     events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
     events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
     _write_events(run_dir, node, events)
     assert validate(str(run_dir))["flags"] == ["record_seq_mismatch:h0"]
 
 
-def test_validate_flags_t0_undetermined_when_no_origin_created_any_record(tmp_path: Path):
-    """Validate flags t0_undetermined (plus the resulting record_count misses) when h0/h4 create nothing."""
-    run_dir, raw = _build_happy_run(tmp_path)
-    for host in evalgen.RECORD_ORIGIN_HOSTS:
+def test_validate_flags_t0_undetermined_when_no_agent_start_or_record_evidence_exists_anywhere(tmp_path: Path):
+    """Validate flags t0_undetermined only when NEITHER t0 rung has anything to go on at all: no node
+    wrote an agent_start line, AND no origin ever created a record (plus the resulting record_count
+    and agent_lives misses). A run missing agent_start on just one node, or records on just one origin,
+    still has other evidence (agent_start elsewhere) to anchor t0 with -- this is the one case left
+    where the fallback chain itself comes up empty, now that agent_start is the primary rung."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    raw = _write_experiment(run_dir, p=0.2, seed=7, stage="s1")
+    for host in raw["agents"]:
         node = f"h{host}"
         events = [_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]), _counters_event(evalgen.AGENT_STOP_AT_S)]
         _write_events(run_dir, node, events)
+        _write_log(run_dir, node, "")
+    rows = [_put_row(raw["publisher"]["uri"])] + [_link_row(event) for event in raw["events"]]
+    _write_results(run_dir, rows)
+
     result = validate(str(run_dir))
-    assert result["flags"] == sorted(["t0_undetermined", "record_count:h0", "record_count:h4"])
+    expected = sorted(
+        ["t0_undetermined", "record_count:h0", "record_count:h4"]
+        + [f"agent_lives:h{host}" for host in raw["agents"]]
+    )
+    assert result["flags"] == expected
+
+
+def test_validate_flags_t0_estimated_when_falling_back_to_the_record_median(tmp_path: Path):
+    """Validate flags t0_estimated when no node wrote an agent_start line at all, so t0 falls back to
+    the record_created median estimate -- that weaker rung must never be used silently."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    raw = _write_experiment(run_dir, p=0.2, seed=7, stage="s1")
+    for host in raw["agents"]:
+        node = f"h{host}"
+        events = []
+        if host in evalgen.RECORD_ORIGIN_HOSTS:
+            events += _record_events(host, raw["schedule"][str(host)])
+        events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
+        events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
+        _write_events(run_dir, node, events)
+        _write_log(run_dir, node, "")
+    rows = [_put_row(raw["publisher"]["uri"])] + [_link_row(event) for event in raw["events"]]
+    _write_results(run_dir, rows)
+
+    result = validate(str(run_dir))
+    # Every node here wrote zero agent_start lines (the whole point of this fixture), which the
+    # single-life check flags independently of which t0 rung won.
+    expected = sorted(["t0_estimated"] + [f"agent_lives:h{host}" for host in raw["agents"]])
+    assert result["flags"] == expected
+
+
+def test_validate_flags_a_t0_agent_start_disagreement(tmp_path: Path):
+    """Validate flags t0_agent_start_disagreement when nodes' own agent_start.t0_ms values do not
+    agree exactly -- map.md launches every node's agent with the SAME t0_ms, so any difference is
+    itself an anomaly worth surfacing, not something to silently average away (median) over."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    path = run_dir / "debug" / "node_dirs" / "h2" / "semindex" / "events.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    first = json.loads(lines[0])
+    assert first == {"ts_ms": _T0_MS, "event": "agent_start", "node": "h2", "t0_ms": _T0_MS}
+    first["t0_ms"] = _T0_MS + 50
+    lines[0] = json.dumps(first)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # The median of {T0, T0, T0, T0, T0+50} is still exactly T0, so nothing else this run checks
+    # against t0 shifts -- only the disagreement itself is new.
+    assert validate(str(run_dir))["flags"] == ["t0_agent_start_disagreement"]
+
+
+def test_validate_flags_a_uniformly_delayed_schedule_when_agent_start_is_present(tmp_path: Path):
+    """Validate flags every one of h0's records when its whole schedule is uniformly delayed by 0.8s,
+    even though agent_start is present and every node agrees on t0 exactly.
+
+    A t0 estimate taken from the median of these same records (the OLD, and now fallback-only,
+    rung) shifts by that same 0.8s and the error cancels out of every
+    per-record residual -- a delay large enough to matter (the implementation's own 0.5s tolerance)
+    passed outright. agent_start.t0_ms is independent evidence the agent itself wrote at its real
+    launch time, unaffected by anything that happens to its records afterward, so comparing against it
+    exposes exactly this delay instead of absorbing it.
+    """
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h0"
+    schedule = raw["schedule"]["0"]
+    delayed = [{**e, "ts_ms": e["ts_ms"] + 800} for e in _record_events(0, schedule)]
+    events = [_agent_start_event(node)] + delayed
+    events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
+    events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
+    _write_events(run_dir, node, events)
+
+    result = validate(str(run_dir))
+    expected = sorted(f"record_off_schedule:h0:seq{i}" for i in range(1, len(schedule) + 1))
+    assert result["flags"] == expected
+    assert result["valid"] is False
 
 
 # -- put -----------------------------------------------------------------------
@@ -424,3 +522,68 @@ def test_validate_flags_a_traceback_in_an_agent_log(tmp_path: Path):
     run_dir, _raw = _build_happy_run(tmp_path)
     _write_log(run_dir, "h3", "Traceback (most recent call last):\nValueError: boom\n")
     assert validate(str(run_dir))["flags"] == ["traceback:h3"]
+
+
+# -- agent lives / byte-counter monotonicity (review r2) -----------------------
+
+
+def test_validate_flags_a_missing_agent_start(tmp_path: Path):
+    """Validate flags a node with zero agent_start lines (e.g. it crashed before writing one)."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h1"
+    events = [_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]), _counters_event(evalgen.AGENT_STOP_AT_S)]
+    _write_events(run_dir, node, events)
+    assert validate(str(run_dir))["flags"] == ["agent_lives:h1"]
+
+
+def test_validate_flags_two_agent_starts_even_when_counters_do_not_decrease(tmp_path: Path):
+    """Validate flags agent_lives on two agent_start lines even when the final counters line happens
+    not to be numerically lower than the snapshot -- the life count itself, not just whether the byte
+    values dipped, is what stage 1's single-life invariant rests on."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h1"
+    events = [
+        _agent_start_event(node),
+        _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]),
+        _agent_start_event(node),  # an unplanned restart, with nothing numerically wrong about its counters
+        _counters_event(evalgen.AGENT_STOP_AT_S),
+    ]
+    _write_events(run_dir, node, events)
+    assert validate(str(run_dir))["flags"] == ["agent_lives:h1"]
+
+
+def test_validate_flags_decreasing_byte_counters_independently_of_agent_lives(tmp_path: Path):
+    """Validate flags a decrease in any byte counter from counters_snapshot to the final counters
+    line on its own (a second, independent line of defense) -- map.md's control-traffic metric, final
+    minus snapshot, must never go negative, whatever caused the decrease."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h1"
+    events = [
+        _agent_start_event(node),
+        _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]),
+        _counters_event(evalgen.AGENT_STOP_AT_S, bytes_received=5),
+    ]
+    _write_events(run_dir, node, events)
+    assert validate(str(run_dir))["flags"] == ["counters_decreased:h1"]
+
+
+def test_validate_flags_the_sigkill_restart_counterexample(tmp_path: Path):
+    """Validate flags both agent_lives and counters_decreased for a SIGKILL-between-lines shape:
+    h1 writes its counters_snapshot (control_bytes_sent=100) in its first life, is
+    SIGKILLed before that life ever writes a final `counters` line, restarts (a second agent_start),
+    and only the NEW life writes the final `counters` line -- with control_bytes_sent reset to 50 by
+    the restart (CefpycoTransport's byte counters are process-local, reset to 0 every life). Exactly
+    one counters_snapshot and exactly one counters line in total still passes `_check_counters`'s own
+    counts outright; this is the shape only agent_lives and counters_decreased catch.
+    """
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h1"
+    events = [
+        _agent_start_event(node),  # life 1
+        _snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]),  # life 1's snapshot: control_bytes_sent=100
+        # life 1 is SIGKILLed here, before it ever writes a final `counters` line.
+        _agent_start_event(node),  # life 2, after the unplanned restart
+        _counters_event(evalgen.AGENT_STOP_AT_S, control_bytes_sent=50),  # life 2's own (reset) final line
+    ]
+    _write_events(run_dir, node, events)
+    assert validate(str(run_dir))["flags"] == ["agent_lives:h1", "counters_decreased:h1"]

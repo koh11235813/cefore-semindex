@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import sys
 from datetime import datetime
 
@@ -88,6 +89,38 @@ def read_events(path: str) -> list[dict]:
     except FileNotFoundError:
         raise CheckUsageError(f"{path} does not exist") from None
     return events
+
+
+def agent_start_t0_values(nodes_events: dict[str, list[dict]]) -> list[float]:
+    """Every `t0_ms` an `agent_start` line recorded, one per life that wrote one (every node, every restart).
+
+    `agent_start` is the one line every agent process (semindex.agent.Agent.__init__) writes before
+    anything else in its own life, carrying the real `t0_ms` it was launched with directly -- not
+    inferred from when some other event crossed a scheduled boundary. Unlike `read_events` above (one
+    node's events, in file order), this takes every node's already-read event list keyed by node name.
+
+    2026-10-23 fix: moved here from a private, single-file copy, so a run's t0 derivation reads this
+    line exactly once, not through two separate readings that could silently drift apart.
+    """
+    return [
+        float(event["t0_ms"])
+        for events in nodes_events.values()
+        for event in events
+        if event.get("event") == "agent_start" and "t0_ms" in event
+    ]
+
+
+def agent_start_t0(values: list[float]) -> tuple[float, bool] | None:
+    """The median of `values` (agent_start.t0_ms readings), and whether they disagree (not all equal).
+
+    Every node's agent is meant to launch with the exact same t0_ms -- a difference is an anomaly worth
+    surfacing on its own, not something to silently average away, so the median is still returned
+    alongside the disagreement bool rather than withheld: a caller needs SOME t0 to anchor its own
+    checks to even when the evidence disagrees. `None` for an empty list -- nothing to derive from.
+    """
+    if not values:
+        return None
+    return statistics.median(values), max(values) != min(values)
 
 
 def read_results(run_dir: str) -> list[dict]:

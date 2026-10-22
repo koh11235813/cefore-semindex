@@ -78,7 +78,7 @@ from semindex.analyze import (
     discover_node_events,
     probe_pairs,
 )
-from semindex.check import CheckUsageError, read_results, results_ts_ms
+from semindex.check import CheckUsageError, agent_start_t0, agent_start_t0_values, read_results, results_ts_ms
 
 # Whether a figure step could even run in this interpreter. Checked once,
 # at import time, rather than inside main() on every invocation; a
@@ -244,16 +244,6 @@ class T0Derivation:
     consistency_ms: float | None  # max |t0_agent_start - t0_scheduler| across nodes, when both exist
 
 
-def _agent_start_t0_values(nodes: dict[str, list[dict]]) -> list[float]:
-    """Every `t0_ms` an `agent_start` line recorded, one per life that wrote one (every node, every restart)."""
-    return [
-        float(event["t0_ms"])
-        for events in nodes.values()
-        for event in events
-        if event.get("event") == "agent_start" and "t0_ms" in event
-    ]
-
-
 def _t0_from_results(results: list[dict] | None) -> float | None:
     """Median of (event ts_ms - actual_at*1000) over results.json's own scheduler event rows.
 
@@ -333,16 +323,17 @@ def derive_t0_ms(nodes: dict[str, list[dict]], results: list[dict] | None) -> T0
     rung -- a run this broken has nothing this module could anchor a
     window to.
     """
-    agent_start_values = _agent_start_t0_values(nodes)
+    agent_start_values = agent_start_t0_values(nodes)
     scheduler = _t0_from_results(results)
     consistency_ms = (
         max(abs(v - scheduler) for v in agent_start_values) if agent_start_values and scheduler is not None else None
     )
 
-    if agent_start_values:
-        disagreement = max(agent_start_values) != min(agent_start_values)
+    agent_start_result = agent_start_t0(agent_start_values)
+    if agent_start_result is not None:
+        t0_ms, disagreement = agent_start_result
         return T0Derivation(
-            t0_ms=statistics.median(agent_start_values),
+            t0_ms=t0_ms,
             source="agent_start",
             agent_start_disagreement=disagreement,
             consistency_ms=consistency_ms,

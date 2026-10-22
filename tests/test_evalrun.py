@@ -40,7 +40,12 @@ def _write_fake_node_dir(run_dir: str, host: int, node_config: dict, *, with_rec
     semindex_dir = os.path.join(node_dir, "semindex")
     os.makedirs(semindex_dir, exist_ok=True)
 
-    events = []
+    # The first line every real agent life writes (semindex.agent.Agent.__init__) -- evalvalid's t0
+    # derivation now prefers this over any record-based estimate, and its own stage-1 single-life
+    # check flags a node missing it outright, so the fake run this module fabricates must include it
+    # too for `run_one`'s stored validity verdict to stay "valid" the way these tests expect.
+    agent_start_t0_ms = round(_T0_EPOCH * 1000)
+    events = [{"ts_ms": agent_start_t0_ms, "event": "agent_start", "node": node, "t0_ms": agent_start_t0_ms}]
     if with_records:
         for i, entry in enumerate(node_config["schedule"]):
             events.append(
