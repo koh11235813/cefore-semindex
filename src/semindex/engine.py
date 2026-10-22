@@ -131,11 +131,9 @@ class SyncEngine:
         since stage 1's policy always picks its one deterministic action.
 
         A no-op when config.log_decisions is False (test/analysis-only; every
-        production config leaves it at its default True). Callers only reach here
-        once they already know a real decision was made -- state_poll is only called
-        when a poll is actually due, and fetch_plan/fetch_backoff's own call sites
-        skip this entirely when there was nothing to send or nothing to fail -- so
-        this never has to re-check that part.
+        production config leaves it at its default True). Assumes a real decision
+        has already been made -- it never re-checks that for itself, so it must only
+        be called once something was actually chosen, not on a no-op.
         """
         if not self._config.log_decisions:
             return
