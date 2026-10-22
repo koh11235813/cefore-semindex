@@ -17,6 +17,27 @@
 #   sudo .venv/bin/python3 -m src disaster \
 #       --config /home/lab_shared/cefore-semindex/examples/two_host_sync.yaml
 #
+# ORCHESTRATOR MUST RUN
+#
+# 1. Run the scenario (from the integration checkout's own root):
+#      sudo .venv/bin/python3 -m src disaster \
+#          --config /home/lab_shared/cefore-semindex/examples/two_host_sync.yaml
+#
+# 2. Check both sides' events.jsonl. debug.artifacts: ["node_dirs"] below
+#    archives each host's whole node dir under
+#    <run_dir>/debug/node_dirs/hN/ before teardown deletes it; <run_dir>
+#    is output_dir/dir_name, and with this file's own num: 9906, seed: 42
+#    and no timestamp key, dir_name is "ex9906_seed42" (ReCefore's
+#    experiment_dir_name) -- so from that same root:
+#      python3 /home/lab_shared/cefore-semindex/examples/two_host_sync/check_events.py \
+#          logs/verify/ex9906_seed42/debug/node_dirs/h0/semindex/events.jsonl \
+#          logs/verify/ex9906_seed42/debug/node_dirs/h1/semindex/events.jsonl
+#
+#    Expected observable result: one PASS line per assertion (see
+#    check_events.py's own docstring for exactly which), and the
+#    checker's own exit code is 0 (1 means at least one assertion
+#    printed FAIL above; 2 means the two paths above were wrong).
+#
 # What this proves (map.md's T1, scaled to 2 hosts, no partition): h0 and
 # h1 are direct neighbors; h0 creates 3 Index records (all describing the
 # same real content body, published below via ReCefore's own `put`), h1
