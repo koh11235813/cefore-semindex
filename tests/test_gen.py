@@ -80,6 +80,38 @@ def test_parse_experiment_rejects_hosts_below_three():
     assert str(exc_info.value) == "hosts must be >= 3"
 
 
+def test_parse_experiment_rejects_an_absolute_path_as_name():
+    """2026-10-22 fix: `name` becomes a path component verbatim in
+    write_experiment, with no sanitizing there -- an absolute path must be rejected before it
+    reaches that point."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(name="/etc/passwd"))
+    assert str(exc_info.value) == "name must not be a path: '/etc/passwd'"
+
+
+def test_parse_experiment_rejects_a_name_containing_a_path_separator():
+    """2026-10-22 fix: a name like "../escaped" would otherwise let
+    write_experiment write <outdir>/escaped.yaml and <outdir>/escaped/<node>.json outside the
+    requested outdir."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(name="../escaped"))
+    assert str(exc_info.value) == "name must not be a path: '../escaped'"
+
+
+def test_parse_experiment_rejects_dot_as_name():
+    """Parse experiment rejects dot as name."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(name="."))
+    assert str(exc_info.value) == "name must not be a path: '.'"
+
+
+def test_parse_experiment_rejects_dotdot_as_name():
+    """Parse experiment rejects dotdot as name."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(name=".."))
+    assert str(exc_info.value) == "name must not be a path: '..'"
+
+
 def test_parse_experiment_rejects_a_non_positive_duration():
     """Parse experiment rejects a non positive duration."""
     with pytest.raises(ExperimentError) as exc_info:

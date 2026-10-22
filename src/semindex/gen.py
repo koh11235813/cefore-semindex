@@ -459,6 +459,15 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         raise ExperimentError(f"missing required experiment key: {missing[0]!r}")
 
     name = _require_non_empty_string(raw["name"], "name")
+    # 2026-10-22 fix: `name` becomes a path component verbatim in
+    # write_experiment (`<outdir>/<name>.yaml`, `<outdir>/<name>/<node>.json`)
+    # with no further sanitizing there -- an absolute path, an embedded
+    # separator (e.g. "../escaped"), or "." / ".." lets a generated
+    # experiment write outside the `outdir` its caller chose. Checked once
+    # here, at the one place every caller (semindex.check included) already
+    # goes through to get a validated ExperimentSpec.
+    if os.path.isabs(name) or "/" in name or os.sep in name or name in (".", ".."):
+        raise ExperimentError(f"name must not be a path: {name!r}")
     num = _require_int(raw["num"], "num")
     seed = _require_int(raw["seed"], "seed")
     group = _require_non_empty_string(raw["group"], "group")
