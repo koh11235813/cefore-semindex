@@ -95,7 +95,9 @@ def test_on_record_releases_the_fetch_for_retry_on_name_payload_mismatch(tmp_pat
     # on_fetch_timeout is ever coming for an Interest that already got
     # a Data reply). It must instead back off and let the next on_tick
     # retry it, exactly like a timeout would.
-    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    # fetch_backoff_initial_s is pinned to 1.0: this test is about the
+    # mismatch-triggers-retry path, not the live backoff default.
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=1.0)
     engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
     engine.on_tick(now=0.0)  # claims the fetch for origin-x/1 against h1
     fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
@@ -116,7 +118,9 @@ def test_on_record_releases_the_fetch_for_retry_on_name_payload_mismatch(tmp_pat
 
 def test_on_record_releases_the_fetch_for_retry_on_malformed_payload(tmp_path: Path):
     """Malformed JSON in a reply still releases the in-flight fetch, so the next on_tick retries it."""
-    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    # fetch_backoff_initial_s is pinned to 1.0: this test is about the
+    # malformed-payload-triggers-retry path, not the live backoff default.
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=1.0)
     engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
     engine.on_tick(now=0.0)
     fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
@@ -284,7 +288,7 @@ def test_on_state_decodes_and_feeds_the_tracker_then_plans_fetches(tmp_path: Pat
     payload = holder_state.encode({"origin-x": OriginProgress(hi=2, extra=())})
     engine.on_state("h1", payload, now=0.0)
     events = engine.drain_events()
-    assert events[0] == {"event": "state_rx", "neighbor": "h1"}
+    assert events[0] == {"event": "state_rx", "neighbor": "h1", "hi": {"origin-x": 2}}
     sent_names = [n for n, _ in transport.sent]
     assert sent_names == [
         names.build_record_name("g", "h1", "origin-x", 1),
@@ -297,7 +301,7 @@ def test_on_state_drops_malformed_payload_silently(tmp_path: Path):
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     engine.on_state("h1", b"not json", now=0.0)
     events = engine.drain_events()
-    assert events == [{"event": "state_rx", "neighbor": "h1"}]
+    assert events == [{"event": "state_rx", "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
 
@@ -312,7 +316,7 @@ def test_on_state_drops_payload_with_a_malformed_origin_without_crashing(tmp_pat
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     payload = b'{"bad/origin":{"extra":[],"hi":1,"truncated":false}}'
     engine.on_state("h1", payload, now=0.0)  # must not raise
-    assert engine.drain_events() == [{"event": "state_rx", "neighbor": "h1"}]
+    assert engine.drain_events() == [{"event": "state_rx", "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
 
@@ -336,7 +340,9 @@ def test_on_fetch_timeout_releases_the_fetch_for_retry(tmp_path: Path):
     pins that a real timeout still frees the slot so the next on_tick
     retries it, instead of leaving it stuck.
     """
-    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    # fetch_backoff_initial_s is pinned to 1.0: this test is about the
+    # timeout-frees-the-slot-for-retry path, not the live backoff default.
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=1.0)
     engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
     engine.on_tick(now=0.0)  # claims the fetch for origin-x/1 against h1
     fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
@@ -346,6 +352,32 @@ def test_on_fetch_timeout_releases_the_fetch_for_retry(tmp_path: Path):
     engine.on_fetch_timeout(fetch_name, now=0.0)
 
     # The state poll is not due again yet; only the released fetch
-    # retry (backoff_initial_s defaults to 1.0) should fire at now=1.0.
+    # retry (fetch_backoff_initial_s pinned to 1.0 above) should fire at now=1.0.
     engine.on_tick(now=1.0)
     assert transport.sent == [(fetch_name, engine._config.interest_lifetime_ms)]
+
+
+def test_default_fetch_backoff_initial_clears_cefores_pit_grace_window(tmp_path: Path):
+    """Pins SyncConfig's own live default (2026-10-23: 2s, not 1s) -- the production value the
+    agent actually runs with (engine.py passes config.fetch_backoff_initial_s straight to the
+    Tracker; see tracker.py's identical pin of its own DEFAULT_BACKOFF_INITIAL_S). The first
+    same-name retry after a fetch_timeout must not be planned before 2s: a 1s retry would land
+    inside Cefore v0.12's own 1s PIT grace window after an expired Interest and be silently
+    absorbed there, never reaching the producer at all."""
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))  # no override: exercises SyncConfig's own default
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)  # claims the fetch for origin-x/1 against h1
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+    assert fetch_name in [n for n, _ in transport.sent]
+    transport.sent.clear()
+
+    engine.on_fetch_timeout(fetch_name, now=0.0)
+
+    # Strictly after the 1s PIT grace: nothing is due yet at 1.0s (the
+    # state poll isn't due again yet either -- its own interval is also
+    # 2.0s by default).
+    engine.on_tick(now=1.0)
+    assert transport.sent == []
+
+    engine.on_tick(now=2.0)
+    assert fetch_name in [n for n, _ in transport.sent]

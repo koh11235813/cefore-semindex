@@ -527,6 +527,8 @@ def test_run_exits_and_shuts_down_cleanly_once_stop_is_requested(tmp_path: Path)
     assert lines[-1]["event"] == "counters"
     assert lines[-1]["bytes_sent"] == 0
     assert lines[-1]["bytes_received"] == 0
+    assert lines[-1]["control_bytes_sent"] == 0
+    assert lines[-1]["control_bytes_received"] == 0
 
     # The store connection is closed: a further call must raise, proving close() really ran.
     with pytest.raises(sqlite3.ProgrammingError):

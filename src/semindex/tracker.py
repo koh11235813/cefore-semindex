@@ -27,7 +27,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
-DEFAULT_BACKOFF_INITIAL_S = 1.0
+# 2026-10-23: live T2a showed Cefore v0.12 keeps a PIT entry for
+# interest_lifetime + CefC_Pit_CleaningTime (1s; cefore
+# src/include/cefore/cef_pit.h:55, lib/cef_pit.c:744) after the Interest
+# that created it expires. With a 2s interest_lifetime and a 1s initial
+# backoff, the first same-name retry landed inside that window and was
+# silently absorbed by the PIT -- never reaching the producer -- wasting
+# one retry on every single fetch. 2s clears the PIT's own grace window.
+DEFAULT_BACKOFF_INITIAL_S = 2.0
 DEFAULT_BACKOFF_MULTIPLIER = 2.0
 DEFAULT_BACKOFF_MAX_S = 16.0
 DEFAULT_MAX_MISSING_PER_ORIGIN = 1024
@@ -229,10 +236,12 @@ class Tracker:
         """A fetch sent to `neighbor` for (origin, seq) got no reply in time.
 
         Releases the in-flight slot and waits the *current* backoff
-        before the next attempt (map.md "再送間隔 1 秒から倍々、16 秒で
-        頭打ち": the first wait is 1 s, not 2 s), doubling the backoff
-        for the attempt after that, capped. A timeout for a fetch
-        already resolved or reassigned elsewhere is stale and ignored.
+        before the next attempt (map.md "再送間隔 ... 倍々、16 秒で頭打
+        ち": the wait is the backoff already in effect for this attempt,
+        not the doubled value computed for the attempt after it), doubling
+        the backoff for the attempt after that, capped. A timeout for a
+        fetch already resolved or reassigned elsewhere is stale and
+        ignored.
         """
         self._fail(origin, seq, neighbor, now)
 

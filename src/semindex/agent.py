@@ -610,6 +610,13 @@ class Agent:
                 "event": "counters",
                 "bytes_sent": self._transport.bytes_sent,
                 "bytes_received": self._transport.bytes_received,
+                # 2026-10-22 fix: bytes_sent/received above also
+                # include a probe's own content-body fetch, so an analysis
+                # reading this line for *sync protocol* overhead needs a
+                # total that excludes it -- see cefpyco_transport's own
+                # "Byte counters" docstring entry.
+                "control_bytes_sent": self._transport.control_bytes_sent,
+                "control_bytes_received": self._transport.control_bytes_received,
             }
         )
         self._events.close()

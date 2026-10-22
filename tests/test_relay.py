@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from semindex import names
 from semindex.engine import SyncConfig, SyncEngine
-from semindex.store import Store
+from semindex.store import OriginProgress, Store
 
 from fakes import FakeNetwork
 
@@ -170,3 +171,34 @@ def test_requester_retries_via_a_second_holder_once_the_first_partitions(tmp_pat
 
     assert r._store.get_progress("A").hi == 3
     assert stored == {1: "B", 2: "B", 3: "B"}
+
+
+def test_duplicate_record_arriving_via_two_different_holders_stores_once(tmp_path: Path):
+    """The same (origin, seq) record delivered by two different neighbors (both already
+    synced from the origin, so both can legitimately answer for it) is stored once; the
+    second arrival is a silent duplicate, not a conflict, and progress is unaffected.
+
+    Unlike test_on_record_duplicate_is_idempotent_and_silent (tests/test_engine.py), which
+    redelivers from the *same* holder segment, this builds both wire names with a
+    different holder (B, then C) in a FakeNetwork-built relay topology, confirming the
+    Store's dedup by (origin, seq) -- not by holder -- is what actually protects a
+    multi-neighbor relay from double-counting a record two neighbors both happen to hold.
+    """
+    network = FakeNetwork()
+    a = _build_node(tmp_path, network, "A", neighbors=())
+    r = _build_node(tmp_path, network, "R", neighbors=("B", "C"))
+
+    a.create_record(content_name="ccnx:/content/A/1", zone="zone1", disaster="flood", media="image", observed_at=0)
+    payload = a._store.get_record("A", 1)
+    assert payload is not None
+
+    name_via_b = names.build_record_name("g", "B", "A", 1)
+    name_via_c = names.build_record_name("g", "C", "A", 1)
+
+    r.on_record(name_via_b, payload, now=0.0)
+    assert r.drain_events() == [{"event": "record_stored", "origin": "A", "seq": 1, "holder": "B"}]
+
+    r.on_record(name_via_c, payload, now=1.0)
+    assert r.drain_events() == []  # silent duplicate: no second record_stored, no conflict
+
+    assert r._store.get_progress("A") == OriginProgress(hi=1, extra=())
