@@ -106,6 +106,18 @@ def test_build_experiment_differs_for_a_different_p():
     assert json.dumps(raw1["events"], sort_keys=True) != json.dumps(raw2["events"], sort_keys=True)
 
 
+def test_record_and_probe_schedules_are_the_same_regardless_of_p_at_the_same_seed():
+    """2026-10-23 review r1 (finding 3, minor): only link_down/link_up events may change
+    with p at a fixed seed -- record attrs and probe zones must not. Before the fix, p was
+    part of every derived random stream's hash, so seed=7's h0 first record was zone1 at
+    p=0.2 but zone5 at p=0.3: a comparison meant to isolate the disconnect rate alone also
+    silently changed the simulated load."""
+    raw1 = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    raw2 = evalgen.build_experiment(0.3, 7, "s1", "/out")
+    assert json.dumps(raw1["schedule"], sort_keys=True) == json.dumps(raw2["schedule"], sort_keys=True)
+    assert json.dumps(raw1["probes"], sort_keys=True) == json.dumps(raw2["probes"], sort_keys=True)
+
+
 def test_generate_run_writes_byte_identical_files_on_a_second_call(tmp_path: Path):
     """2026-10-23: proves "same (p, seed) => byte-identical output" against the actual files
     on disk, not just the in-memory dict -- generating into the same outdir twice must leave

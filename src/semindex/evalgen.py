@@ -105,30 +105,40 @@ PUBLISHER_CACHE_TIME = 3000
 RECEFORE_NUM = 1
 
 
-def _derive_seed(seed: int, p: float, purpose: str) -> int:
-    """Derive a random.Random seed deterministically from (seed, p, purpose).
+def _derive_seed(seed: int, purpose: str) -> int:
+    """Derive a random.Random seed deterministically from (seed, purpose).
 
     Every independently-drawn piece of a run (each link's disconnect
     schedule, each origin's record attrs, the probe's zone draws) gets its
     own `purpose` string and therefore its own, otherwise-uncorrelated
     random.Random instance (map.md "no global random"). Hashing
-    (seed, p, purpose) with SHA-256 and taking the first 8 bytes as a big
-    -endian integer means: the same three inputs always derive the same
+    (seed, purpose) with SHA-256 and taking the first 8 bytes as a big
+    -endian integer means: the same two inputs always derive the same
     stream (determinism/"byte-identical output" requirement), two
     different `purpose` values derive unrelated streams even for the same
-    (seed, p) (so adding or removing one draw site, e.g. a 6th host, can
-    never perturb another site's draws), and the derivation does not
-    depend on Python's per-process string hash randomization the way
-    `hash()` or iterating a plain `set`/`frozenset` would.
+    seed (so adding or removing one draw site, e.g. a 6th host, can never
+    perturb another site's draws), and the derivation does not depend on
+    Python's per-process string hash randomization the way `hash()` or
+    iterating a plain `set`/`frozenset` would.
+
+    2026-10-23 (review r1, finding 3) fix: `p` used to be part of this
+    hash's input, for every purpose including "records:hN" and "probe:h2"
+    -- so the same seed with a different p drew a completely unrelated
+    record/probe stream (ticket 03's ".../zone1/landslide/video" at p=0.2
+    vs ".../zone5/fire/sensor" at p=0.3 for seed=7's h0 first record),
+    instead of the ticket's "乱数は seed だけから決まり". `p` is no longer
+    an input here at all; `_link_events` (the only purpose where p is
+    supposed to matter) still takes p as a parameter, but only to compare
+    against this seed-only stream's draws, never to pick the stream.
     """
-    payload = json.dumps({"seed": seed, "p": p, "purpose": purpose}, sort_keys=True).encode("ascii")
+    payload = json.dumps({"seed": seed, "purpose": purpose}, sort_keys=True).encode("ascii")
     digest = hashlib.sha256(payload).digest()
     return int.from_bytes(digest[:8], "big")
 
 
-def _rng_for(seed: int, p: float, purpose: str) -> random.Random:
-    """A random.Random seeded deterministically from (seed, p, purpose). See `_derive_seed`."""
-    return random.Random(_derive_seed(seed, p, purpose))
+def _rng_for(seed: int, purpose: str) -> random.Random:
+    """A random.Random seeded deterministically from (seed, purpose). See `_derive_seed`."""
+    return random.Random(_derive_seed(seed, purpose))
 
 
 def _validate_p(p: float) -> None:
@@ -158,15 +168,17 @@ def _format_p(p: float) -> str:
     return text if text else "0"
 
 
-def _record_schedule(host: int, seed: int, p: float) -> list[dict]:
+def _record_schedule(host: int, seed: int) -> list[dict]:
     """Build one origin host's 30-record schedule, attrs drawn uniformly from the seed.
 
     `zone`/`disaster`/`media` are drawn from `sorted(schema.<VOCAB>)`, not
     the frozenset itself or a plain `list()` of it: frozenset iteration
     order depends on Python's per-process string hash randomization, which
-    would make the same (seed, p) draw different attrs across process runs.
+    would make the same seed draw different attrs across process runs. No
+    `p` parameter here on purpose (finding 3, see `_derive_seed`) -- these
+    attrs must be identical for a given seed no matter what p is.
     """
-    rng = _rng_for(seed, p, f"records:h{host}")
+    rng = _rng_for(seed, f"records:h{host}")
     zones = sorted(schema.ZONES)
     disasters = sorted(schema.DISASTERS)
     media = sorted(schema.MEDIA)
@@ -183,9 +195,13 @@ def _record_schedule(host: int, seed: int, p: float) -> list[dict]:
     return entries
 
 
-def _probe_schedule(seed: int, p: float) -> list[dict]:
-    """Build h2's probe schedule: every PROBE_INTERVAL_S, zone drawn uniformly from the seed."""
-    rng = _rng_for(seed, p, f"probe:h{PROBE_HOST}")
+def _probe_schedule(seed: int) -> list[dict]:
+    """Build h2's probe schedule: every PROBE_INTERVAL_S, zone drawn uniformly from the seed.
+
+    No `p` parameter here on purpose (finding 3, see `_derive_seed`) -- the
+    probe's zone draws must be identical for a given seed no matter what p is.
+    """
+    rng = _rng_for(seed, f"probe:h{PROBE_HOST}")
     zones = sorted(schema.ZONES)
     entries = []
     at_s = PROBE_START_S
@@ -206,10 +222,17 @@ def _link_events(seed: int, p: float) -> list[dict]:
     interval is restored by `at <= DISCONNECT_WINDOW_S` -- never left
     dangling, and always with LINK_EVENT_SAFETY_MARGIN_S to spare before
     DURATION_S (see that constant's comment for why the margin exists).
+
+    2026-10-23 (review r1, finding 3): each link's rng stream is seeded
+    from (seed, purpose) only, never p (see `_derive_seed`) -- so the same
+    seed draws the exact same sequence of `rng.random()` values at every
+    p, and only the `< p` comparison below changes with p. This is what
+    lets a seed=7 comparison across p values isolate the disconnect rate
+    alone, instead of also redrawing an unrelated down/up pattern.
     """
     events: list[dict] = []
     for a, b in LINKS:
-        rng = _rng_for(seed, p, f"link:{a}:{b}")
+        rng = _rng_for(seed, f"link:{a}:{b}")
         down_slots = [rng.random() < p for _ in range(NUM_SLOTS)]
         run_start = None
         for i in range(NUM_SLOTS + 1):
@@ -238,7 +261,7 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
     """
     _validate_p(p)
     name = f"{stage}_p{_format_p(p)}_seed{seed}"
-    schedule = {str(host): _record_schedule(host, seed, p) for host in RECORD_ORIGIN_HOSTS}
+    schedule = {str(host): _record_schedule(host, seed) for host in RECORD_ORIGIN_HOSTS}
     return {
         "name": name,
         "num": RECEFORE_NUM,
@@ -257,7 +280,7 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
             "cache_time": PUBLISHER_CACHE_TIME,
         },
         "schedule": schedule,
-        "probes": {str(PROBE_HOST): _probe_schedule(seed, p)},
+        "probes": {str(PROBE_HOST): _probe_schedule(seed)},
         "events": _link_events(seed, p),
     }
 
