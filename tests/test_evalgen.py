@@ -1,0 +1,348 @@
+"""Tests for the semindex.evalgen stage-1 evaluation-run generator."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from semindex import evalgen, schema
+from semindex.gen import parse_experiment
+
+
+# -- build_experiment: shape --------------------------------------------------
+
+
+def test_build_experiment_has_the_fixed_five_host_line_topology():
+    """Build experiment has the fixed five host line topology."""
+    raw = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    assert raw["hosts"] == 5
+    assert raw["links"] == [[0, 1], [1, 2], [2, 3], [3, 4]]
+    assert raw["agents"] == [0, 1, 2, 3, 4]
+    assert raw["publisher"]["host"] == 0
+    assert raw["duration"] == 120
+
+
+def test_build_experiment_puts_30_records_on_h0_and_h4_only():
+    """Build experiment puts 30 records on h0 and h4 only."""
+    raw = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    assert set(raw["schedule"].keys()) == {"0", "4"}
+    assert len(raw["schedule"]["0"]) == 30
+    assert len(raw["schedule"]["4"]) == 30
+
+
+def test_build_experiment_probes_from_h2_only():
+    """Build experiment probes from h2 only."""
+    raw = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    assert set(raw["probes"].keys()) == {"2"}
+
+
+def test_build_experiment_output_is_a_valid_gen_experiment_description():
+    """gen.parse_experiment must accept evalgen's own output -- the whole point of reusing gen."""
+    raw = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    spec = parse_experiment(raw)  # raises ExperimentError if the shape is wrong
+    assert spec.hosts == 5
+
+
+# -- record schedule -----------------------------------------------------
+
+
+def test_record_schedule_is_2s_apart_starting_at_the_startup_margin():
+    """Record schedule is 2s apart starting at the startup margin."""
+    raw = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    at_s_values = [entry["at_s"] for entry in raw["schedule"]["0"]]
+    assert at_s_values[0] == evalgen.RECORD_START_S
+    assert at_s_values == [evalgen.RECORD_START_S + i * 2.0 for i in range(30)]
+
+
+def test_record_schedule_attrs_are_within_the_fixed_vocabulary():
+    """Record schedule attrs are within the fixed vocabulary."""
+    raw = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    for entry in raw["schedule"]["0"] + raw["schedule"]["4"]:
+        assert entry["zone"] in schema.ZONES
+        assert entry["disaster"] in schema.DISASTERS
+        assert entry["media"] in schema.MEDIA
+
+
+# -- probe schedule --------------------------------------------------------
+
+
+def test_probe_schedule_is_10s_apart_and_inside_the_run():
+    """Probe schedule is 10s apart and inside the run."""
+    raw = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    at_s_values = [entry["at_s"] for entry in raw["probes"]["2"]]
+    assert at_s_values[0] == evalgen.PROBE_START_S
+    for a, b in zip(at_s_values, at_s_values[1:]):
+        assert b - a == evalgen.PROBE_INTERVAL_S
+    assert all(0 <= at_s < evalgen.DURATION_S for at_s in at_s_values)
+
+
+# -- determinism -----------------------------------------------------------
+
+
+def test_build_experiment_is_identical_for_the_same_p_seed_stage_outdir():
+    """Build experiment is identical for the same p seed stage outdir."""
+    raw1 = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    raw2 = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    assert json.dumps(raw1, sort_keys=True) == json.dumps(raw2, sort_keys=True)
+
+
+def test_build_experiment_differs_for_a_different_seed():
+    """Build experiment differs for a different seed."""
+    raw1 = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    raw2 = evalgen.build_experiment(0.2, 8, "s1", "/out")
+    assert json.dumps(raw1["schedule"], sort_keys=True) != json.dumps(raw2["schedule"], sort_keys=True)
+    assert json.dumps(raw1["events"], sort_keys=True) != json.dumps(raw2["events"], sort_keys=True)
+
+
+def test_build_experiment_differs_for_a_different_p():
+    """Build experiment differs for a different p."""
+    raw1 = evalgen.build_experiment(0.2, 7, "s1", "/out")
+    raw2 = evalgen.build_experiment(0.3, 7, "s1", "/out")
+    assert json.dumps(raw1["events"], sort_keys=True) != json.dumps(raw2["events"], sort_keys=True)
+
+
+def test_generate_run_writes_byte_identical_files_on_a_second_call(tmp_path: Path):
+    """2026-10-23: proves "same (p, seed) => byte-identical output" against the actual files
+    on disk, not just the in-memory dict -- generating into the same outdir twice must leave
+    every written file's bytes unchanged."""
+    outdir = tmp_path / "run"
+    written = evalgen.generate_run(0.2, 7, "s1", str(outdir))
+    before = {path: Path(path).read_bytes() for path in written}
+
+    written_again = evalgen.generate_run(0.2, 7, "s1", str(outdir))
+    assert written_again == written
+    after = {path: Path(path).read_bytes() for path in written_again}
+    assert before == after
+
+
+def test_cli_output_is_byte_identical_across_separate_processes(tmp_path: Path):
+    """The in-process test above can't catch a determinism bug tied to Python's own
+    per-process string-hash randomization (PYTHONHASHSEED) -- exactly the hazard
+    `_record_schedule`'s own docstring guards against by drawing from `sorted(schema.ZONES)`
+    rather than the frozenset or a plain `list()` of it. Running the CLI as two separate
+    interpreter processes (each with its own, independently-randomized hash seed) is what
+    actually exercises that guard."""
+    outdir = tmp_path / "run"
+    cmd = [
+        sys.executable,
+        "-m",
+        "semindex.evalgen",
+        "--p",
+        "0.2",
+        "--seed",
+        "7",
+        "--stage",
+        "s1",
+        "--out",
+        str(outdir),
+    ]
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src")}
+
+    result1 = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=30)
+    assert result1.returncode == 0, result1.stderr
+    before = {path: Path(path).read_bytes() for path in result1.stdout.splitlines()}
+
+    result2 = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=30)
+    assert result2.returncode == 0, result2.stderr
+    after = {path: Path(path).read_bytes() for path in result2.stdout.splitlines()}
+
+    assert before == after
+
+
+# -- disconnect schedule: p = 0 ----------------------------------------------
+
+
+def test_p_zero_produces_zero_link_events():
+    """Build experiment at p=0 produces zero link events."""
+    raw = evalgen.build_experiment(0.0, 7, "s1", "/out")
+    assert raw["events"] == []
+
+
+# -- disconnect schedule: shape and ordering ----------------------------------
+
+
+def _down_intervals(events: list[dict], nodes: list[int]) -> list[tuple[float, float]]:
+    """Pair up one link's link_down/link_up events, in the order they appear, as (down_at, up_at)."""
+    link_events = [e for e in events if e["nodes"] == nodes]
+    assert [e["type"] for e in link_events] == ["link_down", "link_up"] * (len(link_events) // 2)
+    return [(link_events[i]["at"], link_events[i + 1]["at"]) for i in range(0, len(link_events), 2)]
+
+
+def test_link_events_are_sorted_by_at():
+    """Link events are sorted by at."""
+    raw = evalgen.build_experiment(0.3, 7, "s1", "/out")
+    at_values = [e["at"] for e in raw["events"]]
+    assert at_values == sorted(at_values)
+
+
+def test_every_link_up_follows_its_link_down_and_every_down_is_restored_by_the_end():
+    """Every link up follows its link down and every down is restored by the end."""
+    raw = evalgen.build_experiment(0.3, 7, "s1", "/out")
+    for a, b in evalgen.LINKS:
+        for down_at, up_at in _down_intervals(raw["events"], [a, b]):
+            assert down_at < up_at
+            assert up_at <= evalgen.DISCONNECT_WINDOW_S
+
+
+def test_link_events_stay_inside_the_disconnect_window_with_margin_to_spare():
+    """Link events stay inside the disconnect window with margin to spare.
+
+    Every event must land at or before DISCONNECT_WINDOW_S, not just
+    DURATION_S -- that gap (LINK_EVENT_SAFETY_MARGIN_S) is what keeps a
+    restoring link_up from racing disaster.py's teardown sleep (see
+    evalgen.py's LINK_EVENT_SAFETY_MARGIN_S comment).
+    """
+    raw = evalgen.build_experiment(0.4, 11, "s1", "/out")
+    for e in raw["events"]:
+        assert 0 <= e["at"] <= evalgen.DISCONNECT_WINDOW_S
+
+
+# -- disconnect schedule: statistical bounds ----------------------------------
+#
+# Each link/slot draw is an independent Bernoulli(p) (evalgen._link_events'
+# own docstring). Over `NUM_SEEDS` independent seeds, `len(LINKS)` links and
+# `evalgen.NUM_SLOTS` slots per link, the observed down-fraction is the mean
+# of NUM_SEEDS * len(LINKS) * NUM_SLOTS i.i.d. Bernoulli(p) trials. Its
+# standard error is sqrt(p*(1-p)/n); the worst case over the tested p values
+# (p=0.4, variance 0.24) with n = 150 * 4 * 23 = 13800 gives SE ~= 0.0042. The
+# tolerance below (0.03) is about 7 SE, so a correct implementation fails
+# this bound with negligible probability while a broken one (e.g. a biased
+# or constant-probability draw) is still caught.
+#
+# The denominator is DISCONNECT_WINDOW_S (where disconnection is actually
+# drawn), not DURATION_S -- the always-up safety-margin tail at the end of
+# the run is not part of what `p` parameterizes, so including it would bias
+# every observed fraction low by a fixed DISCONNECT_WINDOW_S/DURATION_S
+# factor regardless of how correct the draw itself is.
+NUM_SEEDS = 150
+
+
+@pytest.mark.parametrize("p", [0.1, 0.2, 0.3, 0.4])
+def test_mean_down_fraction_over_many_seeds_approaches_p(p: float):
+    """Mean down fraction over many seeds approaches p."""
+    total_down_s = 0.0
+    total_possible_s = 0.0
+    for seed in range(NUM_SEEDS):
+        raw = evalgen.build_experiment(p, seed, "stat", "/out")
+        for a, b in evalgen.LINKS:
+            for down_at, up_at in _down_intervals(raw["events"], [a, b]):
+                total_down_s += up_at - down_at
+            total_possible_s += evalgen.DISCONNECT_WINDOW_S
+    observed_fraction = total_down_s / total_possible_s
+    assert abs(observed_fraction - p) < 0.03
+
+
+# -- attrs: uniform-ish over many draws ---------------------------------------
+#
+# Same statistical reasoning as above: aggregating RECORD_COUNT=30 draws over
+# NUM_SEEDS=150 seeds gives n=4500 i.i.d. draws per vocabulary; for zone
+# (5 values, p=0.2 each) the worst-case SE is sqrt(0.2*0.8/4500) ~= 0.006, so
+# a 0.05 tolerance is about 8 SE.
+
+
+@pytest.mark.parametrize(
+    ("field", "vocabulary"),
+    [("zone", schema.ZONES), ("disaster", schema.DISASTERS), ("media", schema.MEDIA)],
+)
+def test_attr_draws_are_uniform_ish_across_many_seeds(field: str, vocabulary: frozenset[str]):
+    """Attr draws are uniform ish across many seeds."""
+    counts = {value: 0 for value in vocabulary}
+    total = 0
+    for seed in range(NUM_SEEDS):
+        raw = evalgen.build_experiment(0.2, seed, "stat", "/out")
+        for entry in raw["schedule"]["0"]:
+            counts[entry[field]] += 1
+            total += 1
+    expected_fraction = 1.0 / len(vocabulary)
+    for value, count in counts.items():
+        assert abs(count / total - expected_fraction) < 0.05
+
+
+# -- generate_run: files on disk ----------------------------------------------
+
+
+def test_generate_run_writes_the_experiment_description_and_gens_own_files(tmp_path: Path):
+    """Generate run writes the experiment description and gens own files."""
+    outdir = tmp_path / "run"
+    written = evalgen.generate_run(0.2, 7, "s1", str(outdir))
+
+    name = "s1_p0.2_seed7"
+    experiment_path = outdir / f"{name}.experiment.json"
+    yaml_path = outdir / f"{name}.yaml"
+    h0_path = outdir / name / "h0.json"
+    assert str(experiment_path) in written
+    assert str(yaml_path) in written
+    assert str(h0_path) in written
+
+    raw = json.loads(experiment_path.read_text(encoding="utf-8"))
+    assert raw["name"] == name
+
+    h0_config = json.loads(h0_path.read_text(encoding="utf-8"))
+    assert h0_config["node"] == "h0"
+
+
+# -- CLI -----------------------------------------------------------------
+
+
+def test_main_exits_0_and_prints_every_written_path(tmp_path: Path, capsys):
+    """Main exits 0 and prints every written path."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(["--p", "0.2", "--seed", "7", "--stage", "s1", "--out", str(outdir)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    lines = captured.out.splitlines()
+    assert str(outdir / "s1_p0.2_seed7.yaml") in lines
+
+
+def test_main_exits_1_and_prints_the_error_on_a_stage_that_escapes_the_outdir(tmp_path: Path, capsys):
+    """main()'s error path: a stage label becomes part of `name`, so one containing a path
+    separator reaches gen.parse_experiment's existing path-escape check (test_gen.py's own
+    ".. /escaped" case) -- evalgen must surface that ExperimentError the same way gen.main does,
+    not let it propagate as an uncaught exception."""
+    rc = evalgen.main(["--p", "0.2", "--seed", "7", "--stage", "../escaped", "--out", str(tmp_path / "run")])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.err == "semindex.evalgen: name must not be a path: '../escaped_p0.2_seed7'\n"
+
+
+# -- ReCefore validator: the generated YAML must pass ReCefore's own config validator ---
+
+_RECEFORE_VENV_PYTHON = "/home/lab_shared/cefore-emu-sslab/.venv/bin/python3"
+_RECEFORE_SRC = "/home/lab_shared/cefore-emu-sslab/src"
+
+
+def test_generated_yaml_passes_recefore_config_validator(tmp_path: Path):
+    """Generated yaml passes ReCefore config validator.
+
+    Runs ReCefore's own loader+validator, in ReCefore's own venv, against a
+    freshly generated run's YAML -- read-only (no sudo, no mininet):
+    automates the check that would otherwise be a one-off manual step.
+    """
+    if not os.path.exists(_RECEFORE_VENV_PYTHON):
+        pytest.skip(f"ReCefore venv not found at {_RECEFORE_VENV_PYTHON}")
+    outdir = tmp_path / "run"
+    written = evalgen.generate_run(0.2, 7, "s1", str(outdir))
+    yaml_path = [p for p in written if p.endswith(".yaml")][0]
+
+    script = (
+        "import sys; sys.path.insert(0, %r)\n"
+        "from core.config.loader import load_config\n"
+        "from core.config.validator import validate_config\n"
+        "cfg = load_config(%r)\n"
+        "errors = validate_config(cfg)\n"
+        "print(errors)\n"
+    ) % (_RECEFORE_SRC, yaml_path)
+
+    result = subprocess.run(
+        [_RECEFORE_VENV_PYTHON, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[]"
