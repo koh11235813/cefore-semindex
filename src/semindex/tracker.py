@@ -114,10 +114,16 @@ class Tracker:
         self._origins: dict[str, _OriginState] = {}
         self._in_flight_count: dict[str, int] = {}  # neighbor -> count, across all origins
         # 2026-10-23 (map.md "判断の記録"): the `now` of the most recent fetch
-        # failure (timeout or rejected reply) _fail actually resolved on this
-        # neighbor, across any origin/seq -- read-only bookkeeping for
-        # Tracker.decision_state; never consulted by any scheduling decision.
-        self._last_fail_at: dict[str, float] = {}
+        # *timeout* _fail actually resolved on this neighbor, across any
+        # origin/seq -- read-only bookkeeping for decision_state; never
+        # consulted by any scheduling decision.
+        # 2026-10-23 bug fix: a rejected reply used to update this same dict
+        # too, so a rejection after a timeout silently overwrote the
+        # timeout's own time, even though decision_state reports it as
+        # "last_timeout_s" -- map.md's own "直前のタイムアウトの時刻" means a
+        # timeout specifically. Only cause == "timeout" in _fail below may
+        # set this now.
+        self._last_timeout_at: dict[str, float] = {}
 
     def _origin(self, origin: str) -> _OriginState:
         """Return this origin's bookkeeping, creating empty state on first mention."""
@@ -178,6 +184,27 @@ class Tracker:
                     break
         return result
 
+    def missing_total(self, origin: str) -> int:
+        """How many seqs this node knows exist (<= notified_max) but does not hold,
+        for `origin` -- the true backlog size, uncapped (unlike missing()'s own
+        list, which fetch planning caps at max_missing_per_origin so one due pass
+        stays bounded). Used by decision_state (map.md "判断の記録"), which must
+        report how far behind a run actually is, not that unrelated planning cap.
+
+        2026-10-23 bug fix: decision_state used to report len(missing()), so a
+        backlog beyond the cap showed exactly max_missing_per_origin forever,
+        indistinguishable from a backlog of exactly that size.
+        """
+        state = self._origins.get(origin)
+        if state is None:
+            return 0
+        upper = self.notified_max(origin)
+        return sum(
+            1
+            for seq in range(state.held_contiguous + 1, upper + 1)
+            if seq not in state.held_extra
+        )
+
     def origins(self) -> list[str]:
         """Every origin this tracker has any advertised or held state for."""
         return sorted(self._origins)
@@ -186,49 +213,66 @@ class Tracker:
         """How many fetches are currently outstanding on `neighbor`, across every origin.
 
         2026-10-23 (map.md "判断の記録"): read-only accessor onto the same counter
-        plan_fetches/_fail already maintain, for SyncEngine to log in a `decision`
-        event; it changes no scheduling behavior.
+        plan_fetches/_fail already maintain for scheduling; exposed for
+        decision-event logging too, and it changes no scheduling behavior itself.
         """
         return self._in_flight_count.get(neighbor, 0)
 
-    def last_fail_at(self, neighbor: str) -> float | None:
-        """The `now` of the most recent fetch failure _fail actually resolved on
-        `neighbor`, or None if it has never failed one (map.md "判断の記録"'s "直前
-        のタイムアウトの時刻"). A stale timeout/rejection -- one _fail treats as
-        nothing to resolve -- never sets this, since nothing actually failed.
+    def last_timeout_at(self, neighbor: str) -> float | None:
+        """The `now` of the most recent fetch *timeout* _fail actually resolved on
+        `neighbor`, or None if it has never timed one out (map.md "判断の記録"'s "直
+        前のタイムアウトの時刻"). A stale timeout -- one _fail treats as nothing to
+        resolve -- never sets this, since nothing actually failed.
+
+        2026-10-23 bug fix: a rejected reply (on_fetch_rejected) used to set this
+        same value, so a timeout followed by a later rejection reported the
+        rejection's time, not the timeout's own. Only a real timeout updates this
+        now; see _fail's own cause handling.
         """
-        return self._last_fail_at.get(neighbor)
+        return self._last_timeout_at.get(neighbor)
 
     def decision_state(self, neighbor: str) -> dict:
         """A compact snapshot of what is known about `neighbor`, for one `decision`
-        event (map.md "判断の記録"): this node's own per-origin progress, what
-        `neighbor` itself has advertised, how many fetches are outstanding on it, and
-        when it last failed one.
+        event (map.md "判断の記録"): this node's own per-origin progress, every
+        neighbor's own advertisement of that origin (not just `neighbor`'s), how many
+        fetches are outstanding on `neighbor`, and when it last timed one out.
 
         Capped at DECISION_STATE_MAX_ORIGINS origins (lowest name first) so a
         decision line's size cannot grow with how many origins a run tracks;
         `truncated` says whether any were left out. Per origin: `hi` is this node's
-        own contiguous hold (Store.OriginProgress.hi's own meaning), `adv` is the
-        highest seq `neighbor` has itself advertised holding for that origin (None if
-        it never has), and `missing` is Tracker.missing's own count for that origin
-        (not neighbor-specific: it is what this node still lacks, regardless of who
-        can supply it).
+        own contiguous hold (Store.OriginProgress.hi's own meaning), `missing` is
+        this node's true backlog for that origin (missing_total, not missing()'s own
+        fetch-planning-capped list), and `advertised` maps every neighbor that has
+        ever advertised this origin to its own {hi, notified_max} -- `hi` is that
+        neighbor's own contiguous hold, `notified_max` the highest seq it has told
+        this node about at all (its `hi`, or higher if some of its sparse `extra`
+        exceeds it).
+
+        2026-10-23 bug fix: this used to report a single `adv` number for
+        `neighbor` alone, collapsing its (hi, extra) into one max() -- a neighbor
+        holding 1..5 contiguously and one holding only a sparse seq 5 produced the
+        identical `adv=5`, and no other neighbor's advertisement was recorded at
+        all. plan_fetches itself needs exactly this (hi, extra) distinction to pick
+        a fetch target, so losing it here left the decision log unable to explain
+        plan_fetches's own choices.
         """
         origins = self.origins()
         shown = origins[:DECISION_STATE_MAX_ORIGINS]
         origin_rows: dict[str, dict] = {}
         for origin in shown:
             state = self._origins[origin]
-            advertised = state.advertised.get(neighbor)
-            adv = max(advertised[0], max(advertised[1], default=0)) if advertised is not None else None
+            advertised_rows: dict[str, dict] = {}
+            for other in sorted(state.advertised):
+                hi, extra = state.advertised[other]
+                advertised_rows[other] = {"hi": hi, "notified_max": max(hi, max(extra, default=0))}
             origin_rows[origin] = {
                 "hi": state.held_contiguous,
-                "adv": adv,
-                "missing": len(self.missing(origin)),
+                "missing": self.missing_total(origin),
+                "advertised": advertised_rows,
             }
         return {
             "in_flight": self.in_flight_count(neighbor),
-            "last_timeout_s": self.last_fail_at(neighbor),
+            "last_timeout_s": self.last_timeout_at(neighbor),
             "truncated": len(origins) > DECISION_STATE_MAX_ORIGINS,
             "origins": origin_rows,
         }
@@ -313,7 +357,7 @@ class Tracker:
         Returns the chosen wait (seconds), or None if this timeout was
         stale (nothing was actually resolved) -- see _fail's own return.
         """
-        return self._fail(origin, seq, neighbor, now)
+        return self._fail(origin, seq, neighbor, now, cause="timeout")
 
     def on_fetch_rejected(self, origin: str, seq: int, neighbor: str, now: float) -> float | None:
         """A Data reply for (origin, seq) arrived from `neighbor` but failed
@@ -330,12 +374,14 @@ class Tracker:
         Returns the chosen wait (seconds), or None if this rejection was
         stale -- see _fail's own return.
         """
-        return self._fail(origin, seq, neighbor, now)
+        return self._fail(origin, seq, neighbor, now, cause="rejected")
 
-    def _fail(self, origin: str, seq: int, neighbor: str, now: float) -> float | None:
+    def _fail(self, origin: str, seq: int, neighbor: str, now: float, *, cause: str) -> float | None:
         """Shared outcome of a timeout or a rejected reply: release the
         in-flight slot, back off, and record `neighbor` as having failed
-        this seq.
+        this seq. `cause` is "timeout" or "rejected"; it only selects
+        whether _last_timeout_at is updated below -- every other part of
+        this outcome is identical either way.
 
         If every neighbor currently advertising this seq has now failed
         it (the failed set would cover them all), the set is reset to
@@ -348,12 +394,15 @@ class Tracker:
         advertisers for as long as they all keep failing.
 
         2026-10-23 (map.md "判断の記録"): returns the chosen wait
-        (seconds), or None on the stale early-return below, so
-        SyncEngine can tell a real decision from a no-op and log a
-        `fetch_backoff` decision event only for the former. Also
-        records `now` in _last_fail_at[neighbor] -- but only past that
-        same early-return, so a stale call never fakes a failure that
-        did not happen.
+        (seconds), or None on the stale early-return below, so a caller
+        can tell a real decision from a no-op and log a `fetch_backoff`
+        decision event only for the former.
+
+        2026-10-23 bug fix: only cause == "timeout" records `now` in
+        _last_timeout_at[neighbor] -- never a rejection, and never past
+        the stale early-return above, so a stale call never fakes a
+        failure that did not happen and a rejection never masquerades as
+        the timeout map.md's "直前のタイムアウトの時刻" actually means.
         """
         state = self._origins.get(origin)
         if state is None:
@@ -370,7 +419,8 @@ class Tracker:
             next_attempt_at=now + wait, backoff_s=next_backoff, failed_neighbors=failed
         )
         self._in_flight_count[neighbor] = max(0, self._in_flight_count.get(neighbor, 0) - 1)
-        self._last_fail_at[neighbor] = now
+        if cause == "timeout":
+            self._last_timeout_at[neighbor] = now
         return wait
 
     def _release(self, state: _OriginState, seq: int) -> None:
