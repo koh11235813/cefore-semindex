@@ -260,9 +260,16 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
     """Build the one `semindex.gen` experiment description this (p, seed, stage) run needs.
 
     `stage` and `outdir` only ever affect bookkeeping fields (`name`,
-    `group`, `output_dir`) -- never a random draw -- so that "same (p,
-    seed) => byte-identical output" holds regardless of which stage label
-    or output directory a caller passes.
+    `group`, `output_dir`) -- never a random draw. So the random SCHEDULE
+    this returns (record attrs, probe zones, disconnect events) depends
+    only on (p, seed): it is identical for two calls that share (p, seed)
+    but differ in `stage`/`outdir`. The written FILES are not, though --
+    2026-10-23 (review r1, finding 5) corrects an earlier version of this
+    docstring that claimed byte-identical output regardless of stage/
+    outdir: `name`/`group` are derived from `stage`, and `output_dir`
+    (baked into the generated YAML) from `outdir`, so those bytes do
+    change. Byte-identical generated files require all four of (p, seed,
+    stage, outdir) to match, not just (p, seed).
     """
     _validate_p(p)
     name = f"{stage}_p{_format_p(p)}_seed{seed}"
