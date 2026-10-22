@@ -56,7 +56,12 @@ RECEFORE_TIMEOUT_S = 400
 # TERM, `subprocess.run()` here simply blocks forever waiting for it to
 # exit, wedging the rest of an unattended overnight sweep. `--kill-after`
 # gives TERM a finite grace period before `timeout` follows up with KILL,
-# which cannot be caught or ignored.
+# which cannot be caught or ignored. 30s: the orchestrator's live trial
+# (p=0.2 seed=1) measured 158s wall time against a 135s scenario
+# (RECEFORE_DURATION_S above) -- about 23s of ReCefore's own normal
+# Mininet setup/teardown outside the scenario itself -- so a TERM that IS
+# being honored finishes well inside this margin; it exists only to catch
+# the case where TERM is not honored at all.
 RECEFORE_KILL_AFTER_S = 30
 
 # ReCefore's own "num" is baked into evalgen's generated experiment

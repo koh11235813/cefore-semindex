@@ -181,7 +181,7 @@ def _derive_t0_ms(experiment: dict, nodes_events: dict[str, list[dict]]) -> floa
                 continue
             seq = event.get("seq")
             if not isinstance(seq, int) or not (1 <= seq <= len(entries)):
-                continue  # out-of-schedule seq: not usable as a t0 anchor (already a record_count mismatch elsewhere)
+                continue  # out-of-schedule seq: not usable as a t0 anchor (already a record_seq_mismatch elsewhere)
             expected_at_s = entries[seq - 1]["at_s"]
             residuals.append(event["ts_ms"] - expected_at_s * 1000.0)
     if not residuals:
@@ -220,7 +220,9 @@ def _check_counters(nodes_events: dict[str, list[dict]], t0_ms: float | None) ->
         # (see evalgen._link_events) -- so for this stage a second
         # `counters` line can only mean an UNPLANNED restart, and
         # CefpycoTransport's byte counters are process-local, reset to 0
-        # every life (agent.py:546). map.md's control-traffic metric
+        # every life (Agent.__init__'s own comment on why
+        # counters_snapshot_at_s has no store-backed restart cursor like
+        # schedule/probes do). map.md's control-traffic metric
         # ("最後の counters 行から...counters_snapshot 行を引く") assumes
         # both lines come from the same life; taking the last line
         # silently fed it a reset (possibly negative) number instead of
@@ -272,7 +274,11 @@ def _check_records(experiment: dict, nodes_events: dict[str, list[dict]], t0_ms:
         # The exact set {1..expected_count}, with no duplicate or missing
         # seq, is what "予定どおりにレコードが作られた" (map.md) actually
         # needs: every scheduled slot filled exactly once.
-        seqs = sorted(e.get("seq") for e in created)
+        # Non-int seqs are filtered out before sorting, not left to raise:
+        # `sorted()` on a mix of int and non-int (e.g. a missing seq,
+        # None) would otherwise crash this check outright instead of
+        # reporting the mismatch a missing/malformed seq already is.
+        seqs = sorted(e.get("seq") for e in created if isinstance(e.get("seq"), int))
         if seqs != list(range(1, expected_count + 1)):
             flags.append(f"record_seq_mismatch:{node}")
             continue  # the seq -> at_s lookup below is meaningless without a 1:1 seq match

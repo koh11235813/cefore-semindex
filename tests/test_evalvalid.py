@@ -304,6 +304,20 @@ def test_validate_flags_every_record_collapsed_onto_one_instant(tmp_path: Path):
     assert validate(str(run_dir))["flags"] == expected
 
 
+def test_validate_flags_a_missing_seq_without_crashing(tmp_path: Path):
+    """Validate flags (rather than crashes on) a record_created event with no `seq` field at
+    all -- sorting a mix of int and non-int seqs would otherwise raise before any flag could
+    be reported."""
+    run_dir, raw = _build_happy_run(tmp_path)
+    node = "h0"
+    events = _record_events(0, raw["schedule"]["0"])
+    del events[0]["seq"]
+    events.append(_snapshot_event(evalgen.AGENT_COUNTERS_SNAPSHOT_AT_S[0]))
+    events.append(_counters_event(evalgen.AGENT_STOP_AT_S))
+    _write_events(run_dir, node, events)
+    assert validate(str(run_dir))["flags"] == ["record_seq_mismatch:h0"]
+
+
 def test_validate_flags_a_record_seq_mismatch_even_with_the_right_count(tmp_path: Path):
     """Validate flags an origin whose record_created events all share one seq (reviewer
     counterexample: h0's 30 records all stamped seq=1 instead of 1..30), even though the
