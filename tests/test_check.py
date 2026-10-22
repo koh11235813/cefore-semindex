@@ -553,6 +553,11 @@ def _write_t2c_happy_path(run_dir: Path) -> None:
         [
             {"ts_ms": _ts_ms(6), "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h1"},
             {"ts_ms": _ts_ms(8), "event": "record_stored", "origin": "h0", "seq": 2, "holder": "h1"},
+            # h1's life 2 starts after its own counters line at offset 8;
+            # this is h2 hearing from it again (state_rx), before h2 asks
+            # for and gets seq 3 -- the anchor the "progress not ahead"
+            # check measures its late-fetch_timeout grace window from.
+            {"ts_ms": _ts_ms(19), "event": "state_rx", "neighbor": "h1"},
             {"ts_ms": _ts_ms(22), "event": "record_stored", "origin": "h0", "seq": 3, "holder": "h1"},
             {"ts_ms": _ts_ms(35), "event": "counters", "bytes_sent": 3, "bytes_received": 3},
         ],
@@ -589,6 +594,32 @@ def test_check_t2c_protocol_fails_when_far_node_is_served_before_the_holder_itse
     assert rc == 1
     out = capsys.readouterr().out
     assert "FAIL: h1 never served a record to h2 before h1 itself had stored it: seqs served early: [3]" in out.splitlines()
+
+
+def test_check_t2c_protocol_fails_when_holder_keeps_timing_out_long_after_its_restart(tmp_path: Path, capsys):
+    """The bug the ts-ordering check above cannot see: h1's life 2 advertises a seq it does not
+    actually hold, so h2 never gets a (wrongly early) record_stored for it at all -- only a
+    fetch_timeout against h1, repeated well past the grace window right after h1 came back up."""
+    experiment_path = tmp_path / "t2c.json"
+    _write_experiment(experiment_path, _t2c_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2c_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    # state_rx from h1's life 2 is at offset 19; this timeout lands well
+    # past the 2.5s grace window that follows it.
+    events.append({"ts_ms": _ts_ms(24), "event": "fetch_timeout", "origin": "h0", "seq": 3, "neighbor": "h1"})
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t2c", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: h1's life 2 never advertised a record it could not actually serve to h2: "
+        "fetch_timeout(s) after grace: "
+        "[{'ts_ms': 1700000024000, 'event': 'fetch_timeout', 'origin': 'h0', 'seq': 3, 'neighbor': 'h1'}]"
+    ) in out.splitlines()
 
 
 def test_check_t2c_precondition_fails_when_holder_never_converges(tmp_path: Path):

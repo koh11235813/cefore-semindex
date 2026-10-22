@@ -486,10 +486,15 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
     issue = _contiguous_unique(list(far_stored), n)
     c.protocol(f"{far} holds exactly {n} of {origin}'s records, none duplicated", issue is None, issue or "")
 
-    # "progress not ahead": far can only have gotten a record from holder
-    # (its only neighbor, so every far_stored row's holder is already
-    # holder by construction) at or after the moment holder itself
-    # actually stored that same seq -- never before, restart or not.
+    # "progress not ahead", first cut: far can only have gotten a record
+    # from holder (its only neighbor, so every far_stored row's holder is
+    # already holder by construction) at or after the moment holder
+    # itself actually stored that same seq -- never before, restart or
+    # not. This is necessary but not sufficient: it would not catch a
+    # life-2 holder advertising a seq it does not actually hold, since
+    # handle_interest only ever answers with a record it actually has --
+    # that bug shows up as a fetch_timeout against holder, never as a bad
+    # record_stored. The second check below closes that gap.
     late = [
         seq
         for seq, far_row in far_stored.items()
@@ -502,6 +507,36 @@ def check_t2c(spec: ExperimentSpec, run_dir: str) -> _Checker:
     )
 
     counters_holder = _events_of(holder_events, "counters")
+    life1_end = counters_holder[0]["ts_ms"] if counters_holder else None
+    c.precondition(f"{holder} wrote at least one counters line (its life 1 shut down cleanly)", life1_end is not None)
+
+    post_restart_state_rx_ts = [
+        e["ts_ms"] for e in _events_of(far_events, "state_rx", neighbor=holder) if life1_end is not None and e["ts_ms"] > life1_end
+    ]
+    first_post_restart_state_rx = min(post_restart_state_rx_ts, default=None)
+    c.precondition(f"{far} heard from {holder} again after its restart (state_rx)", first_post_restart_state_rx is not None)
+
+    if first_post_restart_state_rx is not None:
+        # "progress not ahead", the actual bug shape: if holder's life 2
+        # ever advertised a higher hi than it actually held, far keeps
+        # re-asking for that seq and keeps getting a fetch_timeout against
+        # holder (handle_interest returning None), never a stored record.
+        # 2500ms grace (interest_lifetime_ms's own 2000ms default, plus
+        # slack for one retry sent just as holder came back up) excludes
+        # timeouts that only mean holder was still down, not yet evidence
+        # of a false advertisement.
+        grace_deadline = first_post_restart_state_rx + 2500
+        late_timeouts = [
+            e
+            for e in _events_of(far_events, "fetch_timeout", origin=origin, neighbor=holder)
+            if e["ts_ms"] > grace_deadline
+        ]
+        c.protocol(
+            f"{holder}'s life 2 never advertised a record it could not actually serve to {far}",
+            late_timeouts == [],
+            f"fetch_timeout(s) after grace: {late_timeouts}",
+        )
+
     c.protocol(f"{holder} (restarted) wrote exactly 2 counters lines, one per life", len(counters_holder) == 2, f"got {len(counters_holder)}")
     for node in (origin, far):
         counters = _events_of(events_by_node[node], "counters")
