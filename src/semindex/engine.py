@@ -41,7 +41,11 @@ class SyncConfig:
     state_poll_interval_s: float = 2.0
     state_poll_jitter_frac: float = 0.2
     interest_lifetime_ms: int = 2000
-    fetch_backoff_initial_s: float = 1.0
+    # 2026-10-23: matches tracker.DEFAULT_BACKOFF_INITIAL_S -- see that
+    # constant's comment for why 1s let the first retry land inside
+    # Cefore's own PIT grace window and get absorbed before reaching the
+    # producer.
+    fetch_backoff_initial_s: float = 2.0
     fetch_backoff_multiplier: float = 2.0
     fetch_backoff_max_s: float = 16.0
     max_in_flight_per_neighbor: int = 8

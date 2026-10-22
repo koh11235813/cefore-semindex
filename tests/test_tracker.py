@@ -80,7 +80,11 @@ def test_backoff_schedule_doubles_from_1s_capped_at_16s():
     # map.md "再送間隔 1 秒から倍々、16 秒で頭打ち": the wait *after* a
     # timeout is the backoff that was in effect for that attempt (1s the
     # first time), and only the backoff for the *next* attempt doubles.
-    tracker = Tracker()
+    # This test is about the doubling/cap mechanics, not the live default
+    # (2s as of 2026-10-23, see tracker.DEFAULT_BACKOFF_INITIAL_S), so it
+    # pins backoff_initial_s=1.0 explicitly to keep its own numbers true
+    # regardless of what the default is.
+    tracker = Tracker(backoff_initial_s=1.0)
     tracker.observe_held("h0", hi=0, extra=())
     tracker.observe_state("h0", "n1", hi=1, extra=())
 
@@ -136,7 +140,10 @@ def test_plan_fetches_gives_the_retry_to_another_advertiser_once_one_neighbor_fa
     # straight back to n1 every time (plan_fetches is called for n1
     # before n2 on every real on_tick, since neighbor order is fixed),
     # even though n2 also advertised holding it and could serve it.
-    tracker = Tracker()
+    # This test is about failover-to-another-advertiser logic, not the
+    # live backoff default, so backoff_initial_s=1.0 is pinned explicitly
+    # to keep its timing numbers decoupled from that default.
+    tracker = Tracker(backoff_initial_s=1.0)
     tracker.observe_held("h0", hi=0, extra=())
     tracker.observe_state("h0", "n1", hi=1, extra=())
     tracker.observe_state("h0", "n2", hi=1, extra=())
@@ -159,7 +166,9 @@ def test_plan_fetches_cycles_through_three_advertisers_that_all_keep_failing():
     # retry back to whichever neighbor on_tick visits first -- the same
     # starvation this bookkeeping exists to prevent. It must instead
     # reset once everyone has failed once, so the round-robin continues.
-    tracker = Tracker()
+    # Pinned to 1.0: this test is about the round-robin reset, not the
+    # live backoff default.
+    tracker = Tracker(backoff_initial_s=1.0)
     tracker.observe_held("h0", hi=0, extra=())
     for neighbor in ("n1", "n2", "n3"):
         tracker.observe_state("h0", neighbor, hi=1, extra=())
@@ -188,7 +197,9 @@ def test_on_fetch_rejected_releases_the_slot_and_backs_off_like_a_timeout():
     # it must free the in-flight slot and apply the same backoff, or the
     # fetch would stay marked in-flight forever (no further timeout is
     # ever coming for an Interest that was already answered).
-    tracker = Tracker()
+    # Pinned to 1.0: this test is about the rejected-reply path reusing
+    # the timeout backoff logic, not the live backoff default.
+    tracker = Tracker(backoff_initial_s=1.0)
     tracker.observe_held("h0", hi=0, extra=())
     tracker.observe_state("h0", "n1", hi=1, extra=())
     assert tracker.plan_fetches("n1", now=0.0) == [("h0", 1)]
@@ -210,3 +221,22 @@ def test_stale_fetch_timeout_from_a_reassigned_neighbor_is_ignored():
     tracker.observe_held("h0", hi=1, extra=())
     tracker.on_fetch_timeout("h0", 1, "n1", now=5.0)
     assert tracker.missing("h0") == []
+
+
+def test_default_backoff_initial_clears_cefores_pit_grace_window():
+    """Pins the live default: the first same-name retry after a fetch_timeout must not be
+    planned before 2s, strictly after the 1s grace Cefore v0.12's PIT keeps a cleaned-up entry
+    for past an expired Interest's own lifetime (cef_pit.h CefC_Pit_CleaningTime). A retry
+    scheduled inside that window would be silently absorbed by the PIT and never reach the
+    producer at all -- this guarantees the tracker's own default never regresses back to a value
+    that wastes a retry that way."""
+    tracker = Tracker()  # no override: exercises DEFAULT_BACKOFF_INITIAL_S itself
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    assert tracker.plan_fetches("n1", now=0.0) == [("h0", 1)]
+
+    tracker.on_fetch_timeout("h0", 1, "n1", now=0.0)
+
+    # Strictly after the 1s PIT grace: nothing is due yet at 1.0s.
+    assert tracker.plan_fetches("n1", now=1.0) == []
+    assert tracker.plan_fetches("n1", now=2.0) == [("h0", 1)]
