@@ -47,6 +47,7 @@ class Store:
     """Append-only SQLite store for Index records and per-origin progress."""
 
     def __init__(self, path: str | Path) -> None:
+        """Open (or create) the SQLite database file at `path` in WAL mode."""
         # The agent is single-threaded (CLAUDE.md), so the default
         # same-thread connection is correct; nothing here spans threads.
         self._conn = sqlite3.connect(str(path))
