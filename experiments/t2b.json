@@ -1,0 +1,31 @@
+{
+  "name": "t2b",
+  "num": 9913,
+  "seed": 42,
+  "group": "t2b",
+  "hosts": 3,
+  "links": [[0, 1], [1, 2]],
+  "duration": 50,
+  "output_dir": "logs/semindex",
+  "agents": [0, 1, 2],
+  "publisher": {
+    "host": 0,
+    "uri": "ccnx:/content/h0/body",
+    "file": "./sample-putfile",
+    "expiry": 3000,
+    "cache_time": 3000
+  },
+  "schedule": {
+    "0": [
+      {"at_s": 3, "zone": "zone1", "disaster": "flood", "media": "image"},
+      {"at_s": 5, "zone": "zone1", "disaster": "flood", "media": "image"},
+      {"at_s": 7, "zone": "zone1", "disaster": "flood", "media": "image"},
+      {"at_s": 15, "zone": "zone1", "disaster": "flood", "media": "image"},
+      {"at_s": 17, "zone": "zone1", "disaster": "flood", "media": "image"},
+      {"at_s": 19, "zone": "zone1", "disaster": "flood", "media": "image"}
+    ]
+  },
+  "events": [
+    {"at": 9, "type": "host_app_restart", "host": 0, "downtime_s": 3}
+  ]
+}
