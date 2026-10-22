@@ -1359,3 +1359,21 @@ def test_run_all_continues_past_one_run_raising(tmp_path: Path, monkeypatch, cap
     assert "status=error" in out
     assert (store / "s1" / "p0.2" / "1" / "DONE").exists()
     assert not (store / "s1" / "p0.2" / "2" / "DONE").exists()
+
+
+def test_store_files_are_closed_to_0644_as_soon_as_they_are_written(tmp_path):
+    """Copied and written store files are 0644 right away, even under umask 0, not only after the final chown pass."""
+    from semindex import evalrun
+
+    src = tmp_path / "src.json"
+    src.write_text("{}")
+    os.chmod(src, 0o666)
+    old = os.umask(0)
+    try:
+        evalrun._copy_locked_down(str(src), str(tmp_path / "copied.json"))
+        evalrun._write_json(str(tmp_path / "meta.json"), {"a": 1})
+        evalrun._write_done(str(tmp_path / "DONE"))
+    finally:
+        os.umask(old)
+    modes = {name: os.stat(tmp_path / name).st_mode & 0o777 for name in ("copied.json", "meta.json", "DONE")}
+    assert modes == {"copied.json": 0o644, "meta.json": 0o644, "DONE": 0o644}

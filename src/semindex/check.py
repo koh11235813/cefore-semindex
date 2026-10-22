@@ -460,9 +460,11 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # deliberately not by ts_ms: Agent.step() runs poll() (queues a due
     # store), then _drain_probes() (answers a due probe), then
     # _drain_engine_events() (writes the queued record_stored) -- so a
-    # record stored in the SAME step a probe discovers it legitimately
-    # has record_stored.ts_ms > probe_discovered.ts_ms (see the same
-    # ordering note on check_t2c's holder/far comparison below).
+    # record stored in the SAME step a probe discovers it is written AFTER
+    # the probe_discovered line even though (since engine events carry
+    # their processing time, 2026-10-23) its ts_ms is the earlier one --
+    # line order and ts_ms order disagree there, so neither is used (see
+    # the same ordering note on check_t2c's holder/far comparison below).
     far_stored_seqs = {e["seq"] for e in _record_stored(events_by_node[far_node], origin)}
     after_match_seqs = {mm["seq"] for mm in after_discovered["matches"] if mm["origin"] == origin}
     bad_content_names = sorted(

@@ -413,6 +413,7 @@ def _write_done(path: str) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write("")
+    os.chmod(tmp, _STORE_FILE_MODE)
     os.replace(tmp, path)
 
 
@@ -446,14 +447,14 @@ def _copy_run_outputs(staging_run_dir: str, recefore_run_dir: str, store_run_dir
     """
     results_src = os.path.join(recefore_run_dir, "results.json")
     if os.path.exists(results_src):
-        shutil.copy2(results_src, os.path.join(store_run_dir, "results.json"))
+        _copy_locked_down(results_src, os.path.join(store_run_dir, "results.json"))
 
     for src in generated_paths:
         rel = os.path.relpath(src, staging_run_dir)
         dest = os.path.join(store_run_dir, rel)
         if os.path.exists(src):
             _makedirs_locked_down(os.path.dirname(dest))
-            shutil.copy2(src, dest)
+            _copy_locked_down(src, dest)
 
     for node_dir in sorted(glob.glob(os.path.join(recefore_run_dir, "debug", "node_dirs", "h*"))):
         node = os.path.basename(node_dir)
@@ -462,12 +463,12 @@ def _copy_run_outputs(staging_run_dir: str, recefore_run_dir: str, store_run_dir
         events_src = os.path.join(node_dir, "semindex", "events.jsonl")
         if os.path.exists(events_src):
             _makedirs_locked_down(os.path.join(dest_node_dir, "semindex"))
-            shutil.copy2(events_src, os.path.join(dest_node_dir, "semindex", "events.jsonl"))
+            _copy_locked_down(events_src, os.path.join(dest_node_dir, "semindex", "events.jsonl"))
 
         log_src = os.path.join(node_dir, "semindex_agent.log")
         if os.path.exists(log_src):
             _makedirs_locked_down(dest_node_dir)
-            shutil.copy2(log_src, os.path.join(dest_node_dir, "semindex_agent.log"))
+            _copy_locked_down(log_src, os.path.join(dest_node_dir, "semindex_agent.log"))
 
 
 def _git_run(repo_dir: str, args: list[str], capture_subprocess: Callable[..., str]) -> str:
@@ -745,9 +746,24 @@ def run_one(
 
 
 def _write_json(path: str, data: dict) -> None:
+    """Write `data` as sorted, indented JSON, closed to `_STORE_FILE_MODE` as soon as it exists."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, sort_keys=True)
         f.write("\n")
+    os.chmod(path, _STORE_FILE_MODE)
+
+
+def _copy_locked_down(src: str, dest: str) -> None:
+    """Copy `src` to `dest` and close it to `_STORE_FILE_MODE` immediately.
+
+    2026-10-23: shutil.copy2 keeps the source's mode, and the final
+    chown_tree pass only runs after evalvalid and the git lookups have
+    already read these files; under a umask-0 root shell a copied file
+    would stay group/other-writable for that whole stretch, so it could be
+    edited in place before being validated and recorded.
+    """
+    shutil.copy2(src, dest)
+    os.chmod(dest, _STORE_FILE_MODE)
 
 
 def _format_outcome(outcome: RunOutcome) -> str:
