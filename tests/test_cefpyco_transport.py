@@ -211,6 +211,42 @@ def test_poll_refuses_to_send_a_response_payload_over_the_wire_limit_for_its_kin
     assert handle.sent_data == []
 
 
+def test_poll_refuses_a_state_response_payload_over_the_wire_limit_for_its_kind():
+    """The same wire-limit refusal as the record case above, but for a state name --
+    exercises the *other* branch of the isinstance(parsed, names.StateName) limit
+    selection, which the record-only test above cannot: a regression that always
+    applied schema.MAX_RECORD_BYTES (2 KiB) regardless of kind would still pass
+    that test but must fail this one.
+    """
+    name = "ccnx:/semidx/g/h0/sv/h1/5"
+    oversized = b"x" * (holder_state.MAX_ENCODED_BYTES + 1)
+    handle = _FakeHandle([_FakePacket(is_interest=True, name=name)])
+    engine = _StubEngine()
+    engine.handle_interest_result = Response(payload=oversized, expiry_s=1.0, cache_time_s=0.0)
+    transport = CefpycoTransport(handle, engine, clock=_FakeClock(0.0))
+    transport.poll()
+    assert handle.sent_data == []
+
+
+def test_poll_sends_a_state_response_payload_between_the_record_and_state_limits():
+    """A state Response over schema.MAX_RECORD_BYTES but within
+    holder_state.MAX_ENCODED_BYTES is sent, not dropped -- the companion to the
+    test above. Together the two prove the limit selection actually picks the
+    *state* limit for a state name rather than always applying the smaller
+    *record* one (which this test alone would catch) or always applying the
+    larger *state* one (which the test above alone would catch).
+    """
+    name = "ccnx:/semidx/g/h0/sv/h1/5"
+    payload = b"x" * (schema.MAX_RECORD_BYTES + 1)
+    assert len(payload) <= holder_state.MAX_ENCODED_BYTES
+    handle = _FakeHandle([_FakePacket(is_interest=True, name=name)])
+    engine = _StubEngine()
+    engine.handle_interest_result = Response(payload=payload, expiry_s=1.0, cache_time_s=0.0)
+    transport = CefpycoTransport(handle, engine, clock=_FakeClock(0.0))
+    transport.poll()
+    assert handle.sent_data == [(name, payload, -1, 1000, 0)]
+
+
 def test_poll_routes_state_data_to_on_state_with_the_holder_from_the_name():
     """A Data reply for a state name is routed to on_state with the holder segment as the neighbor."""
     name = "ccnx:/semidx/g/h1/sv/h0/1000"
