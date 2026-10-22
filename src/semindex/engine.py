@@ -55,6 +55,12 @@ class SyncConfig:
     record_data_expiry_s: float = 3600.0
     record_data_cache_time_s: float = 300.0
     fault_drop_rec: dict[tuple[str, int], int] = field(default_factory=dict)
+    # 2026-10-23 ticket 02 ("判断の記録"): emit a `decision` event at each of the three
+    # points SyncEngine actually chooses something (state-poll target/time, fetch
+    # backoff wait, fetch-plan target/count). True in every production config; a test
+    # (test_engine.py's "leaves Interests and other events unchanged") sets it False
+    # on an otherwise-identical engine to prove logging adds no behavior of its own.
+    log_decisions: bool = True
 
 
 class SyncEngine:
@@ -119,6 +125,22 @@ class SyncEngine:
         events, self._events = self._events, []
         return events
 
+    def _emit_decision(self, kind: str, state: dict, action: dict) -> None:
+        """Queue one `decision` event (map.md "判断の記録"): the state visible at the
+        moment this engine actually chose `action`, plus action_prob -- 1.0 here,
+        since stage 1's policy always picks its one deterministic action.
+
+        A no-op when config.log_decisions is False (test/analysis-only; every
+        production config leaves it at its default True). Callers only reach here
+        once they already know a real decision was made -- state_poll is only called
+        when a poll is actually due, and fetch_plan/fetch_backoff's own call sites
+        skip this entirely when there was nothing to send or nothing to fail -- so
+        this never has to re-check that part.
+        """
+        if not self._config.log_decisions:
+            return
+        self._emit({"event": "decision", "kind": kind, "state": state, "action": action, "action_prob": 1.0})
+
     # -- own-record creation --------------------------------------------------------
 
     def create_record(
@@ -168,14 +190,39 @@ class SyncEngine:
         self._transport.send_interest(name, self._config.interest_lifetime_ms)
         # Map the injected [0, 1) rng to +/- state_poll_jitter_frac around
         # the configured interval, so "2s +/-20%" is reproducible in tests
-        # yet real under a real rng.
+        # yet real under a real rng. Drawn exactly once, whether or not
+        # log_decisions is on: a `decision` event only reports this same
+        # value below, it never draws its own.
         offset = self._config.state_poll_jitter_frac * (2 * self._poll_jitter_rng() - 1)
         interval = self._config.state_poll_interval_s * (1 + offset)
+        # ticket 02 ("判断の記録", kind 1): this *is* the decision -- which
+        # neighbor, and the interval chosen for its next poll. Always made
+        # (a neighbor due for a poll is always polled in stage 1), so
+        # always logged when log_decisions is on.
+        self._emit_decision(
+            "state_poll", self._tracker.decision_state(neighbor), {"neighbor": neighbor, "interval_s": interval}
+        )
         self._next_state_poll[neighbor] = now + interval
 
     def _send_fetch_plan(self, neighbor: str, now: float) -> None:
-        """Send a fetch Interest for every due, not-in-flight missing record on `neighbor`."""
-        for origin, seq in self._tracker.plan_fetches(neighbor, now):
+        """Send a fetch Interest for every due, not-in-flight missing record on `neighbor`.
+
+        2026-10-23 ticket 02 ("判断の記録", kind 3): the state snapshot is taken
+        *before* plan_fetches, which mutates the Tracker's own in-flight count for
+        `neighbor` -- the snapshot must show the headroom that was actually available
+        when this decision was made, not what is left after it. on_tick calls this
+        every receive-poll cycle (about 10/s live) for every neighbor, so logging is
+        skipped entirely when nothing is actually due: an empty plan is not a
+        decision, it is the overwhelming common case, and logging it would make the
+        decision log's size track tick frequency rather than fetch activity.
+        """
+        state = self._tracker.decision_state(neighbor)
+        due = self._tracker.plan_fetches(neighbor, now)
+        if due:
+            self._emit_decision(
+                "fetch_plan", state, {"neighbor": neighbor, "fetched": [[origin, seq] for origin, seq in due]}
+            )
+        for origin, seq in due:
             name = names.build_record_name(self._config.group, neighbor, origin, seq)
             self._transport.send_interest(name, self._config.interest_lifetime_ms)
 
@@ -243,11 +290,11 @@ class SyncEngine:
         try:
             record = schema.decode(payload)
         except schema.RecordError:
-            self._tracker.on_fetch_rejected(parsed.origin, parsed.seq, neighbor, now)
+            self._fail_fetch(parsed.origin, parsed.seq, neighbor, now)
             return
         if record.origin != parsed.origin or record.seq != parsed.seq:
             # name/payload mismatch; reject without storing
-            self._tracker.on_fetch_rejected(parsed.origin, parsed.seq, neighbor, now)
+            self._fail_fetch(parsed.origin, parsed.seq, neighbor, now)
             return
 
         digest = schema.content_hash(payload)
@@ -285,8 +332,29 @@ class SyncEngine:
         if not isinstance(parsed, names.RecordName):
             return
         neighbor = parsed.holder
-        self._tracker.on_fetch_timeout(parsed.origin, parsed.seq, neighbor, now)
         self._emit({"event": "fetch_timeout", "origin": parsed.origin, "seq": parsed.seq, "neighbor": neighbor})
+        self._fail_fetch(parsed.origin, parsed.seq, neighbor, now, cause="timeout")
+
+    def _fail_fetch(self, origin: str, seq: int, neighbor: str, now: float, *, cause: str = "rejected") -> None:
+        """Resolve one failed fetch (timeout or rejected reply) against the Tracker and,
+        only if it actually resolved a real in-flight fetch, log the matching
+        `fetch_backoff` decision (ticket 02, map.md "判断の記録", kind 2).
+
+        The state snapshot is taken *before* the Tracker call, which decrements its
+        in-flight count for `neighbor` and sets its last_fail_at -- the snapshot must
+        show what was true going into this failure, not what the failure itself just
+        changed. Tracker._fail returns None for a stale timeout/rejection (nothing was
+        actually in flight any more); that is not a decision, so nothing is logged.
+        """
+        state = self._tracker.decision_state(neighbor)
+        if cause == "timeout":
+            wait = self._tracker.on_fetch_timeout(origin, seq, neighbor, now)
+        else:
+            wait = self._tracker.on_fetch_rejected(origin, seq, neighbor, now)
+        if wait is not None:
+            self._emit_decision(
+                "fetch_backoff", state, {"neighbor": neighbor, "origin": origin, "seq": seq, "wait_s": wait, "cause": cause}
+            )
 
     # -- holder-side serving --------------------------------------------------------
 

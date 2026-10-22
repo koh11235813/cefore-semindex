@@ -381,3 +381,225 @@ def test_default_fetch_backoff_initial_clears_cefores_pit_grace_window(tmp_path:
 
     engine.on_tick(now=2.0)
     assert fetch_name in [n for n, _ in transport.sent]
+
+
+# -- decision events (ticket 02: map.md "判断の記録") -----------------------------
+
+
+def test_on_tick_emits_a_state_poll_decision_per_due_neighbor(tmp_path: Path):
+    """on_tick's state-poll send logs a `decision` event naming the polled neighbor and
+    the jittered interval chosen for its next poll (action_prob 1.0: stage 1's policy
+    is deterministic). With no tracker state at all, decision_state's `origins` is
+    empty for both neighbors."""
+    engine, _, _ = _engine(tmp_path, neighbors=("h1", "h2"))  # default interval 2.0s, no jitter offset
+    engine.on_tick(now=0.0)
+    assert engine.drain_events() == [
+        {
+            "event": "decision",
+            "kind": "state_poll",
+            "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
+            "action": {"neighbor": "h1", "interval_s": 2.0},
+            "action_prob": 1.0,
+        },
+        {
+            "event": "decision",
+            "kind": "state_poll",
+            "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
+            "action": {"neighbor": "h2", "interval_s": 2.0},
+            "action_prob": 1.0,
+        },
+    ]
+
+
+def test_send_fetch_plan_emits_a_fetch_plan_decision_only_when_something_is_due(tmp_path: Path):
+    """_send_fetch_plan logs a `decision` event only when it actually hands out new fetch
+    Interests: on_tick calls this every receive-poll cycle (about 10/s live), so an empty
+    plan -- the overwhelmingly common case -- must produce no line, or the log's size would
+    track tick frequency rather than actual fetch activity."""
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    engine._tracker.observe_state("origin-x", "h1", hi=2, extra=())
+
+    engine.on_tick(now=0.0)
+    events = engine.drain_events()
+    fetch_plan_decisions = [e for e in events if e["event"] == "decision" and e["kind"] == "fetch_plan"]
+    assert fetch_plan_decisions == [
+        {
+            "event": "decision",
+            "kind": "fetch_plan",
+            "state": {
+                "in_flight": 0,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"origin-x": {"hi": 0, "adv": 2, "missing": 2}},
+            },
+            "action": {"neighbor": "h1", "fetched": [["origin-x", 1], ["origin-x", 2]]},
+            "action_prob": 1.0,
+        }
+    ]
+
+    # Both seqs are now in flight and the state poll just fired too; nothing new is
+    # due, so a second on_tick at the same instant logs and sends nothing at all.
+    engine.on_tick(now=0.0)
+    assert engine.drain_events() == []
+    assert transport.sent == [(n, lt) for n, lt in transport.sent]  # unchanged shape; no duplicate sends
+    assert len(transport.sent) == 3  # 1 state request + 2 fetch Interests, from the first on_tick only
+
+
+def test_on_fetch_timeout_emits_a_fetch_backoff_decision_for_a_real_in_flight_fetch(tmp_path: Path):
+    """on_fetch_timeout logs a `fetch_backoff` decision giving the pre-failure state and the
+    chosen wait, but only for a real in-flight fetch -- test_on_fetch_timeout_emits_event_and_backs_off's
+    orphan name (never actually fetched) stays a bare fetch_timeout with no decision line,
+    since Tracker._fail has nothing to resolve for it."""
+    engine, _, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=3.0)
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)  # claims the fetch for origin-x/1 against h1
+    engine.drain_events()
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+
+    engine.on_fetch_timeout(fetch_name, now=5.0)
+    assert engine.drain_events() == [
+        {"event": "fetch_timeout", "origin": "origin-x", "seq": 1, "neighbor": "h1"},
+        {
+            "event": "decision",
+            "kind": "fetch_backoff",
+            "state": {
+                "in_flight": 1,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"origin-x": {"hi": 0, "adv": 1, "missing": 1}},
+            },
+            "action": {"neighbor": "h1", "origin": "origin-x", "seq": 1, "wait_s": 3.0, "cause": "timeout"},
+            "action_prob": 1.0,
+        },
+    ]
+
+
+def test_on_record_malformed_payload_emits_a_fetch_backoff_decision(tmp_path: Path):
+    """A malformed reply resolves via Tracker.on_fetch_rejected, logged the same way as a
+    timeout but with cause="rejected"."""
+    engine, _, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=4.0)
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)
+    engine.drain_events()
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+
+    engine.on_record(fetch_name, b"not json", now=2.0)
+    assert engine.drain_events() == [
+        {
+            "event": "decision",
+            "kind": "fetch_backoff",
+            "state": {
+                "in_flight": 1,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"origin-x": {"hi": 0, "adv": 1, "missing": 1}},
+            },
+            "action": {"neighbor": "h1", "origin": "origin-x", "seq": 1, "wait_s": 4.0, "cause": "rejected"},
+            "action_prob": 1.0,
+        },
+    ]
+
+
+def test_on_record_name_payload_mismatch_emits_a_fetch_backoff_decision(tmp_path: Path):
+    """A name/payload mismatch is the other on_fetch_rejected call site in on_record; it
+    logs the same decision shape as the malformed-payload case."""
+    engine, _, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=1.5)
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)
+    engine.drain_events()
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)  # claims seq 1
+
+    record = schema.IndexRecord(
+        origin="origin-x", seq=2, content_name="x", zone="zone1", disaster="flood", media="image", observed_at=1
+    )
+    mismatched_payload = schema.encode(record)  # payload says seq 2, name says seq 1
+    engine.on_record(fetch_name, mismatched_payload, now=1.0)
+
+    decisions = [e for e in engine.drain_events() if e["event"] == "decision"]
+    assert decisions == [
+        {
+            "event": "decision",
+            "kind": "fetch_backoff",
+            "state": {
+                "in_flight": 1,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"origin-x": {"hi": 0, "adv": 1, "missing": 1}},
+            },
+            "action": {"neighbor": "h1", "origin": "origin-x", "seq": 1, "wait_s": 1.5, "cause": "rejected"},
+            "action_prob": 1.0,
+        },
+    ]
+
+
+def test_log_decisions_false_emits_no_decision_events(tmp_path: Path):
+    """SyncConfig(log_decisions=False) -- off by default True; this effort's live configs
+    leave it at the default -- drops every `decision` event while every other event and
+    every sent Interest stays exactly as it would with logging on (see the fuller proof
+    below)."""
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1", "h2"), log_decisions=False)
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)
+    events = engine.drain_events()
+    assert events == []
+    # The fetch Interest for origin-x/1 and both state requests were still sent.
+    assert len(transport.sent) == 3
+
+
+def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: Path):
+    """The "do NOT change behaviour" proof for ticket 02: with log_decisions True vs False,
+    an otherwise identical engine sends the exact same Interests at the exact same times
+    and emits the exact same non-`decision` events. Counting jitter/backoff callables also
+    confirm logging draws neither rng a second time -- a silent double-draw would shift
+    every later poll/backoff and could pass the Interest/event comparison undetected if
+    both runs happened to double-draw identically, which these counts rule out directly.
+    """
+
+    def _run(label: str, log_decisions: bool):
+        # Same node identity ("h0") in both runs -- only the db file (named by
+        # `label`, not `node`) differs -- so a divergent wire name would signal a
+        # real behavior change, not just a different store path.
+        store = Store(tmp_path / f"{label}.db")
+        transport = RecordingTransport()
+        poll_calls: list[None] = []
+        backoff_calls: list[None] = []
+
+        def poll_jitter() -> float:
+            poll_calls.append(None)
+            return 0.3
+
+        def backoff_jitter() -> float:
+            backoff_calls.append(None)
+            return 0.0
+
+        config = SyncConfig(
+            group="g", node="h0", neighbors=("h1",), fetch_backoff_initial_s=1.0, log_decisions=log_decisions
+        )
+        engine = SyncEngine(config, store, transport, poll_jitter_rng=poll_jitter, backoff_jitter=backoff_jitter)
+        engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+
+        all_events: list[dict] = []
+        engine.on_tick(now=0.0)  # state poll (due now) + fetch plan (claims origin-x/1)
+        all_events += engine.drain_events()
+
+        fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+        engine.on_fetch_timeout(fetch_name, now=0.5)
+        all_events += engine.drain_events()
+
+        engine.on_tick(now=5.0)  # the 1s backoff has long elapsed; retry plus next state poll
+        all_events += engine.drain_events()
+
+        return transport.sent, all_events, len(poll_calls), len(backoff_calls)
+
+    sent_on, events_on, polls_on, backoffs_on = _run("on", True)
+    sent_off, events_off, polls_off, backoffs_off = _run("off", False)
+
+    assert sent_on == sent_off
+    assert polls_on == polls_off
+    assert backoffs_on == backoffs_off
+
+    non_decision_on = [e for e in events_on if e["event"] != "decision"]
+    non_decision_off = [e for e in events_off if e["event"] != "decision"]
+    assert non_decision_on == non_decision_off
+    assert any(e["event"] == "decision" for e in events_on)
+    assert not any(e["event"] == "decision" for e in events_off)
