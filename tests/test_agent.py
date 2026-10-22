@@ -359,8 +359,9 @@ def test_a_scheduled_record_fires_only_once_its_at_s_has_come_due(tmp_path: Path
     agent = build_agent(config, handle, clock=clock)
     events_path = Path(config.state_dir) / "events.jsonl"
 
-    agent.step()  # elapsed = 0: not due yet
-    assert events_path.read_text() == ""
+    agent.step()  # elapsed = 0: not due yet (agent_start was already written at construction)
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [e["event"] for e in lines] == ["agent_start"]
 
     clock.value = 1005.0  # elapsed = 5
     agent.step()
@@ -1086,13 +1087,16 @@ def test_a_relaunched_life_with_stop_at_s_already_past_stops_immediately(tmp_pat
 
     assert handle2.sent_interests == []
     second_life = [json.loads(line) for line in events_path.read_text().splitlines()][len(first_life) :]
-    assert len(second_life) == 1
-    assert second_life[0]["event"] == "counters"
+    # agent_start (written at construction, life 2's own) then counters
+    # (written at shutdown) -- nothing else, since this life never polled
+    # or ticked at all.
+    assert [e["event"] for e in second_life] == ["agent_start", "counters"]
+    counters = second_life[1]
     assert (
-        second_life[0]["bytes_sent"],
-        second_life[0]["bytes_received"],
-        second_life[0]["control_bytes_sent"],
-        second_life[0]["control_bytes_received"],
+        counters["bytes_sent"],
+        counters["bytes_received"],
+        counters["control_bytes_sent"],
+        counters["control_bytes_received"],
     ) == (0, 0, 0, 0)
 
 
@@ -1107,17 +1111,18 @@ def test_counters_snapshot_fires_once_per_entry_when_its_time_comes(tmp_path: Pa
 
     clock.value = 0.3
     agent.step()
-    assert events_path.read_text() == ""  # neither entry is due yet
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert [e["event"] for e in lines] == ["agent_start"]  # neither entry is due yet
 
     clock.value = 0.5
     agent.step()
     lines = [json.loads(line) for line in events_path.read_text().splitlines()]
-    assert [e["event"] for e in lines] == ["counters_snapshot"]
+    assert [e["event"] for e in lines] == ["agent_start", "counters_snapshot"]
 
     clock.value = 1.0
     agent.step()
     lines = [json.loads(line) for line in events_path.read_text().splitlines()]
-    assert [e["event"] for e in lines] == ["counters_snapshot", "counters_snapshot"]
+    assert [e["event"] for e in lines] == ["agent_start", "counters_snapshot", "counters_snapshot"]
 
 
 def test_counters_snapshot_reports_this_lifes_current_byte_counters(tmp_path: Path):
@@ -1239,7 +1244,7 @@ def test_a_counters_snapshot_entry_exactly_at_a_fresh_lifes_start_still_fires(tm
     agent.step()
     events_path = Path(config.state_dir) / "events.jsonl"
     lines = [json.loads(line) for line in events_path.read_text().splitlines()]
-    assert [e["event"] for e in lines] == ["counters_snapshot"]
+    assert [e["event"] for e in lines] == ["agent_start", "counters_snapshot"]
 
 
 def test_a_restarted_life_skips_counters_snapshot_entries_already_past(tmp_path: Path):
@@ -1261,7 +1266,7 @@ def test_a_restarted_life_skips_counters_snapshot_entries_already_past(tmp_path:
 
     events_path = Path(config.state_dir) / "events.jsonl"
     first_life = [json.loads(line) for line in events_path.read_text().splitlines()]
-    assert [e["event"] for e in first_life] == ["counters_snapshot", "counters"]
+    assert [e["event"] for e in first_life] == ["agent_start", "counters_snapshot", "counters"]
 
     # Second life: the clock is already at 20s (past both entries) *before* this
     # life's Agent is even constructed -- the filter must see this life's own
@@ -1272,7 +1277,9 @@ def test_a_restarted_life_skips_counters_snapshot_entries_already_past(tmp_path:
     agent2.step()
 
     second_life = [json.loads(line) for line in events_path.read_text().splitlines()][len(first_life) :]
-    assert second_life == []
+    # Life 2's own agent_start (unconditional, at construction) -- nothing
+    # else, since both counters_snapshot entries are already past by then.
+    assert [e["event"] for e in second_life] == ["agent_start"]
 
 
 def test_build_agent_fails_at_startup_when_the_schedule_is_shorter_than_the_persisted_own_record_count(

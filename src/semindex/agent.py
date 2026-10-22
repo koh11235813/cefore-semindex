@@ -504,6 +504,23 @@ class Agent:
         self._store = store
         self._transport = transport
         self._events = events
+
+        # 2026-10-23: records this life's own t0_ms directly, as the very
+        # first thing this life ever writes -- a later measurement tool
+        # (semindex.evalagg) used to have to INFER t0 from indirect
+        # evidence (a scheduler event's timestamp, or a boundary like
+        # stop_at_s/counters_snapshot_at_s firing a tick or so late)
+        # because the value this process actually ran with never reached
+        # events.jsonl literally. Written before anything else in this
+        # life, restart included (a second life re-runs Agent.__init__
+        # from scratch, so it gets its own agent_start line too), so a
+        # reader never has to guess which life an agent_start belongs to.
+        # Uses ts_ms's normal stamp-at-write-time default rather than a
+        # pre-set one (contrast counters_snapshot's own queued write) --
+        # this event has nothing to capture ahead of time, it is written
+        # synchronously right here.
+        self._events.write({"event": "agent_start", "node": config.node, "t0_ms": config.t0_ms})
+
         self._schedule = sorted(config.schedule, key=lambda e: e.at_s)
         self._probes = sorted(config.probes, key=lambda e: e.at_s)
 
