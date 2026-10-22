@@ -55,6 +55,16 @@ debug:
 # records names (examples/two_host_sync/h0.json): this is the only body
 # h1's probe can actually retrieve, since h1 never creates a record for
 # it and nothing else in this scenario calls `put`.
+#
+# Caveat: no_cli + results_json puts this run in autotest mode, whose
+# warmup phase prefetches every put URI onto every cache node before any
+# host_apps process starts -- with publisher_host 0, h1 is such a node,
+# so h1's Content Store may well already hold this body before the Sync
+# agent ever fetches it by name. A successful probe_retrieved still
+# proves the chunked-fetch code path end to end; it does not by itself
+# prove the body crossed the h0-h1 link only because the agent asked for
+# it. min_explicit_line.yaml's `warmup_gets:` (restricted to a host that
+# is not h1) is the fix, left out here pending that choice.
 events:
   - at: 0
     type: put
