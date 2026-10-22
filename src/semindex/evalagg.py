@@ -23,12 +23,15 @@ t0_ms/1000`, and `t0_ms` only ever reaches the agent as a CLI override
 generated YAML stores that argv as the literal, unresolved template
 string "{t0_ms}" (semindex.gen's own placeholder), and a node's own
 agent-config JSON carries a "t0_ms": 0 placeholder default that is never
-the value actually used. Neither file this module could read holds the
-real t0_ms. It is derived instead, per run, from the one clock every
-node's events.jsonl and the run's own results.json already share
-(Mininet hosts share the wall clock -- see semindex.check.results_ts_ms's
-own docstring): see `derive_t0_ms` for the fallback chain and
-`t0_source` for which rung of it a given run actually used.
+the value actually used. 2026-10-23: agent.py now writes the real value
+directly, as an `agent_start` line before anything else in every life
+(see Agent.__init__), so this is the preferred, most direct evidence a
+run can have. Older runs without it (and any older rung this module
+still carries as a fallback -- see `derive_t0_ms`) fall back to deriving
+t0 from the one clock every node's events.jsonl and the run's own
+results.json already share (Mininet hosts share the wall clock -- see
+semindex.check.results_ts_ms's own docstring). `t0_source` on every run
+says which rung actually won.
 """
 
 from __future__ import annotations
@@ -200,6 +203,32 @@ def read_meta(run_dir: str) -> tuple[str, list[str]]:
 # -- t0 derivation ---------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class T0Derivation:
+    """Everything `derive_t0_ms` figured out about one run's t0, not just the winning value.
+
+    `agent_start_disagreement` and `consistency_ms` exist even when
+    `source` is not "agent_start": they are diagnostics about the
+    agent_start/scheduler evidence this run happened to have, independent
+    of which rung actually won.
+    """
+
+    t0_ms: float
+    source: str  # "agent_start" | "scheduler" | "snapshot" | "stop" | "first_event"
+    agent_start_disagreement: bool
+    consistency_ms: float | None  # max |t0_agent_start - t0_scheduler| across nodes, when both exist
+
+
+def _agent_start_t0_values(nodes: dict[str, list[dict]]) -> list[float]:
+    """Every `t0_ms` an `agent_start` line recorded, one per life that wrote one (every node, every restart)."""
+    return [
+        float(event["t0_ms"])
+        for events in nodes.values()
+        for event in events
+        if event.get("event") == "agent_start" and "t0_ms" in event
+    ]
+
+
 def _t0_from_results(results: list[dict] | None) -> float | None:
     """Median of (event ts_ms - actual_at*1000) over results.json's own scheduler event rows.
 
@@ -256,28 +285,54 @@ def _t0_from_first_event(nodes: dict[str, list[dict]]) -> float | None:
     return min(all_ts) if all_ts else None
 
 
-def derive_t0_ms(nodes: dict[str, list[dict]], results: list[dict] | None) -> tuple[float, str]:
-    """This run's t0_ms and which fallback rung produced it ("scheduler" | "snapshot" | "stop" | "first_event").
+def derive_t0_ms(nodes: dict[str, list[dict]], results: list[dict] | None) -> T0Derivation:
+    """This run's t0 derivation, every rung's evidence included (see T0Derivation).
 
-    Tried in order of precision (see each helper's own docstring); the
-    first rung that finds any evidence wins. Raises CheckUsageError only
-    if a run has no evidence at all (no results.json events, no
-    counters/counters_snapshot lines, and not even an ordinary ts_ms
-    anywhere) -- a run this broken has nothing this module could anchor a
+    2026-10-23: `agent_start` (agent.py now writes one `{"event":
+    "agent_start", "node", "t0_ms"}` line before anything else in every
+    life) is the new first rung -- it is literally the value the agent
+    process ran with, not inferred from a boundary it crosses a tick
+    late. It wins whenever a run has ANY agent_start lines at all, even
+    if they disagree with each other (that disagreement is reported via
+    `agent_start_disagreement`, not silently resolved by falling back to
+    a different rung -- a run where nodes genuinely got different t0_ms
+    values is a real anomaly worth surfacing, not a reason to pretend the
+    direct evidence was never written). The four older rungs
+    (scheduler/snapshot/stop/first_event) are now only ever reached when
+    a run has NO agent_start evidence at all (e.g. a run captured before
+    this change). `consistency_ms` cross-checks the agent_start evidence
+    against the independently-derived scheduler evidence whenever both
+    are available, regardless of which rung wins.
+
+    Raises CheckUsageError only if a run has no evidence at all on any
+    rung -- a run this broken has nothing this module could anchor a
     window to.
     """
+    agent_start_values = _agent_start_t0_values(nodes)
     scheduler = _t0_from_results(results)
+    consistency_ms = (
+        max(abs(v - scheduler) for v in agent_start_values) if agent_start_values and scheduler is not None else None
+    )
+
+    if agent_start_values:
+        disagreement = max(agent_start_values) != min(agent_start_values)
+        return T0Derivation(
+            t0_ms=statistics.median(agent_start_values),
+            source="agent_start",
+            agent_start_disagreement=disagreement,
+            consistency_ms=consistency_ms,
+        )
     if scheduler is not None:
-        return scheduler, "scheduler"
+        return T0Derivation(t0_ms=scheduler, source="scheduler", agent_start_disagreement=False, consistency_ms=None)
     snapshot = _t0_from_boundary_event(nodes, "counters_snapshot", evalgen.WINDOW_START_S)
     if snapshot is not None:
-        return snapshot, "snapshot"
+        return T0Derivation(t0_ms=snapshot, source="snapshot", agent_start_disagreement=False, consistency_ms=None)
     stop = _t0_from_boundary_event(nodes, "counters", evalgen.WINDOW_END_S)
     if stop is not None:
-        return stop, "stop"
+        return T0Derivation(t0_ms=stop, source="stop", agent_start_disagreement=False, consistency_ms=None)
     first = _t0_from_first_event(nodes)
     if first is not None:
-        return first, "first_event"
+        return T0Derivation(t0_ms=first, source="first_event", agent_start_disagreement=False, consistency_ms=None)
     raise CheckUsageError("no results.json events, counters lines, or any other ts_ms found to derive t0 from")
 
 
@@ -407,6 +462,8 @@ class RunAnalysis:
     flags: list[str]
     t0_ms: float
     t0_source: str
+    t0_agent_start_disagreement: bool
+    t0_consistency_ms: float | None
     window_start_ms: float
     window_end_ms: float
     n_records_created: int
@@ -460,9 +517,9 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
     nodes = discover_node_events(run_dir)
     results_path = os.path.join(run_dir, "results.json")
     results = read_results(run_dir) if os.path.isfile(results_path) else None
-    t0_ms, t0_source = derive_t0_ms(nodes, results)
-    window_start_ms = t0_ms + evalgen.WINDOW_START_S * 1000.0
-    window_end_ms = t0_ms + evalgen.WINDOW_END_S * 1000.0
+    t0 = derive_t0_ms(nodes, results)
+    window_start_ms = t0.t0_ms + evalgen.WINDOW_START_S * 1000.0
+    window_end_ms = t0.t0_ms + evalgen.WINDOW_END_S * 1000.0
 
     created = _created_ts_by_key(nodes)
     in_window_created = {
@@ -565,8 +622,10 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
         seed=seed,
         status=status,
         flags=flags,
-        t0_ms=t0_ms,
-        t0_source=t0_source,
+        t0_ms=t0.t0_ms,
+        t0_source=t0.source,
+        t0_agent_start_disagreement=t0.agent_start_disagreement,
+        t0_consistency_ms=t0.consistency_ms,
         window_start_ms=window_start_ms,
         window_end_ms=window_end_ms,
         n_records_created=len(in_window_created),
@@ -650,6 +709,8 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "probe_retrieved": run.probe_retrieved,
                 "t0_ms": run.t0_ms,
                 "t0_source": run.t0_source,
+                "t0_agent_start_disagreement": run.t0_agent_start_disagreement,
+                "t0_consistency_ms": run.t0_consistency_ms,
             }
         )
     return rows
@@ -675,6 +736,8 @@ RUNS_FIELDS = [
     "probe_retrieved",
     "t0_ms",
     "t0_source",
+    "t0_agent_start_disagreement",
+    "t0_consistency_ms",
 ]
 
 
@@ -727,31 +790,33 @@ def build_consistency_rows(analyses: list[RunAnalysis]) -> list[dict]:
 CONSISTENCY_FIELDS = ["p", "seed", "origin", "seq", "time_ms", "censored"]
 
 
-def _included(analyses: list[RunAnalysis]) -> list[RunAnalysis]:
-    """Every run except flagged ones (map.md "印つきの run は集計から外す").
+def _included(analyses: list[RunAnalysis], include_unknown: bool) -> list[RunAnalysis]:
+    """Every run except flagged ones, and -- unless `include_unknown` -- except unknown ones too.
 
-    2026-10-23: "unknown" runs (no meta.json at all -- its producer does
-    not exist yet, see `read_meta`) are kept, not excluded, on purpose:
-    map.md's own text only ever names FLAGGED runs as the ones to leave
-    out of aggregates. Excluding every run this module cannot positively
-    confirm as passing would also exclude the only run with real
-    (non-synthetic) data this module has to check against, which has no
-    meta.json at all and would otherwise aggregate to nothing.
+    2026-10-23 (revised): flagged runs (map.md "印つきの run は集計から外
+    す") are always excluded. "Unknown" runs (no meta.json at all -- its
+    producer does not exist yet, see `read_meta`) default to EXCLUDED as
+    well, the same treatment as flagged: a run this module cannot
+    positively confirm as passing is not evidence it passed, so by
+    default it is left out of every pooled aggregate and only counted
+    (summary.csv's own n_unknown). `--include-unknown` overrides that for
+    a manual trial run that has no meta.json by construction (e.g.
+    trial-manual) and still needs a real number out the other end.
     """
-    return [run for run in analyses if run.status != "flagged"]
+    excluded_statuses = {"flagged"} if include_unknown else {"flagged", "unknown"}
+    return [run for run in analyses if run.status not in excluded_statuses]
 
 
-def build_survival_rows(analyses: list[RunAnalysis]) -> list[dict]:
+def build_survival_rows(analyses: list[RunAnalysis], include_unknown: bool) -> list[dict]:
     """survival.csv: per (p, hop_distance), the KM delivered-fraction curve plus its median/Q1/Q3.
 
-    Pools every discovery pair from every INCLUDED run (map.md "印つきの
-    run は集計から外す" -- see `_included`) sharing a (p, hop_distance),
-    each contributing one KM sample: its latency (delivered) or its
-    follow_up_ms (censored, from `analyze_run`'s own per-pair computation
-    -- the window's close minus that specific record's own creation
-    time, never a flat window span).
+    Pools every discovery pair from every INCLUDED run (see `_included`)
+    sharing a (p, hop_distance), each contributing one KM sample: its
+    latency (delivered) or its follow_up_ms (censored, from
+    `analyze_run`'s own per-pair computation -- the window's close minus
+    that specific record's own creation time, never a flat window span).
     """
-    included = _included(analyses)
+    included = _included(analyses, include_unknown)
     samples_by_group: dict[tuple[float, int], list[Sample]] = {}
     for run in included:
         for row in run.discovery_rows:
@@ -791,7 +856,7 @@ def build_survival_rows(analyses: list[RunAnalysis]) -> list[dict]:
 SURVIVAL_FIELDS = ["p", "hop_distance", "t_s", "delivered_fraction", "n_pairs", "median_s", "q1_s", "q3_s"]
 
 
-def build_summary_rows(analyses: list[RunAnalysis]) -> list[dict]:
+def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> list[dict]:
     """summary.csv: per p, run-status counts, discovery/consistency/control-byte summaries, probe discovery rate."""
     by_p: dict[float, list[RunAnalysis]] = {}
     for run in analyses:
@@ -800,7 +865,7 @@ def build_summary_rows(analyses: list[RunAnalysis]) -> list[dict]:
     rows = []
     for p in sorted(by_p):
         runs = by_p[p]
-        included = _included(runs)
+        included = _included(runs, include_unknown)
         n_valid = sum(1 for r in runs if r.status == "valid")
         n_flagged = sum(1 for r in runs if r.status == "flagged")
         n_unknown = sum(1 for r in runs if r.status == "unknown")
@@ -901,9 +966,9 @@ SUMMARY_FIELDS = [
 ]
 
 
-def build_decisions_rows(analyses: list[RunAnalysis]) -> list[dict]:
+def build_decisions_rows(analyses: list[RunAnalysis], include_unknown: bool) -> list[dict]:
     """decisions.csv: per (p, kind), count plus distribution summaries of in_flight/missing/wait_s."""
-    included = _included(analyses)
+    included = _included(analyses, include_unknown)
     groups: dict[tuple[float, str], list[dict]] = {}
     for run in included:
         for decision in run.decision_rows:
@@ -957,13 +1022,18 @@ DECISIONS_FIELDS = [
 # -- CLI --------------------------------------------------------------------
 
 
-def aggregate(store: str, stage: str, outdir: str, include_undone: bool) -> list[RunAnalysis]:
+def aggregate(
+    store: str, stage: str, outdir: str, include_undone: bool, include_unknown: bool = False
+) -> list[RunAnalysis]:
     """Discover every run, analyze the ones this call will process, write all six CSVs into `outdir`.
 
     Returns every run's RunAnalysis actually processed (DONE, or
     `include_undone`); a run skipped for lacking DONE, or one whose files
     were too broken to analyze at all, is reported to stderr and left out
-    of every output table.
+    of every output table. `include_unknown` only changes which runs
+    `survival.csv`/`summary.csv`/`decisions.csv` POOL (see `_included`) --
+    runs.csv and discovery.csv always carry every processed run, flagged
+    and unknown included, regardless of either flag.
     """
     refs = discover_runs(store, stage)
     analyses: list[RunAnalysis] = []
@@ -980,10 +1050,16 @@ def aggregate(store: str, stage: str, outdir: str, include_undone: bool) -> list
     os.makedirs(outdir, exist_ok=True)
     _write_csv(os.path.join(outdir, "runs.csv"), RUNS_FIELDS, build_runs_rows(analyses))
     _write_csv(os.path.join(outdir, "discovery.csv"), DISCOVERY_FIELDS, build_discovery_rows(analyses))
-    _write_csv(os.path.join(outdir, "survival.csv"), SURVIVAL_FIELDS, build_survival_rows(analyses))
+    _write_csv(
+        os.path.join(outdir, "survival.csv"), SURVIVAL_FIELDS, build_survival_rows(analyses, include_unknown)
+    )
     _write_csv(os.path.join(outdir, "consistency.csv"), CONSISTENCY_FIELDS, build_consistency_rows(analyses))
-    _write_csv(os.path.join(outdir, "summary.csv"), SUMMARY_FIELDS, build_summary_rows(analyses))
-    _write_csv(os.path.join(outdir, "decisions.csv"), DECISIONS_FIELDS, build_decisions_rows(analyses))
+    _write_csv(
+        os.path.join(outdir, "summary.csv"), SUMMARY_FIELDS, build_summary_rows(analyses, include_unknown)
+    )
+    _write_csv(
+        os.path.join(outdir, "decisions.csv"), DECISIONS_FIELDS, build_decisions_rows(analyses, include_unknown)
+    )
     if not FIGURES_AVAILABLE:
         print("semindex.evalagg: matplotlib not importable in this venv -- wrote CSVs only, no figures", file=sys.stderr)
     return analyses
@@ -1000,13 +1076,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Also process runs with no DONE marker (e.g. a hand-stored trial run)",
     )
+    parser.add_argument(
+        "--include-unknown",
+        action="store_true",
+        help="Also pool runs with no meta.json verdict into survival/summary/decisions (e.g. a manual trial run)",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point: python3 -m semindex.evalagg --store ... --stage ... --out ..."""
     args = parse_args(argv)
-    aggregate(args.store, args.stage, args.outdir, args.include_undone)
+    aggregate(args.store, args.stage, args.outdir, args.include_undone, args.include_unknown)
     return 0
 
 

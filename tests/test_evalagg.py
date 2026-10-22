@@ -273,14 +273,46 @@ def test_km_quantile_finds_the_first_grid_crossing():
 # -- derive_t0_ms ----------------------------------------------------------
 
 
+def test_derive_t0_ms_agent_start_is_the_first_rung_even_when_scheduler_evidence_exists():
+    """Derive t0 ms agent start is the first rung even when scheduler evidence exists."""
+    t0 = 1_000_000_000_000.0
+    results = [_event_result_row(t0 + 20_000, scheduled_at=20.0, actual_at=20.0)]
+    nodes = {
+        "h0": [{"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0}],
+        "h1": [{"ts_ms": t0, "event": "agent_start", "node": "h1", "t0_ms": t0}],
+    }
+    result = derive_t0_ms(nodes, results)
+    assert result.source == "agent_start"
+    assert result.t0_ms == t0
+    assert result.agent_start_disagreement is False
+    # Both agent_start and scheduler evidence exist and agree exactly.
+    assert result.consistency_ms == pytest.approx(0.0, abs=1e-6)
+
+
+def test_derive_t0_ms_agent_start_disagreement_is_flagged_not_silently_resolved():
+    """Derive t0 ms agent start disagreement is flagged not silently resolved."""
+    t0 = 1_000_000_000_000.0
+    nodes = {
+        "h0": [{"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0}],
+        "h1": [{"ts_ms": t0, "event": "agent_start", "node": "h1", "t0_ms": t0 + 500.0}],
+    }
+    result = derive_t0_ms(nodes, results=None)
+    assert result.source == "agent_start"
+    assert result.agent_start_disagreement is True
+    assert result.t0_ms == pytest.approx(t0 + 250.0)  # median of the two disagreeing values
+    assert result.consistency_ms is None  # no scheduler evidence to cross-check against
+
+
 def test_derive_t0_ms_scheduler_rung_from_results_json():
     """Derive t0 ms scheduler rung from results json."""
     t0 = 1_000_000_000_000.0
     results = [_event_result_row(t0 + 20_000, scheduled_at=20.0, actual_at=20.0)]
     nodes = {"h0": [{"ts_ms": t0 + 99_000, "event": "counters"}]}
-    derived, source = derive_t0_ms(nodes, results)
-    assert source == "scheduler"
-    assert derived == pytest.approx(t0)
+    result = derive_t0_ms(nodes, results)
+    assert result.source == "scheduler"
+    assert result.t0_ms == pytest.approx(t0)
+    assert result.agent_start_disagreement is False
+    assert result.consistency_ms is None  # no agent_start evidence at all in this run
 
 
 def test_derive_t0_ms_falls_back_to_snapshot_when_no_scheduler_events():
@@ -290,26 +322,26 @@ def test_derive_t0_ms_falls_back_to_snapshot_when_no_scheduler_events():
         "h0": [{"ts_ms": t0 + WINDOW_START_MS, "event": "counters_snapshot"}],
         "h1": [{"ts_ms": t0 + WINDOW_START_MS, "event": "counters_snapshot"}],
     }
-    derived, source = derive_t0_ms(nodes, results=None)
-    assert source == "snapshot"
-    assert derived == pytest.approx(t0)
+    result = derive_t0_ms(nodes, results=None)
+    assert result.source == "snapshot"
+    assert result.t0_ms == pytest.approx(t0)
 
 
 def test_derive_t0_ms_falls_back_to_stop_when_no_snapshot_either():
     """Derive t0 ms falls back to stop when no snapshot either."""
     t0 = 1_000_000_000_000.0
     nodes = {"h0": [{"ts_ms": t0 + WINDOW_END_MS, "event": "counters"}]}
-    derived, source = derive_t0_ms(nodes, results=None)
-    assert source == "stop"
-    assert derived == pytest.approx(t0)
+    result = derive_t0_ms(nodes, results=None)
+    assert result.source == "stop"
+    assert result.t0_ms == pytest.approx(t0)
 
 
 def test_derive_t0_ms_falls_back_to_first_event_when_nothing_else_available():
     """Derive t0 ms falls back to first event when nothing else available."""
     nodes = {"h0": [{"ts_ms": 500.0, "event": "state_rx"}, {"ts_ms": 700.0, "event": "state_rx"}]}
-    derived, source = derive_t0_ms(nodes, results=None)
-    assert source == "first_event"
-    assert derived == 500.0
+    result = derive_t0_ms(nodes, results=None)
+    assert result.source == "first_event"
+    assert result.t0_ms == 500.0
 
 
 def test_derive_t0_ms_raises_when_there_is_no_evidence_at_all():
@@ -639,9 +671,13 @@ def test_analyze_run_run_c_derives_t0_via_scheduler_and_hop_distance_two(synthet
 
 
 def test_aggregate_writes_all_six_csvs_with_expected_rows(synthetic_store: Path, tmp_path: Path):
-    """Aggregate writes all six csvs with expected rows."""
+    """Aggregate writes all six csvs with expected rows (--include-unknown, so the synthetic
+
+    tree's two unknown runs are pooled -- see the sibling test below for
+    the default, exclude-unknown behaviour).
+    """
     outdir = tmp_path / "out"
-    aggregate(str(synthetic_store), "test", str(outdir), include_undone=False)
+    aggregate(str(synthetic_store), "test", str(outdir), include_undone=False, include_unknown=True)
 
     for name in ("runs.csv", "discovery.csv", "survival.csv", "consistency.csv", "summary.csv", "decisions.csv"):
         assert (outdir / name).is_file()
@@ -696,6 +732,38 @@ def test_aggregate_writes_all_six_csvs_with_expected_rows(synthetic_store: Path,
     at_t1 = next(r for r in group if r["t_s"] == "1.0")
     assert at_t1["delivered_fraction"] == "0.5"
     assert at_t1["n_pairs"] == "2"
+
+
+def test_aggregate_excludes_unknown_runs_from_pooling_by_default(synthetic_store: Path, tmp_path: Path):
+    """2026-10-23 (revised): a run with no meta.json verdict at all is, by
+
+    default, treated the same as a flagged one for every pooled table --
+    counted in summary.csv's n_unknown, but contributing no sample to
+    survival.csv/decisions.csv/summary.csv's own medians -- since
+    `synthetic_store`'s only two runs are both "unknown", every pooled
+    table comes back with no samples for either p at all, while
+    runs.csv/discovery.csv (never filtered by status) still carry both.
+    """
+    outdir = tmp_path / "out"
+    aggregate(str(synthetic_store), "test", str(outdir), include_undone=False)  # include_unknown defaults to False
+
+    runs = _read_csv(outdir / "runs.csv")
+    assert len(runs) == 3  # unaffected by include_unknown: every processed run, any status
+
+    discovery = _read_csv(outdir / "discovery.csv")
+    assert len(discovery) == 4  # unaffected by include_unknown, same as the --include-unknown case above
+
+    summary = _read_csv(outdir / "summary.csv")
+    by_p = {r["p"]: r for r in summary}
+    assert by_p["0.0"]["n_unknown"] == "1"
+    assert by_p["0.0"]["probe_issued_total"] == "0"
+    assert by_p["0.0"]["probe_discovered_total"] == "0"
+    assert by_p["0.0"]["probe_discovery_rate"] == ""  # n=0: Wilson/rate undefined
+    assert by_p["1.0"]["n_unknown"] == "1"
+    assert by_p["1.0"]["probe_issued_total"] == "0"
+
+    assert _read_csv(outdir / "survival.csv") == []
+    assert _read_csv(outdir / "decisions.csv") == []
 
 
 def test_discovery_csv_includes_flagged_runs_rows_but_survival_excludes_them(tmp_path: Path):
@@ -791,15 +859,24 @@ TRIAL_MANUAL_STAGE = "trial-manual"
     reason="trial-manual sample not present on this machine",
 )
 def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
-    """Real trial manual sample aggregates without crashing."""
+    """Real trial manual sample aggregates without crashing.
+
+    trial-manual is exactly the "manual trial run" --include-unknown
+    exists for (map.md 有効な run の判定): it has no meta.json verdict at
+    all, so without that flag it would be processed into runs.csv/
+    discovery.csv but pooled into nothing.
+    """
     outdir = tmp_path / "out"
-    analyses = aggregate(TRIAL_MANUAL_STORE, TRIAL_MANUAL_STAGE, str(outdir), include_undone=True)
+    analyses = aggregate(TRIAL_MANUAL_STORE, TRIAL_MANUAL_STAGE, str(outdir), include_undone=True, include_unknown=True)
     assert len(analyses) == 1
     run = analyses[0]
     assert run.status == "unknown"  # trial-manual has no meta.json
-    # This sample has link_down/link_up events in its results.json, so
-    # t0 is derived via the most precise rung.
+    # This sample predates agent.py's own `agent_start` event (2026-10-23)
+    # and has link_down/link_up events in its results.json, so t0 falls
+    # back to the next most precise rung.
     assert run.t0_source == "scheduler"
+    assert run.t0_agent_start_disagreement is False
+    assert run.t0_consistency_ms is None  # no agent_start evidence in this older sample
     # 60 records (30 each from h0 and h4), all well inside the window
     # (created between offsets 13s and 71s, the window being [10, 130]s),
     # each reaching all 4 non-origin nodes with nothing censored -- this
@@ -821,3 +898,11 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
         assert (outdir / name).is_file()
     runs = _read_csv(outdir / "runs.csv")
     assert len(runs) == 1
+
+    # --include-unknown pooled this run, so summary.csv's own counts are
+    # not all zero (the point of the flag existing at all).
+    summary = _read_csv(outdir / "summary.csv")
+    assert len(summary) == 1
+    assert summary[0]["n_unknown"] == "1"
+    assert summary[0]["probe_issued_total"] == "12"
+    assert summary[0]["probe_discovered_total"] == "11"
