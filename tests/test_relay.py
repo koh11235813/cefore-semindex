@@ -196,7 +196,7 @@ def test_duplicate_record_arriving_via_two_different_holders_stores_once(tmp_pat
     name_via_c = names.build_record_name("g", "C", "A", 1)
 
     r.on_record(name_via_b, payload, now=0.0)
-    assert r.drain_events() == [{"event": "record_stored", "origin": "A", "seq": 1, "holder": "B"}]
+    assert r.drain_events() == [{"event": "record_stored", "ts_ms": 0, "origin": "A", "seq": 1, "holder": "B"}]
 
     r.on_record(name_via_c, payload, now=1.0)
     assert r.drain_events() == []  # silent duplicate: no second record_stored, no conflict

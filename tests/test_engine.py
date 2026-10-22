@@ -68,8 +68,8 @@ def test_create_record_allocates_sequential_seqs_and_emits_events(tmp_path: Path
     r2 = engine.create_record(content_name="b", zone="zone1", disaster="flood", media="image", observed_at=2)
     assert (r1.seq, r2.seq) == (1, 2)
     assert engine.drain_events() == [
-        {"event": "record_created", "origin": "h0", "seq": 1},
-        {"event": "record_created", "origin": "h0", "seq": 2},
+        {"event": "record_created", "ts_ms": 1, "origin": "h0", "seq": 1},
+        {"event": "record_created", "ts_ms": 2, "origin": "h0", "seq": 2},
     ]
 
 
@@ -143,7 +143,7 @@ def test_on_record_stores_a_valid_record_and_emits_record_stored(tmp_path: Path)
     name = names.build_record_name("g", "h1", "h1", 1)
     engine.on_record(name, payload, now=0.0)
     assert store.get_record("h1", 1) == payload
-    assert engine.drain_events() == [{"event": "record_stored", "origin": "h1", "seq": 1, "holder": "h1"}]
+    assert engine.drain_events() == [{"event": "record_stored", "ts_ms": 0, "origin": "h1", "seq": 1, "holder": "h1"}]
 
 
 def test_on_record_duplicate_is_idempotent_and_silent(tmp_path: Path):
@@ -181,6 +181,7 @@ def test_on_record_conflict_keeps_first_and_emits_conflict_event(tmp_path: Path)
     assert events == [
         {
             "event": "conflict",
+            "ts_ms": 1000,
             "origin": "h1",
             "seq": 1,
             "kept_hash": schema.content_hash(payload_a),
@@ -288,7 +289,7 @@ def test_on_state_decodes_and_feeds_the_tracker_then_plans_fetches(tmp_path: Pat
     payload = holder_state.encode({"origin-x": OriginProgress(hi=2, extra=())})
     engine.on_state("h1", payload, now=0.0)
     events = engine.drain_events()
-    assert events[0] == {"event": "state_rx", "neighbor": "h1", "hi": {"origin-x": 2}}
+    assert events[0] == {"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {"origin-x": 2}}
     sent_names = [n for n, _ in transport.sent]
     assert sent_names == [
         names.build_record_name("g", "h1", "origin-x", 1),
@@ -301,7 +302,7 @@ def test_on_state_drops_malformed_payload_silently(tmp_path: Path):
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     engine.on_state("h1", b"not json", now=0.0)
     events = engine.drain_events()
-    assert events == [{"event": "state_rx", "neighbor": "h1", "hi": {}}]
+    assert events == [{"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
 
@@ -316,7 +317,7 @@ def test_on_state_drops_payload_with_a_malformed_origin_without_crashing(tmp_pat
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     payload = b'{"bad/origin":{"extra":[],"hi":1,"truncated":false}}'
     engine.on_state("h1", payload, now=0.0)  # must not raise
-    assert engine.drain_events() == [{"event": "state_rx", "neighbor": "h1", "hi": {}}]
+    assert engine.drain_events() == [{"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
 
@@ -326,7 +327,7 @@ def test_on_fetch_timeout_emits_event_and_backs_off(tmp_path: Path):
     name = names.build_record_name("g", "h1", "origin-x", 3)
     engine.on_fetch_timeout(name, now=0.0)
     assert engine.drain_events() == [
-        {"event": "fetch_timeout", "origin": "origin-x", "seq": 3, "neighbor": "h1"}
+        {"event": "fetch_timeout", "ts_ms": 0, "origin": "origin-x", "seq": 3, "neighbor": "h1"}
     ]
 
 
@@ -396,6 +397,7 @@ def test_on_tick_emits_a_state_poll_decision_per_due_neighbor(tmp_path: Path):
     assert engine.drain_events() == [
         {
             "event": "decision",
+            "ts_ms": 0,
             "kind": "state_poll",
             "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
             "action": {"neighbor": "h1", "interval_s": 2.0},
@@ -403,6 +405,7 @@ def test_on_tick_emits_a_state_poll_decision_per_due_neighbor(tmp_path: Path):
         },
         {
             "event": "decision",
+            "ts_ms": 0,
             "kind": "state_poll",
             "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
             "action": {"neighbor": "h2", "interval_s": 2.0},
@@ -425,6 +428,7 @@ def test_send_fetch_plan_emits_a_fetch_plan_decision_only_when_something_is_due(
     assert fetch_plan_decisions == [
         {
             "event": "decision",
+            "ts_ms": 0,
             "kind": "fetch_plan",
             "state": {
                 "in_flight": 0,
@@ -457,9 +461,10 @@ def test_on_fetch_timeout_emits_a_fetch_backoff_decision_for_a_real_in_flight_fe
 
     engine.on_fetch_timeout(fetch_name, now=5.0)
     assert engine.drain_events() == [
-        {"event": "fetch_timeout", "origin": "origin-x", "seq": 1, "neighbor": "h1"},
+        {"event": "fetch_timeout", "ts_ms": 5000, "origin": "origin-x", "seq": 1, "neighbor": "h1"},
         {
             "event": "decision",
+            "ts_ms": 5000,
             "kind": "fetch_backoff",
             "state": {
                 "in_flight": 1,
@@ -486,6 +491,7 @@ def test_on_record_malformed_payload_emits_a_fetch_backoff_decision(tmp_path: Pa
     assert engine.drain_events() == [
         {
             "event": "decision",
+            "ts_ms": 2000,
             "kind": "fetch_backoff",
             "state": {
                 "in_flight": 1,
@@ -518,6 +524,7 @@ def test_on_record_name_payload_mismatch_emits_a_fetch_backoff_decision(tmp_path
     assert decisions == [
         {
             "event": "decision",
+            "ts_ms": 1000,
             "kind": "fetch_backoff",
             "state": {
                 "in_flight": 1,

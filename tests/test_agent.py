@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from semindex import holder_state, names, schema
+from semindex import evalagg, holder_state, names, schema
 from semindex.agent import (
     ConfigError,
     ScheduledProbe,
@@ -1313,3 +1313,114 @@ def test_build_agent_fails_at_startup_when_the_schedule_is_shorter_than_the_pers
     with pytest.raises(ConfigError) as exc_info:
         build_agent(config, handle, clock=_FakeClock(0.0))
     assert str(exc_info.value) == "h0: state_dir already holds 2 own record(s) but schedule has only 1 entries"
+
+
+# -- 2026-10-23 regression (external review, P1 #1): engine event ts_ms is the
+# processing time, not the flush time --------------------------------------
+
+
+def _run_store_during_probe_wait(tmp_path: Path):
+    """Build and run one step() of a real h0 agent that, mid-probe-fetch_content wait,
+    receives and stores a record fetched from neighbor h1 -- the exact shape the
+    external review's repro used (SyncEngine.on_record queues record_stored while
+    this node's own probe is blocked in a synchronous content fetch, and that queued
+    event is not flushed to events.jsonl until the probe returns).
+
+    The clock starts at 129.7s (chosen so the in-flight record's own processing time
+    lands at 129.9s -- inside evalgen's stage-1 [10s, 130s] measurement window -- while
+    the probe's own wait only gives up once the clock reaches 130.3s, past the window's
+    close) specifically so the two tests built on this scenario (ts_ms correctness, and
+    evalagg non-censoring) both exercise the exact boundary the review's repro crossed.
+
+    Returns (config, agent) after exactly one agent.step() call.
+    """
+    content_name = "ccnx:/content/h0/body"
+    clock = _FakeClock(129.7)
+    record = schema.IndexRecord(
+        origin="h1", seq=1, content_name="ccnx:/content/h1/1", zone="zone1", disaster="flood", media="image",
+        observed_at=1,
+    )
+    payload = schema.encode(record)
+    fetch_name = names.build_record_name("g", "h1", "h1", 1)
+    handle = _FakeHandle(
+        [
+            _FakePacket(),  # absorbed by step()'s own poll()
+            # Arrives on fetch_content's own first receive() call, strictly
+            # inside the probe's wait, at clock 129.9s: this is the record
+            # this test is about.
+            _FakePacket(is_data=True, name=fetch_name, payload=payload),
+            _FakePacket(),  # fetch_content receive() #2 -- nothing
+            _FakePacket(),  # fetch_content receive() #3 -- nothing
+            _FakePacket(),  # fetch_content receive() #4 -- the chunk_lifetime_ms deadline is reached here
+        ],
+        clock=clock,
+        step_s=0.1,
+    )
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+        chunk_lifetime_ms=400,
+    )
+    agent = build_agent(config, handle, clock=clock)
+    # Preload the tracker with h1 advertising (h1, 1) as missing -- the same
+    # shortcut test_engine.py's own on_tick/decision tests use to put a
+    # fetch in flight without first driving a real state_rx round trip.
+    agent._engine._tracker.observe_state("h1", "h1", hi=1, extra=())
+
+    agent.step()  # on_tick sends the fetch; the probe's own fetch_content blocks through it
+    return config, agent
+
+
+def test_record_stored_during_a_probes_content_wait_gets_its_own_processing_time(tmp_path: Path):
+    """The record fetched from h1 while this node's probe is blocked in fetch_content
+    must log ts_ms = 129900 (the clock reading when SyncEngine.on_record actually ran),
+    never 130300 (the clock reading once fetch_content gives up and this step's
+    _drain_engine_events() finally flushes the queued event) -- the external review's
+    exact repro (its own numbers: a store at 125.1s logged as 127s).
+    """
+    config, _agent = _run_store_during_probe_wait(tmp_path)
+    events_path = Path(config.state_dir) / "events.jsonl"
+    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    stored = next(e for e in lines if e["event"] == "record_stored")
+    assert stored["ts_ms"] == 129_900
+    retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
+    assert retrieved["ts_ms"] == 130_300  # the flush-time reading the old bug used instead
+
+
+def test_evalagg_does_not_censor_a_store_whose_processing_time_lands_before_window_end(tmp_path: Path):
+    """Feeding h0's real events.jsonl from the scenario above into evalagg.analyze_run,
+    with window_end_ms = 130000 (evalgen's own stage-1 WINDOW_END_S), the (h1, 1) store
+    must be read as delivered (129900 <= 130000), not censored.
+
+    Before this fix, record_stored's ts_ms would have been the flush-time 130200 --
+    strictly past window_end_ms -- and this same row would have come back censored
+    with no delivery latency at all, exactly the "in-window store misclassified as
+    cut off" the review flagged.
+    """
+    config, _agent = _run_store_during_probe_wait(tmp_path)
+
+    run_dir = tmp_path / "run"
+    h0_src = Path(config.state_dir) / "events.jsonl"
+    h0_dst = run_dir / "debug" / "node_dirs" / "h0" / "semindex" / "events.jsonl"
+    h0_dst.parent.mkdir(parents=True)
+    h0_dst.write_text(h0_src.read_text())
+
+    # h1 is not a real agent in this test; its own events.jsonl only needs
+    # the one line _created_ts_by_key actually reads: when it created the
+    # record h0 goes on to fetch and store. 60s mirrors the review's own
+    # repro ("60秒に作られたレコード").
+    h1_dst = run_dir / "debug" / "node_dirs" / "h1" / "semindex" / "events.jsonl"
+    h1_dst.parent.mkdir(parents=True)
+    h1_dst.write_text(json.dumps({"event": "record_created", "origin": "h1", "seq": 1, "ts_ms": 60_000}) + "\n")
+
+    run = evalagg.analyze_run(0.0, 1, str(run_dir))
+    assert run.t0_source == "agent_start"
+
+    rows = {(r["origin"], r["seq"], r["node"]): r for r in run.discovery_rows}
+    row = rows[("h1", 1, "h0")]
+    assert row["censored"] is False, row
+    assert row["latency_ms"] == pytest.approx(69_900.0)

@@ -460,7 +460,24 @@ class EventWriter:
         self._clock = clock
 
     def write(self, event: dict) -> None:
-        """Stamp `event` with the current wall-clock epoch ms and append it as one JSON line."""
+        """Append `event` as one JSON line, stamping it with the current wall-clock epoch ms
+        only when it does not already carry its own `ts_ms`.
+
+        `{"ts_ms": ..., **event}` puts the write-time stamp first so any
+        `ts_ms` already in `event` overrides it in the merged dict -- never
+        the other way around. This is how counters_snapshot's own
+        captured-ahead-of-write ts_ms (agent.py's _capture_due_snapshots) has
+        always survived to the written line, and is also what now lets
+        SyncEngine's own queued events (record_created/record_stored/
+        decision/state_rx/fetch_timeout/conflict -- every engine._emit call)
+        carry the processing-time ts_ms the engine stamped them with at
+        creation, rather than the time this write() call happens to run at,
+        which can be seconds later for an event queued during a probe's
+        synchronous content fetch (see SyncEngine._emit_decision's own
+        comment). An agent-level event with no `now` of its own to draw on
+        (agent_start, probe_discovered, probe_retrieved, the final
+        `counters` line) still gets today's stamp-at-write-time default.
+        """
         stamped = {"ts_ms": round(self._clock() * 1000), **event}
         self._file.write(json.dumps(stamped, sort_keys=True) + "\n")
         self._file.flush()

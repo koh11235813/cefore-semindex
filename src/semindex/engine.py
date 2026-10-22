@@ -125,7 +125,7 @@ class SyncEngine:
         events, self._events = self._events, []
         return events
 
-    def _emit_decision(self, kind: str, state: dict, action: dict) -> None:
+    def _emit_decision(self, kind: str, state: dict, action: dict, now: float) -> None:
         """Queue one `decision` event (map.md "判断の記録"): the state visible at the
         moment this engine actually chose `action`, plus action_prob -- 1.0 here,
         since stage 1's policy always picks its one deterministic action.
@@ -134,10 +134,32 @@ class SyncEngine:
         production config leaves it at its default True). Assumes a real decision
         has already been made -- it never re-checks that for itself, so it must only
         be called once something was actually chosen, not on a no-op.
+
+        2026-10-23 fix: `ts_ms` is stamped here from `now` -- the processing
+        time this decision was actually made at, i.e. whatever clock reading
+        the caller (on_tick/on_state/_fail_fetch, all driven by the
+        transport's own clock) was already holding -- rather than left for
+        EventWriter.write to stamp at flush time. A decision made while this
+        node's Agent is blocked inside a probe's synchronous content fetch
+        (agent.py's _run_probe) is still queued, not flushed, until that probe
+        returns, so the write-time stamp used to run however many seconds
+        behind the decision itself the probe wait happened to take. The same
+        epoch-ms formula EventWriter uses (round(clock_reading * 1000)) is
+        reused here so a pre-set ts_ms and a stamp-at-write-time one are
+        never computed two different ways.
         """
         if not self._config.log_decisions:
             return
-        self._emit({"event": "decision", "kind": kind, "state": state, "action": action, "action_prob": 1.0})
+        self._emit(
+            {
+                "event": "decision",
+                "ts_ms": round(now * 1000),
+                "kind": kind,
+                "state": state,
+                "action": action,
+                "action_prob": 1.0,
+            }
+        )
 
     # -- own-record creation --------------------------------------------------------
 
@@ -168,7 +190,17 @@ class SyncEngine:
         )
         progress = self._store.get_progress(record.origin)
         self._tracker.observe_held(record.origin, progress.hi, progress.extra)
-        self._emit({"event": "record_created", "origin": record.origin, "seq": record.seq})
+        # 2026-10-23 fix: ts_ms is `observed_at` itself, not left for
+        # EventWriter.write to stamp at flush time -- the caller
+        # (agent.py's _drain_schedule) already computed observed_at as
+        # round(now * 1000) from the same processing `now` this record was
+        # actually created at, so reusing it here needs no separate clock
+        # reading and guarantees the two can never read differently for the
+        # same record. Without this, a record created in the same step()
+        # that then blocks inside a probe's synchronous fetch (drained only
+        # after that probe returns) would log a ts_ms seconds later than it
+        # was actually created.
+        self._emit({"event": "record_created", "ts_ms": observed_at, "origin": record.origin, "seq": record.seq})
         return record
 
     # -- periodic housekeeping -----------------------------------------------------
@@ -198,7 +230,7 @@ class SyncEngine:
         # (a neighbor due for a poll is always polled in stage 1), so
         # always logged when log_decisions is on.
         self._emit_decision(
-            "state_poll", self._tracker.decision_state(neighbor), {"neighbor": neighbor, "interval_s": interval}
+            "state_poll", self._tracker.decision_state(neighbor), {"neighbor": neighbor, "interval_s": interval}, now
         )
         self._next_state_poll[neighbor] = now + interval
 
@@ -218,7 +250,7 @@ class SyncEngine:
         due = self._tracker.plan_fetches(neighbor, now)
         if due:
             self._emit_decision(
-                "fetch_plan", state, {"neighbor": neighbor, "fetched": [[origin, seq] for origin, seq in due]}
+                "fetch_plan", state, {"neighbor": neighbor, "fetched": [[origin, seq] for origin, seq in due]}, now
             )
         for origin, seq in due:
             name = names.build_record_name(self._config.group, neighbor, origin, seq)
@@ -243,12 +275,18 @@ class SyncEngine:
         lets a checker compare what a holder claimed against what its own
         events.jsonl shows it had actually stored as of this same reply.
         """
+        # 2026-10-23 fix: ts_ms is stamped here from `now` -- see
+        # _emit_decision's own comment on why a queued event's processing
+        # time, not its later flush time, is what belongs in ts_ms.
+        ts_ms = round(now * 1000)
         try:
             decoded = holder_state.decode(payload)
         except holder_state.HolderStateError:
-            self._emit({"event": "state_rx", "neighbor": neighbor, "hi": {}})
+            self._emit({"event": "state_rx", "ts_ms": ts_ms, "neighbor": neighbor, "hi": {}})
             return  # malformed/oversize reply from a neighbor; drop silently
-        self._emit({"event": "state_rx", "neighbor": neighbor, "hi": {o: e["hi"] for o, e in decoded.items()}})
+        self._emit(
+            {"event": "state_rx", "ts_ms": ts_ms, "neighbor": neighbor, "hi": {o: e["hi"] for o, e in decoded.items()}}
+        )
         for origin, entry in decoded.items():
             self._tracker.observe_state(origin, neighbor, entry["hi"], entry["extra"])
         self._send_fetch_plan(neighbor, now)
@@ -297,10 +335,25 @@ class SyncEngine:
 
         digest = schema.content_hash(payload)
         result = self._store.append_received(record.origin, record.seq, payload, digest)
+        # 2026-10-23 fix: ts_ms is stamped here from `now` -- the engine's
+        # own processing time for this store/conflict -- rather than left for
+        # EventWriter.write to stamp whenever this queued event is actually
+        # flushed. A record that lands while this node's Agent.step() is
+        # blocked inside a probe's synchronous content fetch (agent.py's
+        # _run_probe) is still stored and queued right here, but not
+        # drained to events.jsonl until that probe returns; without a
+        # pre-set ts_ms, evalagg's own discovery-latency/consistency metrics
+        # (semindex.evalagg._analyze_run_metrics) would read a ts_ms up to
+        # one probe-wait's worth of seconds later than this store actually
+        # happened, over-measuring propagation time and, for a store near
+        # the measurement window's end, misclassifying an in-window store as
+        # censored.
+        ts_ms = round(now * 1000)
         if result.conflict:
             self._emit(
                 {
                     "event": "conflict",
+                    "ts_ms": ts_ms,
                     "origin": record.origin,
                     "seq": record.seq,
                     "kept_hash": result.existing_hash,
@@ -313,7 +366,7 @@ class SyncEngine:
         self._tracker.observe_held(record.origin, progress.hi, progress.extra)
         if result.stored:
             self._emit(
-                {"event": "record_stored", "origin": record.origin, "seq": record.seq, "holder": neighbor}
+                {"event": "record_stored", "ts_ms": ts_ms, "origin": record.origin, "seq": record.seq, "holder": neighbor}
             )
 
     def on_fetch_timeout(self, name: str, now: float) -> None:
@@ -330,7 +383,16 @@ class SyncEngine:
         if not isinstance(parsed, names.RecordName):
             return
         neighbor = parsed.holder
-        self._emit({"event": "fetch_timeout", "origin": parsed.origin, "seq": parsed.seq, "neighbor": neighbor})
+        # 2026-10-23 fix: ts_ms from `now`, same reasoning as on_record above.
+        self._emit(
+            {
+                "event": "fetch_timeout",
+                "ts_ms": round(now * 1000),
+                "origin": parsed.origin,
+                "seq": parsed.seq,
+                "neighbor": neighbor,
+            }
+        )
         self._fail_fetch(parsed.origin, parsed.seq, neighbor, now, cause="timeout")
 
     def _fail_fetch(self, origin: str, seq: int, neighbor: str, now: float, *, cause: str = "rejected") -> None:
@@ -352,7 +414,10 @@ class SyncEngine:
             wait = self._tracker.on_fetch_rejected(origin, seq, neighbor, now)
         if wait is not None:
             self._emit_decision(
-                "fetch_backoff", state, {"neighbor": neighbor, "origin": origin, "seq": seq, "wait_s": wait, "cause": cause}
+                "fetch_backoff",
+                state,
+                {"neighbor": neighbor, "origin": origin, "seq": seq, "wait_s": wait, "cause": cause},
+                now,
             )
 
     # -- holder-side serving --------------------------------------------------------
