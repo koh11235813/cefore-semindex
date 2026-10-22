@@ -113,14 +113,59 @@ def test_control_bytes_sums_every_counters_line_per_node_not_just_the_last():
     """Control bytes sums every counters line per node not just the last."""
     nodes = {
         "h0": [
-            {"ts_ms": 100, "event": "counters", "bytes_sent": 10, "bytes_received": 5},
-            {"ts_ms": 200, "event": "counters", "bytes_sent": 7, "bytes_received": 3},
+            {
+                "ts_ms": 100,
+                "event": "counters",
+                "bytes_sent": 10,
+                "bytes_received": 5,
+                "control_bytes_sent": 10,
+                "control_bytes_received": 5,
+            },
+            {
+                "ts_ms": 200,
+                "event": "counters",
+                "bytes_sent": 7,
+                "bytes_received": 3,
+                "control_bytes_sent": 7,
+                "control_bytes_received": 3,
+            },
         ],
-        "h1": [{"ts_ms": 150, "event": "counters", "bytes_sent": 2, "bytes_received": 1}],
+        "h1": [
+            {
+                "ts_ms": 150,
+                "event": "counters",
+                "bytes_sent": 2,
+                "bytes_received": 1,
+                "control_bytes_sent": 2,
+                "control_bytes_received": 1,
+            }
+        ],
     }
     assert control_bytes(nodes) == {
         "per_node": {"h0": {"bytes_sent": 17, "bytes_received": 8}, "h1": {"bytes_sent": 2, "bytes_received": 1}},
         "total": {"bytes_sent": 19, "bytes_received": 9},
+    }
+
+
+def test_control_bytes_reads_the_control_counters_not_the_probe_inflated_totals():
+    """2026-10-22 fix: control_bytes reads control_bytes_sent/received, not
+    bytes_sent/received -- a probe's own content-body fetch inflates bytes_sent/bytes_received (every
+    chunk is counted there too), so a large probe body must not move control_bytes()'s total."""
+    nodes = {
+        "h0": [
+            {
+                "ts_ms": 100,
+                "event": "counters",
+                "bytes_sent": 10 + 433390,  # T1's own live retrieval, folded into the total column
+                "bytes_received": 5,
+                "control_bytes_sent": 10,
+                "control_bytes_received": 5,
+            }
+        ],
+    }
+    assert control_bytes(nodes) == {
+        "per_node": {"h0": {"bytes_sent": 10, "bytes_received": 5}},
+        "total": {"bytes_sent": 10, "bytes_received": 5},
     }
 
 
@@ -184,7 +229,14 @@ def test_analyze_integrates_every_section(tmp_path: Path):
         _node_events_path(tmp_path, "h0"),
         [
             {"ts_ms": 100, "event": "record_created", "origin": "h0", "seq": 1},
-            {"ts_ms": 900, "event": "counters", "bytes_sent": 10, "bytes_received": 0},
+            {
+                "ts_ms": 900,
+                "event": "counters",
+                "bytes_sent": 10,
+                "bytes_received": 0,
+                "control_bytes_sent": 10,
+                "control_bytes_received": 0,
+            },
         ],
     )
     _write_jsonl(
@@ -193,7 +245,17 @@ def test_analyze_integrates_every_section(tmp_path: Path):
             {"ts_ms": 150, "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h0"},
             {"ts_ms": 160, "event": "probe_discovered", "matches": [{"origin": "h0", "seq": 1}]},
             {"ts_ms": 161, "event": "probe_retrieved", "origin": "h0", "seq": 1, "success": True, "bytes": 42},
-            {"ts_ms": 900, "event": "counters", "bytes_sent": 5, "bytes_received": 5},
+            # The probe's own 42-byte retrieval above must not reach
+            # control_bytes_sent/received: both stay at the sync-only
+            # values this counters line reports, unrelated to `bytes`.
+            {
+                "ts_ms": 900,
+                "event": "counters",
+                "bytes_sent": 5,
+                "bytes_received": 5 + 42,
+                "control_bytes_sent": 5,
+                "control_bytes_received": 5,
+            },
         ],
     )
 
@@ -226,4 +288,4 @@ def test_main_exits_1_on_a_usage_error(tmp_path: Path, capsys):
     rc = main([str(tmp_path)])
 
     assert rc == 1
-    assert "no events.jsonl found" in capsys.readouterr().err
+    assert capsys.readouterr().err == f"semindex.analyze: no events.jsonl found under {tmp_path}/debug/node_dirs/h*/semindex/\n"

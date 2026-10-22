@@ -11,10 +11,12 @@ reads) and prints one JSON object to stdout with:
   participating node first held that origin's full created set, plus the
   overall time every origin was consistent everywhere -- `null` if some
   node never got there within this run.
-- `control_bytes`: bytes_sent/bytes_received summed from every `counters`
-  line in each node's file -- *every* line, not the last one, since a
-  restarted node's events.jsonl holds one `counters` line per life
-  (agent.py's EventWriter is opened in append mode across a restart).
+- `control_bytes`: control_bytes_sent/control_bytes_received (sync
+  protocol traffic only, excluding a probe's own content-body fetch)
+  summed from every `counters` line in each node's file -- *every* line,
+  not the last one, since a restarted node's events.jsonl holds one
+  `counters` line per life (agent.py's EventWriter is opened in append
+  mode across a restart).
 - `probes`: every probe_discovered this run logged, paired with the
   probe_retrieved that followed it when it found a match (agent.py's
   _run_probe writes exactly one of these, back to back, for a probe with
@@ -141,17 +143,23 @@ def all_nodes_consistent(nodes: dict[str, list[dict]]) -> dict:
 
 
 def control_bytes(nodes: dict[str, list[dict]]) -> dict:
-    """bytes_sent/bytes_received summed from every `counters` line per node (and the grand total).
+    """control_bytes_sent/control_bytes_received summed from every `counters` line per node (and the grand total).
 
     Summed, not the last line taken alone: a restarted node's
     events.jsonl holds one `counters` line per life (agent.py's
     EventWriter is append-mode, and Agent.shutdown() writes one on every
     clean stop), and each life's totals only cover that life's own traffic.
+
+    2026-10-22 fix: reads control_bytes_sent/control_bytes_received,
+    not bytes_sent/bytes_received -- the latter also include a probe's own
+    content-body fetch (cefpyco_transport.py's "Byte counters" docstring
+    entry), so this section's name ("control") would otherwise be wrong
+    whenever a run's probe retrieved a large body.
     """
     per_node = {}
     for node, events in nodes.items():
-        sent = sum(e["bytes_sent"] for e in events if e.get("event") == "counters")
-        received = sum(e["bytes_received"] for e in events if e.get("event") == "counters")
+        sent = sum(e["control_bytes_sent"] for e in events if e.get("event") == "counters")
+        received = sum(e["control_bytes_received"] for e in events if e.get("event") == "counters")
         per_node[node] = {"bytes_sent": sent, "bytes_received": received}
     total = {
         "bytes_sent": sum(v["bytes_sent"] for v in per_node.values()),

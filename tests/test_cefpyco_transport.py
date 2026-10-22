@@ -151,6 +151,7 @@ def test_send_interest_sends_without_a_chunk_tlv_and_counts_the_name_bytes():
     transport.send_interest(name, 2000)
     assert handle.sent_interests == [(name, -1, 2000)]
     assert transport.bytes_sent == len(name.encode("utf-8"))
+    assert transport.control_bytes_sent == transport.bytes_sent
 
 
 def test_poll_dispatches_an_incoming_interest_to_a_response_as_data():
@@ -165,6 +166,8 @@ def test_poll_dispatches_an_incoming_interest_to_a_response_as_data():
     assert handle.sent_data == [(name, b'{"x":1}', -1, 3600000, 300000)]
     assert transport.bytes_sent == len(name.encode("utf-8")) + len(b'{"x":1}')
     assert transport.bytes_received == len(name.encode("utf-8"))
+    assert transport.control_bytes_sent == transport.bytes_sent
+    assert transport.control_bytes_received == transport.bytes_received
 
 
 def test_poll_lets_an_interest_expire_when_handle_interest_returns_none():
@@ -263,6 +266,7 @@ def test_poll_routes_state_data_to_on_state_with_the_holder_from_the_name():
     transport.poll()
     assert engine.on_state_calls == [("h1", payload, 5.0)]
     assert transport.bytes_received == len(name.encode("utf-8")) + len(payload)
+    assert transport.control_bytes_received == transport.bytes_received
 
 
 def test_poll_routes_record_data_to_on_record_with_the_full_name():
@@ -359,6 +363,26 @@ def test_fetch_content_reassembles_every_chunk_and_stops_at_end_chunk_num():
     ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
     assert (ok, total) == (True, len(b"hello-world!"))
     assert [chunk_num for (_name, chunk_num, _lifetime) in handle.sent_interests] == [0, 1]
+
+
+def test_fetch_content_does_not_move_the_control_byte_counters():
+    """2026-10-22 fix: fetch_content's own Interests/payloads count toward
+    bytes_sent/received but never toward control_bytes_sent/received -- a large probe body must not
+    inflate what a reader treats as sync-protocol overhead."""
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    large_payload = b"x" * 433390  # T1's own live retrieval was this size
+    handle = _FakeHandle(
+        [_FakePacket(is_data=True, name=name, payload=large_payload, chunk_num=0, end_chunk_num=0)],
+        clock=clock,
+    )
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
+    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
+    assert (ok, total) == (True, len(large_payload))
+    assert transport.bytes_sent > 0
+    assert transport.bytes_received > len(large_payload)
+    assert transport.control_bytes_sent == 0
+    assert transport.control_bytes_received == 0
 
 
 def test_fetch_content_does_not_stop_early_when_a_later_chunk_advertises_the_end():

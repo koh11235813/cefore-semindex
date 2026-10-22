@@ -36,6 +36,14 @@ needs that an in-memory one does not:
   a reply (sync Data here, content chunks from fetch_content). An Interest
   Return is not specially counted or dispatched; it is left for the
   Interest's own deadline to resolve as an ordinary timeout.
+- control_bytes_sent/control_bytes_received mirror the two counters above
+  but exclude fetch_content entirely (send_interest and _serve only).
+  2026-10-22 fix: analyze.py's control_bytes() used to read
+  bytes_sent/bytes_received directly, so a probe's own content-body fetch
+  (T1's own live run moved 433390 bytes this way) was reported as sync
+  protocol overhead. These two give a reader of events.jsonl a total that
+  is actually bounded by the sync protocol's own traffic, independent of
+  how large a probe's retrieved body happened to be.
 - A payload=None coercion on every incoming Data. cefpyco's own
   CcnPacketInfo.payload is None for a Data TLV with no payload at all
   (its own payload_s property guards the same way), and len(None) would
@@ -134,6 +142,8 @@ class CefpycoTransport:
         self._deadlines: dict[str, float] = {}
         self.bytes_sent = 0
         self.bytes_received = 0
+        self.control_bytes_sent = 0
+        self.control_bytes_received = 0
 
     @property
     def engine(self) -> SyncEngine | None:
@@ -173,6 +183,7 @@ class CefpycoTransport:
         """
         self._handle.send_interest(name, chunk_num=-1, lifetime=lifetime_ms)
         self.bytes_sent += len(name.encode("utf-8"))
+        self.control_bytes_sent += len(name.encode("utf-8"))
         self._deadlines[name] = self._clock() + lifetime_ms / 1000.0
 
     # -- driving the real network from the agent loop --------------------------
@@ -262,6 +273,12 @@ class CefpycoTransport:
     def _serve(self, name: str, now: float) -> None:
         """Answer an incoming Interest addressed to this node, as holder."""
         self.bytes_received += len(name.encode("utf-8"))
+        # Every Interest _serve answers is sync protocol traffic (state or
+        # record fetch from a neighbor) -- fetch_content's own content-chunk
+        # Interests never reach this method, since they are a requester-side
+        # call that this node's own dispatch loop never routes back into
+        # _serve. See the module docstring's "Byte counters" entry.
+        self.control_bytes_received += len(name.encode("utf-8"))
         try:
             response = self._engine.handle_interest(name)
         except Exception:
@@ -294,6 +311,7 @@ class CefpycoTransport:
             cache_time=round(response.cache_time_s * 1000),
         )
         self.bytes_sent += len(name.encode("utf-8")) + len(response.payload)
+        self.control_bytes_sent += len(name.encode("utf-8")) + len(response.payload)
 
     def _route_data(self, name: str, payload: bytes, now: float) -> None:
         """Deliver a Data reply to the engine as a state or record reply, by the name's own kind."""
@@ -302,6 +320,12 @@ class CefpycoTransport:
             parsed = names.parse(name)
         except names.MalformedNameError:
             return  # this node never sent an Interest for a name it cannot parse
+        # Only a sync name (state or record) ever reaches this point: a
+        # stray content-chunk Data that fetch_content's own wait loop did
+        # not consume (e.g. it arrived after that fetch already gave up)
+        # fails the parse above and returns before this line, so it is
+        # never misclassified as control traffic either.
+        self.control_bytes_received += len(name.encode("utf-8")) + len(payload)
         if isinstance(parsed, names.StateName):
             self._engine.on_state(parsed.holder, payload, now)
         else:
