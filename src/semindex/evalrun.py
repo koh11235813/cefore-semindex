@@ -360,6 +360,27 @@ def _iso(ts: float) -> str:
 _SEMINDEX_REPO_ROOT = os.path.dirname(gen.SEMINDEX_SRC_DIR)
 
 
+class DirtySemindexError(RuntimeError):
+    """`run_all` raises this when the semindex tree is not confirmed clean and `allow_dirty` was
+    not given.
+
+    2026-10-23 orchestrator trial: stage-1 trial seeds 2-3 were recorded with
+    `semindex_git_dirty: true` because semindex's own source files were being edited mid-sweep.
+    Each run's own meta.json already records its commit/dirty flag individually, but nothing
+    stopped the sweep from running at all on a tree whose results a later run could not reproduce.
+    Refusing up front -- before `run_all` touches the store or staging dirs at all -- forces that
+    choice (fix the tree, or explicitly accept the risk via `--allow-dirty`) before any run starts,
+    not only after the fact when reading meta.json back.
+
+    Refused on anything other than a confirmed-clean `False` (not just a confirmed-dirty `True`):
+    `_git_dirty` can itself come back as an `"error: ..."` string (git missing, the dubious-
+    ownership refusal `_git_run` scopes around but could still fail for some other reason, ...),
+    and an UNDETERMINED tree is exactly the case this guard exists to stop from proceeding
+    silently -- `--allow-dirty` is the one escape hatch for "git is broken but I know what I'm
+    doing", not a reason to treat silence as clean.
+    """
+
+
 def _build_meta(
     *,
     p: float,
@@ -547,6 +568,7 @@ def run_all(
     capture_subprocess: Callable[..., str] = default_capture_subprocess,
     chown_tree: Callable[[str], None] = default_chown_tree,
     clock: Callable[[], float] = time.time,
+    allow_dirty: bool = False,
     out=None,
 ) -> list[RunOutcome]:
     """Run every (p, seed) pair in `build_run_order`'s order, logging one line per run to `out`.
@@ -565,6 +587,10 @@ def run_all(
     capture whatever `sys.stdout` object existed at import time, which a
     test fixture (e.g. pytest's capsys) that swaps `sys.stdout` later can
     then never redirect.
+
+    Raises `DirtySemindexError` (see its own docstring) before anything else in this call touches
+    the store or staging dirs, unless `allow_dirty` is set -- a whole-sweep guard, not a per-run
+    one, since the point is to never start a sweep whose provenance is already in question.
     """
     if out is None:
         out = sys.stdout
@@ -575,6 +601,14 @@ def run_all(
     # own per-pair try/except (below) logging the identical failure once
     # per (p, seed) pair and still reporting the sweep as "ran".
     _validate_stage(stage)
+    if not allow_dirty:
+        dirty = _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess)
+        if dirty is not False:
+            raise DirtySemindexError(
+                f"semindex tree ({_SEMINDEX_REPO_ROOT}) is not confirmed clean "
+                f"(git status: {dirty!r}); commit or stash the changes first, "
+                "or pass --allow-dirty to start the sweep anyway"
+            )
     os.makedirs(store, exist_ok=True)
     os.makedirs(staging_root, exist_ok=True)
     outcomes = []
@@ -609,6 +643,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--store", required=True, help="directory runs are stored under")
     parser.add_argument("--recefore", required=True, help="path to the ReCefore (cefore-emu-sslab) checkout")
     parser.add_argument("--staging", default=None, help="directory to create per-run staging dirs under (default: system temp)")
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="start the sweep even if the semindex tree is not confirmed clean (see DirtySemindexError)",
+    )
     return parser.parse_args(argv)
 
 
@@ -618,7 +657,10 @@ def main(argv: list[str] | None = None) -> int:
     seeds = parse_seeds(args.seeds)
     staging_root = tempfile.mkdtemp(prefix="semindex-evalrun-", dir=args.staging)
     try:
-        run_all(args.p, seeds, args.stage, args.store, args.recefore, staging_root)
+        run_all(args.p, seeds, args.stage, args.store, args.recefore, staging_root, allow_dirty=args.allow_dirty)
+    except DirtySemindexError as exc:
+        print(f"semindex.evalrun: {exc}", file=sys.stderr)
+        return 2
     finally:
         if os.path.isdir(staging_root) and not os.listdir(staging_root):
             os.rmdir(staging_root)

@@ -135,9 +135,18 @@ def make_fake_run_subprocess(*, skip_node: int | None = None, calls: list | None
 
 
 def _fake_capture_subprocess(argv, *, cwd=None):
-    """A `capture_subprocess` fake: no real git/python available in a test sandbox."""
+    """A `capture_subprocess` fake: no real git/python available in a test sandbox.
+
+    2026-10-23 fix: this used to be `"status --porcelain" in " ".join(argv) and "" or "deadbeef"` --
+    the classic `cond and A or B` trap, broken whenever A is falsy: `"" or "deadbeef"` always
+    picks `"deadbeef"` regardless of `cond`, so EVERY git call (including `status --porcelain`)
+    actually returned a truthy, non-empty string here, which `_git_dirty` reads as dirty. Nothing
+    asserted the dirty flag's actual value before `run_all`'s own dirty-sweep guard was added, so
+    this never surfaced; that guard now reads every happy-path fixture run as dirty and refuses to
+    start, via this exact fixture.
+    """
     if argv[:1] == ["git"]:
-        return "status --porcelain" in " ".join(argv) and "" or "deadbeef"
+        return "" if "status" in argv else "deadbeef"
     return "Python 3.12.0 (fake)"
 
 
@@ -689,6 +698,129 @@ def test_run_one_redoes_a_partial_store_dir_from_scratch(tmp_path: Path, monkeyp
     assert outcome.status == "done"
     assert (store_run_dir / "DONE").exists()
     assert not (store_run_dir / "stale_leftover.txt").exists()
+
+
+# -- run_all: refuses a sweep on a dirty/undetermined semindex tree ------------
+
+
+def test_run_all_refuses_a_dirty_semindex_tree_without_allow_dirty(tmp_path: Path, monkeypatch):
+    """Run all refuses to start the sweep at all when the semindex tree is reported dirty, before
+    even creating the store or staging dirs -- orchestrator trial seeds 2-3 were recorded dirty
+    because semindex's own source was being edited mid-sweep."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    def _dirty_capture(argv, *, cwd=None):
+        if argv[0] == "git" and "status" in argv:
+            return "M some_file.py\n"
+        return _fake_capture_subprocess(argv, cwd=cwd)
+
+    def _must_not_run(argv, *, cwd=None):
+        raise AssertionError("run_subprocess must not be called: the dirty-tree guard should fail first")
+
+    with pytest.raises(evalrun.DirtySemindexError):
+        evalrun.run_all(
+            [0.2], [1], "s1", str(store), str(recefore), str(staging_root),
+            run_subprocess=_must_not_run,
+            capture_subprocess=_dirty_capture,
+        )
+    assert not store.exists()
+    assert not staging_root.exists()
+
+
+def test_run_all_refuses_when_the_semindex_dirty_status_is_undetermined(tmp_path: Path, monkeypatch):
+    """Run all also refuses when the dirty check itself fails (an `"error: ..."` string, not True
+    or False) -- an undetermined tree must not be silently treated as clean."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    def _broken_capture(argv, *, cwd=None):
+        if argv[0] == "git" and "status" in argv:
+            raise subprocess.CalledProcessError(128, argv, output="", stderr="fatal: boom\n")
+        return _fake_capture_subprocess(argv, cwd=cwd)
+
+    def _must_not_run(argv, *, cwd=None):
+        raise AssertionError("run_subprocess must not be called: the dirty-tree guard should fail first")
+
+    with pytest.raises(evalrun.DirtySemindexError):
+        evalrun.run_all(
+            [0.2], [1], "s1", str(store), str(recefore), str(staging_root),
+            run_subprocess=_must_not_run,
+            capture_subprocess=_broken_capture,
+        )
+
+
+def test_run_all_proceeds_when_allow_dirty_is_set(tmp_path: Path, monkeypatch):
+    """Run all proceeds through a dirty semindex tree when --allow-dirty's own flag is passed."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    def _dirty_capture(argv, *, cwd=None):
+        if argv[0] == "git" and "status" in argv:
+            return "M some_file.py\n"
+        return _fake_capture_subprocess(argv, cwd=cwd)
+
+    outcomes = evalrun.run_all(
+        [0.2], [1], "s1", str(store), str(recefore), str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_dirty_capture,
+        allow_dirty=True,
+    )
+    assert outcomes[0].status == "done"
+    assert (store / "s1" / "p0.2" / "1" / "DONE").exists()
+
+
+def test_run_all_proceeds_when_the_semindex_tree_is_confirmed_clean(tmp_path: Path, monkeypatch):
+    """Run all's existing happy-path behavior survives: a confirmed-clean tree (the default fake's
+    `git status --porcelain` returns "") never raises DirtySemindexError, with no --allow-dirty."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    outcomes = evalrun.run_all(
+        [0.2], [1], "s1", str(store), str(recefore), str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+    )
+    assert outcomes[0].status == "done"
+
+
+def test_main_exits_2_and_prints_a_message_on_a_dirty_tree(tmp_path: Path, monkeypatch, capsys):
+    """main() surfaces DirtySemindexError as a clear stderr message and exit code 2, not a
+    traceback, and cleans up the empty staging dir it created before failing."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+    staging_parent = tmp_path / "staging_parent"
+    staging_parent.mkdir()
+
+    def _dirty_run_all(*args, **kwargs):
+        raise evalrun.DirtySemindexError("semindex tree is dirty")
+
+    monkeypatch.setattr(evalrun, "run_all", _dirty_run_all)
+    rc = evalrun.main(
+        ["--stage", "s1", "--p", "0.2", "--seeds", "1", "--store", str(store), "--recefore", str(recefore),
+         "--staging", str(staging_parent)]
+    )
+    assert rc == 2
+    assert "semindex tree is dirty" in capsys.readouterr().err
 
 
 # -- run_all: ordering, logging, crash isolation -------------------------------
