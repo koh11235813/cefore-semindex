@@ -135,8 +135,21 @@ _PROBE_ENTRY_KEYS = frozenset(_PROBE_ENTRY_REQUIRED) | frozenset(_PROBE_ENTRY_OP
 _FAULT_DROP_REC_ENTRY_KEYS = frozenset({"origin", "seq", "times"})
 
 
-def _check_numeric(key: str, value, kind: type) -> None:
-    """Validate one numeric config value: the right numeric kind, never a bool, never negative."""
+# 2026-10-22 fix: receive_timeout_ms/chunk_lifetime_ms/interest_lifetime_ms
+# used to only be checked >= 0, so 0 passed validation -- receive_timeout_ms:
+# 0 spins the agent's poll() loop at full CPU (every receive() returns
+# instantly), and chunk_lifetime_ms/interest_lifetime_ms: 0 makes every
+# fetch/sync Interest time out the instant it is sent, before any reply
+# could ever arrive. All three must be strictly positive; every other
+# numeric override (e.g. state_poll_interval_s) may still legitimately be 0.
+_POSITIVE_NUMERIC_KEYS = frozenset({"receive_timeout_ms", "chunk_lifetime_ms", "interest_lifetime_ms"})
+
+
+def _check_numeric(key: str, value, kind: type, *, positive: bool = False) -> None:
+    """Validate one numeric config value: the right numeric kind, never a bool, and
+    either >= 0 (the general case) or > 0 when `positive` is set -- see
+    _POSITIVE_NUMERIC_KEYS for which keys need the stricter bound and why.
+    """
     if kind is int:
         ok = isinstance(value, int) and not isinstance(value, bool)
         label = "an integer"
@@ -145,7 +158,10 @@ def _check_numeric(key: str, value, kind: type) -> None:
         label = "a number"
     if not ok:
         raise ConfigError(f"{key} must be {label}")
-    if value < 0:
+    if positive:
+        if value <= 0:
+            raise ConfigError(f"{key} must be > 0")
+    elif value < 0:
         raise ConfigError(f"{key} must be >= 0")
 
 
@@ -279,6 +295,14 @@ def validate_config(raw) -> AgentConfig:
     neighbors = tuple(
         _check_name_component(n, f"neighbors[{idx}]") for idx, n in enumerate(neighbors_raw)
     )
+    # 2026-10-22 fix: neither check used to run, so a node could list
+    # itself as a neighbor (SyncEngine would then sync state/records with
+    # itself) or list the same neighbor twice (double-counting its
+    # in-flight fetch slots against max_in_flight_per_neighbor).
+    if node in neighbors:
+        raise ConfigError("neighbors must not contain the node itself")
+    if len(neighbors) != len(set(neighbors)):
+        raise ConfigError("neighbors must not contain duplicates")
 
     cefore_conf_dir = _check_non_empty_string(raw["cefore_conf_dir"], "cefore_conf_dir")
     state_dir = _check_non_empty_string(raw["state_dir"], "state_dir")
@@ -301,12 +325,12 @@ def validate_config(raw) -> AgentConfig:
     sync_overrides: dict[str, float | int] = {}
     for key, kind in _SYNC_OVERRIDE_KEYS.items():
         if key in raw:
-            _check_numeric(key, raw[key], kind)
+            _check_numeric(key, raw[key], kind, positive=key in _POSITIVE_NUMERIC_KEYS)
             sync_overrides[key] = raw[key]
 
     for key, kind in _AGENT_NUMERIC_KEYS.items():
         if key in raw:
-            _check_numeric(key, raw[key], kind)
+            _check_numeric(key, raw[key], kind, positive=key in _POSITIVE_NUMERIC_KEYS)
 
     return AgentConfig(
         node=node,

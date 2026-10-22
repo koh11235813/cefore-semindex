@@ -155,6 +155,63 @@ def test_validate_config_rejects_a_non_integer_interest_lifetime_ms():
     assert str(exc_info.value) == "interest_lifetime_ms must be an integer"
 
 
+def test_validate_config_rejects_a_zero_interest_lifetime_ms():
+    """interest_lifetime_ms: 0 would make every sync Interest time out the instant
+    it is sent, before any reply could ever arrive -- it must be > 0, not just >= 0.
+    """
+    raw = _minimal_raw()
+    raw["interest_lifetime_ms"] = 0
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "interest_lifetime_ms must be > 0"
+
+
+def test_validate_config_rejects_a_zero_receive_timeout_ms():
+    """receive_timeout_ms: 0 would spin the agent's poll() loop at full CPU (every
+    receive() returns instantly) -- it must be > 0, not just >= 0.
+    """
+    raw = _minimal_raw()
+    raw["receive_timeout_ms"] = 0
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "receive_timeout_ms must be > 0"
+
+
+def test_validate_config_rejects_a_zero_chunk_lifetime_ms():
+    """chunk_lifetime_ms: 0 would make every probe's content fetch time out
+    instantly -- it must be > 0, not just >= 0.
+    """
+    raw = _minimal_raw()
+    raw["chunk_lifetime_ms"] = 0
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "chunk_lifetime_ms must be > 0"
+
+
+def test_validate_config_rejects_a_neighbor_that_is_the_node_itself():
+    """A node listing itself as a neighbor would have SyncEngine try to sync state
+    and records with itself; this must be rejected at config validation, not left
+    to misbehave at runtime.
+    """
+    raw = _minimal_raw()
+    raw["node"] = "h0"
+    raw["neighbors"] = ["h1", "h0"]
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "neighbors must not contain the node itself"
+
+
+def test_validate_config_rejects_duplicate_neighbors():
+    """The same neighbor listed twice would double-count its in-flight fetch slots
+    against max_in_flight_per_neighbor; this must be rejected, not silently folded.
+    """
+    raw = _minimal_raw()
+    raw["neighbors"] = ["h1", "h1"]
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "neighbors must not contain duplicates"
+
+
 def test_validate_config_applies_sync_overrides():
     """A given timing override reaches the SyncConfig built from the parsed AgentConfig."""
     raw = _minimal_raw()
