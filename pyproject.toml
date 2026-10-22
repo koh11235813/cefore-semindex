@@ -1,0 +1,16 @@
+[project]
+name = "semindex"
+version = "0.0.1"
+description = "Distributed Semantic Index synchronization over Cefore"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
