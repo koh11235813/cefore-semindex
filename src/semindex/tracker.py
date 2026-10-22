@@ -188,8 +188,8 @@ class Tracker:
         """How many seqs this node knows exist (<= notified_max) but does not hold,
         for `origin` -- the true backlog size, uncapped (unlike missing()'s own
         list, which fetch planning caps at max_missing_per_origin so one due pass
-        stays bounded). Used by decision_state (map.md "判断の記録"), which must
-        report how far behind a run actually is, not that unrelated planning cap.
+        stays bounded). For decision-event reporting (map.md "判断の記録"), which
+        must show how far behind a run actually is, not that unrelated planning cap.
 
         2026-10-23 bug fix: decision_state used to report len(missing()), so a
         backlog beyond the cap showed exactly max_missing_per_origin forever,
@@ -399,10 +399,11 @@ class Tracker:
         decision event only for the former.
 
         2026-10-23 bug fix: only cause == "timeout" records `now` in
-        _last_timeout_at[neighbor] -- never a rejection, and never past
-        the stale early-return above, so a stale call never fakes a
-        failure that did not happen and a rejection never masquerades as
-        the timeout map.md's "直前のタイムアウトの時刻" actually means.
+        _last_timeout_at[neighbor], and only once execution is past the
+        stale early-returns below -- never a rejection, and never a stale
+        call faking a failure that did not happen -- so a rejection can
+        no longer masquerade as the timeout map.md's own "直前のタイムア
+        ウトの時刻" actually means.
         """
         state = self._origins.get(origin)
         if state is None:
