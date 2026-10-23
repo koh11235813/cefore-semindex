@@ -17,7 +17,9 @@ Comment intent, not mechanics. Record fix provenance inline with a date (`# 2026
 
 ## Development
 
-- `uv sync`, then `.venv/bin/python3 -m pytest`.
+- cefpyco is not on PyPI; it is built with Cefore and installed into `.venv` by hand, outside `uv.lock`. A plain `uv sync` (or `uv add`, which syncs) removes it and breaks live runs. Use `uv sync --inexact --group dev --extra plot`, or `uv lock` plus `uv pip install` for one new package. Unit tests do not need cefpyco.
+- `.venv/bin/python3 -m pytest`. CI (`.github/workflows/ci.yml`) gates `uv lock --check`, pytest and `ruff check`.
+- mypy and `ruff format` are local-only for now, not CI gates: run them on files you touch, do not mass-reformat.
 - Mininet runs need root: `sudo .venv/bin/python3 ...` (never bare `python3`).
 - Assert diagnostics by exact match, not substring.
 - Signatures are not implemented; never describe validated records as authenticated.
