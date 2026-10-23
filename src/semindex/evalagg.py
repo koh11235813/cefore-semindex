@@ -9,12 +9,16 @@ it for event-reading, (origin, seq) creation times, control-byte summing
 and probe pairing, and only adds the window cut, censoring, and the
 across-run pooling analyze.py has no reason to know about.
 
-Figures: a plot of each table would still be useful, but this venv has no
-matplotlib (checked at import time, see FIGURES_AVAILABLE below) and
-nothing may be installed to get one. Every output here is written as a
-plain CSV instead, deliberately kept in long/tidy form (one row per
-observation, never one column per value) so a plotting tool -- whichever
-one a later effort picks -- can read a table directly, no reshaping:
+Figures: when matplotlib is importable (the optional `plot` extra,
+checked once at import time, see FIGURES_AVAILABLE below), four figures
+are written into --out beside the CSVs, each as PNG plus PDF --
+fig_discovery_survival, fig_consistency, fig_probe_established,
+fig_control_bytes (see semindex.evalfig). They are drawn from the very
+row lists the CSVs below are written from, so a figure can never
+disagree with its table. Without matplotlib only the CSVs are written
+and a one-line notice goes to stderr. Every CSV is kept in long/tidy
+form (one row per observation, never one column per value) so any other
+plotting tool can read a table directly, no reshaping:
 
 - runs.csv: one row per (p, seed) run. Status (`valid`/`flagged`/
   `unknown`, see `read_meta` -- or `incomplete`, which never goes
@@ -103,13 +107,12 @@ from semindex.analyze import (
 from semindex.check import CheckUsageError, agent_start_t0, agent_start_t0_values, read_results, results_ts_ms
 from semindex.store import attrs_match
 
-# Whether a figure step could even run in this interpreter. Checked once,
-# at import time, rather than inside main() on every invocation; a
-# venv's installed package set does not change between one run of this
-# CLI and the next. No plotting code is written at all when this is
-# False (see the module docstring) -- there is nothing here to guard with
-# it today, but a later effort adding figures should gate that code on
-# this flag instead of a bare `import matplotlib`.
+# Whether the figure step (semindex.evalfig) can run in this interpreter.
+# Checked once, at import time, rather than inside main() on every
+# invocation; a venv's installed package set does not change between one
+# run of this CLI and the next. find_spec, not an import: matplotlib is
+# only loaded once aggregate() actually draws, so a CSV-only consumer of
+# this module never pays for it.
 FIGURES_AVAILABLE = importlib.util.find_spec("matplotlib") is not None
 
 # 95% two-sided Wilson score interval z (scipy.stats.norm.ppf(0.975));
@@ -1647,7 +1650,7 @@ DECISIONS_FIELDS = ["p", "kind", "decision_count", "field", "n", "median", "q1",
 def aggregate(
     store: str, stage: str, outdir: str, include_undone: bool, include_unknown: bool = False
 ) -> list[RunAnalysis]:
-    """Discover every run, analyze the ones this call will process, write all seven CSVs into `outdir`.
+    """Discover every run, analyze the ones this call will process, write all seven CSVs (plus figures) into `outdir`.
 
     Returns every run's RunAnalysis -- every discovered run gets one now,
     including a run missing its DONE marker. `analyze_run` itself no
@@ -1708,20 +1711,35 @@ def aggregate(
             continue
 
     os.makedirs(outdir, exist_ok=True)
+    survival_rows = build_survival_rows(analyses, include_unknown)
+    summary_rows = build_summary_rows(analyses, include_unknown)
     _write_csv(os.path.join(outdir, "runs.csv"), RUNS_FIELDS, build_runs_rows(analyses))
     _write_csv(os.path.join(outdir, "discovery.csv"), DISCOVERY_FIELDS, build_discovery_rows(analyses))
-    _write_csv(
-        os.path.join(outdir, "survival.csv"), SURVIVAL_FIELDS, build_survival_rows(analyses, include_unknown)
-    )
+    _write_csv(os.path.join(outdir, "survival.csv"), SURVIVAL_FIELDS, survival_rows)
     _write_csv(os.path.join(outdir, "consistency.csv"), CONSISTENCY_FIELDS, build_consistency_rows(analyses))
-    _write_csv(
-        os.path.join(outdir, "summary.csv"), SUMMARY_FIELDS, build_summary_rows(analyses, include_unknown)
-    )
+    _write_csv(os.path.join(outdir, "summary.csv"), SUMMARY_FIELDS, summary_rows)
     _write_csv(
         os.path.join(outdir, "decisions.csv"), DECISIONS_FIELDS, build_decisions_rows(analyses, include_unknown)
     )
     _write_csv(os.path.join(outdir, "probes.csv"), PROBES_FIELDS, build_probes_rows(analyses))
-    if not FIGURES_AVAILABLE:
+    if FIGURES_AVAILABLE:
+        # Imported here, not at module top: evalfig imports from this
+        # module, and an interpreter without matplotlib must never reach it.
+        from semindex import evalfig
+
+        # runs.csv/consistency.csv carry every run, but summary.csv pools
+        # only `_included` ones; the figures overlay per-run marks on
+        # summary values, so they get the same builders' rows restricted
+        # by the same filter -- never a second pooling policy of their own.
+        included = _included(analyses, include_unknown)
+        evalfig.write_figures(
+            outdir,
+            survival_rows,
+            build_consistency_rows(included),
+            summary_rows,
+            build_runs_rows(included),
+        )
+    else:
         print("semindex.evalagg: matplotlib not importable in this venv -- wrote CSVs only, no figures", file=sys.stderr)
     return analyses
 
@@ -1731,7 +1749,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--store", required=True, help="Root directory holding <store>/<stage>/p<p>/<seed>/ runs")
     parser.add_argument("--stage", required=True, help="Stage label (the <stage> path component under --store)")
-    parser.add_argument("--out", required=True, dest="outdir", help="Directory to write the seven CSV files into")
+    parser.add_argument("--out", required=True, dest="outdir", help="Directory to write the seven CSV files (and, with matplotlib, the four figures) into")
     parser.add_argument(
         "--include-undone",
         action="store_true",
