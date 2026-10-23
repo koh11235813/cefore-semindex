@@ -98,7 +98,7 @@ from semindex.analyze import (
     _created_ts_by_key,
     _node_sort_key,
     discover_node_events,
-    probe_pairs,
+    node_probe_pairs,
 )
 from semindex.check import CheckUsageError, agent_start_t0, agent_start_t0_values, read_results, results_ts_ms
 from semindex.store import attrs_match
@@ -759,27 +759,27 @@ def load_run_configs(run_dir: str, nodes: dict[str, list[dict]]) -> tuple[dict[s
 # paired probe_discovered's ts_ms may be before the pairing is rejected.
 # agent.py's _drain_probes only fires a probe once `now - t0_ms/1000 >=
 # at_s`, and EventWriter stamps probe_discovered at write time, after
-# that check, rounded to the nearest ms -- so on the node's own
-# agent_start t0 a correct pairing is never more than 0.5 ms early. The
-# rest of the margin covers runs with no agent_start line, where t0 is
-# the run's derived one (the scheduler rung's measured spread is under
-# 25 ms, see `_t0_from_results`). A wrong pairing is off by whole probe
-# intervals (seconds), far outside this.
+# that check, rounded to the nearest ms -- so against the node's own
+# agent_start t0 a correct pairing is never more than 0.5 ms early; the
+# rest of the 100 ms is headroom, since a wrong pairing is off by whole
+# probe intervals (seconds). The check is applied ONLY with that direct
+# t0: 2026-10-23 review fix -- a derived t0 (no agent_start line, e.g.
+# the snapshot rung, late by up to a poll tick) has no error bound this
+# slack could honestly cover, and refused correctly-paired legacy runs.
 _PROBE_EARLY_SLACK_MS = 100.0
 
 
 def _probe_rows(
-    nodes: dict[str, list[dict]],
-    configs: dict[str, AgentConfig] | None,
-    run_t0_ms: float,
-    window_start_ms: float,
-    window_end_ms: float,
+    nodes: dict[str, list[dict]], configs: dict[str, AgentConfig] | None, window_start_ms: float, window_end_ms: float
 ) -> tuple[list[dict], str | None]:
     """One row per in-window probe, joined with its config query and ground-truth class when `configs` allows.
 
     Pairing: agent.py fires a node's probes in at_s order (it sorts them),
     writing one probe_discovered each, so within ONE life the k-th
     probe_discovered in a node's file is the k-th config probe by at_s.
+    2026-10-23 review fix: file order, via `node_probe_pairs` -- never
+    `probe_pairs`' ts_ms sort, which a wall-clock step back reorders
+    and so moves an outcome onto the wrong config probe.
     Any doubt leaves the whole run unclassified (returned error) instead
     of guessed:
 
@@ -793,15 +793,15 @@ def _probe_rows(
     - counts that disagree (a lost tail of events, a stop before the
       last probe): which probe is missing cannot be told from counts.
     - an event stamped earlier than its paired probe's scheduled instant
-      minus `_PROBE_EARLY_SLACK_MS`: the agent never fires a probe early,
-      so such a pairing is provably wrong.
+      minus `_PROBE_EARLY_SLACK_MS`, judged only against the node's own
+      agent_start t0: the agent never fires a probe early, so such a
+      pairing is provably wrong. Skipped for a node without agent_start
+      (see the constant's comment).
 
     The window cut is applied after pairing, on discovered_ts_ms like the
     existing probe counts, so the two always count the same probes.
     """
-    pairs_by_node: dict[str, list[dict]] = {}
-    for pair in probe_pairs(nodes):
-        pairs_by_node.setdefault(pair["node"], []).append(pair)
+    pairs_by_node = {node: node_probe_pairs(node, events) for node, events in nodes.items()}
 
     error = None
     paired: dict[str, list[ScheduledProbe]] = {}
@@ -816,12 +816,13 @@ def _probe_rows(
             if len(node_pairs) != len(probes):
                 error = f"{node}: {len(node_pairs)} probe_discovered event(s) but {len(probes)} configured probe(s)"
                 break
-            node_t0_ms = float(starts[0]["t0_ms"]) if starts and "t0_ms" in starts[0] else run_t0_ms
+            node_t0_ms = float(starts[0]["t0_ms"]) if starts and "t0_ms" in starts[0] else None
             early = next(
                 (
                     (pair, probe)
                     for pair, probe in zip(node_pairs, probes)
-                    if pair["discovered_ts_ms"] < node_t0_ms + probe.at_s * 1000.0 - _PROBE_EARLY_SLACK_MS
+                    if node_t0_ms is not None
+                    and pair["discovered_ts_ms"] < node_t0_ms + probe.at_s * 1000.0 - _PROBE_EARLY_SLACK_MS
                 ),
                 None,
             )
@@ -967,7 +968,7 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
     sent_window, received_window = _window_control_bytes(nodes, window_start_ms, window_end_ms)
 
     configs, probe_truth_error = load_run_configs(run_dir, nodes)
-    probe_rows, pairing_error = _probe_rows(nodes, configs, t0.t0_ms, window_start_ms, window_end_ms)
+    probe_rows, pairing_error = _probe_rows(nodes, configs, window_start_ms, window_end_ms)
     probe_truth_error = probe_truth_error or pairing_error
     probe_issued = len(probe_rows)
     probe_discovered = sum(1 for row in probe_rows if row["match_count"] > 0)

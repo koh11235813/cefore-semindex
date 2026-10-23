@@ -1516,12 +1516,19 @@ def test_config_missing_for_one_node_is_missing_configs(tmp_path: Path):
     assert run.probe_established is None
 
 
-def _write_h0_h2_run(run_dir: Path, h2_events: list[dict], h2_probes: list[dict]) -> None:
-    """A two-node run: h0 schedules one zone1 record at 13 s, h2 runs `h2_probes` and logs `h2_events`."""
-    start = {"event": "agent_start", "t0_ms": T0_PROBE, "ts_ms": T0_PROBE + 100}
+def _write_h0_h2_run(
+    run_dir: Path, h2_events: list[dict], h2_probes: list[dict], *, lead: list[dict] | None = None
+) -> None:
+    """A two-node run: h0 schedules one zone1 record at 13 s, h2 runs `h2_probes` and logs `h2_events`.
+
+    `lead` replaces the default first line of each node's file (an
+    agent_start with t0 = T0_PROBE), e.g. to build a legacy run with none.
+    """
+    if lead is None:
+        lead = [{"event": "agent_start", "t0_ms": T0_PROBE, "ts_ms": T0_PROBE + 100}]
     _write_run(
         run_dir,
-        {"h0": [{**start, "node": "h0"}], "h2": [{**start, "node": "h2"}, *h2_events]},
+        {"h0": [{**e, "node": "h0"} for e in lead], "h2": [*({**e, "node": "h2"} for e in lead), *h2_events]},
         meta={"valid": True, "flags": []},
     )
     schedule = [{"at_s": 13.0, "zone": "zone1", "disaster": "flood", "media": "video"}]
@@ -1570,6 +1577,58 @@ def test_event_earlier_than_its_paired_probe_is_unclassified(tmp_path: Path):
     )
     assert run.probe_established is None
     assert [r["probe_class"] for r in run.probe_rows] == [None, None]
+
+
+def test_pairing_follows_file_order_when_the_wall_clock_steps_back(tmp_path: Path):
+    """Both probes fire late (after 25 s) and the clock steps back 100 ms between them: pairing must not re-sort by ts.
+
+    In file order the 15 s zone3 probe logged ts 25200 with no match, then
+    the 25 s zone1 probe logged ts 25100 and retrieved; a ts sort would
+    swap them and report the established probe as a miss (0/1).
+    """
+    run_dir = tmp_path / "store" / "test" / "p0" / "1"
+    match = {"origin": "h0", "seq": 1, "content_name": "ccnx:/content/h0/body"}
+    _write_h0_h2_run(
+        run_dir,
+        [
+            {"event": "probe_discovered", "ts_ms": T0_PROBE + 25_200, "matches": []},
+            {"event": "probe_discovered", "ts_ms": T0_PROBE + 25_100, "matches": [match]},
+            {**_retrieved(0.0, True), "ts_ms": T0_PROBE + 25_110},
+        ],
+        [{"at_s": 15.0, "zone": "zone3"}, {"at_s": 25.0, "zone": "zone1"}],
+    )
+    run = analyze_run(0.0, 1, str(run_dir))
+    assert run.probe_truth_error is None
+    assert [(r["probe_at_s"], r["discovered_ts_ms"], r["match_count"], r["probe_class"]) for r in run.probe_rows] == [
+        (15.0, T0_PROBE + 25_200, 0, "none"),
+        (25.0, T0_PROBE + 25_100, 1, "established"),
+    ]
+    assert [r["retrieved_success"] for r in run.probe_rows] == [None, True]
+    assert (run.probe_established, run.probe_established_discovered) == (1, 1)
+
+
+def test_legacy_run_without_agent_start_is_classified_despite_a_late_derived_t0(tmp_path: Path):
+    """No agent_start: t0 comes from the snapshot rung, 250 ms late, so the early-event check must not apply."""
+    run_dir = tmp_path / "store" / "test" / "p0" / "1"
+    snapshot = {
+        "event": "counters_snapshot",
+        "ts_ms": T0_PROBE + 10_250,
+        "bytes_sent": 0,
+        "bytes_received": 0,
+        "control_bytes_sent": 0,
+        "control_bytes_received": 0,
+    }
+    _write_h0_h2_run(
+        run_dir,
+        [_discovered(15.0, 0), _discovered(25.0, 1), _retrieved(25.0, True)],
+        [{"at_s": 15.0, "zone": "zone3"}, {"at_s": 25.0, "zone": "zone1"}],
+        lead=[snapshot],
+    )
+    run = analyze_run(0.0, 1, str(run_dir))
+    assert (run.t0_source, run.t0_ms) == ("snapshot", T0_PROBE + 250)
+    assert run.probe_truth_error is None
+    assert [r["probe_class"] for r in run.probe_rows] == ["none", "established"]
+    assert (run.probe_established, run.probe_established_discovered) == (1, 1)
 
 
 def test_summary_reports_probe_truth_coverage_for_mixed_runs(tmp_path: Path):
