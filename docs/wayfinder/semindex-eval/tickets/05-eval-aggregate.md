@@ -1,7 +1,7 @@
 ---
-status: open
+status: closed
 type: task
-claimed-by:
+claimed-by: orchestrator
 blocked-by: [02, 04]
 ---
 
@@ -14,3 +14,10 @@ blocked-by: [02, 04]
 ## Acceptance
 
 手で作った小さな run の集合で、各指標の値（打ち切りの扱いを含む）を完全一致で確かめる。出力は図にそのまま使える形の CSV で、コマンド1つで作り直せる。図そのものはチケット 06 で報告を作るときに決める（2026-10-23 変更。venv に matplotlib がなく、描画のための依存を足すかは利用者の判断なので）。
+
+## Resolution (2026-10-23)
+
+- `semindex.evalagg` を `feat/eval-aggregate` で実装し、統合ブランチに入れた。出力は `runs`・`discovery`・`survival`・`consistency`・`summary`・`decisions` の 6 つの CSV で、コマンド 1 つで作り直せる。
+- 手で作った小さな run の集合で、各指標（打ち切りの扱い、Kaplan–Meier、Wilson 区間を含む）を完全一致で確かめた。
+- `DONE` の無い run と判定の無い run は、既定では集計から外して数だけ出す（`--include-undone`、`--include-unknown`）。
+- pilot2 で、probe の発見率が答えの無い probe も取りこぼしに数えることが分かった。正解による分類は `feat/eval-probe-truth` で足す（map の「指標の定義」）。

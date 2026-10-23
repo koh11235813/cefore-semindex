@@ -1,7 +1,7 @@
 ---
-status: open
+status: closed
 type: task
-claimed-by:
+claimed-by: orchestrator
 blocked-by: []
 ---
 
@@ -14,3 +14,11 @@ blocked-by: []
 ## Acceptance
 
 欄の形を map に追記する。fake transport の単体試験で、3種類の判断がそれぞれ正しい状態と行動で記録されることを、完全一致で確かめる。既存の試験はすべて通り、T1/T2 の固定データ（`/home/lab_shared/semindex-fixtures`）に対する判定の exit code も変わらない。1 回の run での行数とバイト数を見積もり、map の Fog を更新する。
+
+## Resolution (2026-10-23)
+
+- `feat/decision-event` で実装し、統合ブランチ `feat/eval-stage1` に入れた。欄の形は map の「判断の記録」に書いた。
+- 3 種類の判断（`state_poll`・`fetch_plan`・`fetch_backoff`）が正しい状態と行動で記録されることを、fake transport の単体試験で完全一致で確かめた。記録を止めた場合と比べて、Interest の列、`decision` 以外のイベントの列、乱数を引く回数が一致することも試験にした。
+- T1/T2 の固定データに対する判定の exit code は、固定データを読む既存の試験で変わっていないことを確かめた（全 528 件が通る）。
+- 全体レビューで、エンジンのイベントの `ts_ms` が書き出しの時刻になっていて、probe の取得待ちの間に処理したイベントが最大 2 秒ほど遅れて見えることが分かった。処理した時刻を付けるように直した（`47536b4`）。
+- 量は pilot2 の実測で 1 行およそ 435 バイト、1 回の run で 257〜309 KiB（中央値）。map の「実機で確かめたこと」に書いた。
