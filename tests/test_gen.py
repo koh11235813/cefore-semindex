@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-from semindex import schema
+from semindex import gen, schema
 from semindex.gen import (
     ExperimentError,
     generate,
@@ -371,9 +372,17 @@ def test_generate_recefore_config_has_every_required_shape():
                 "--state-dir",
                 "{node_dir}/semindex",
             ],
+            "env": {"PYTHONPATH": gen.SEMINDEX_SRC_DIR},
             "log": "{node_dir}/semindex_agent.log",
         }
     ]
+
+
+def test_host_apps_pythonpath_points_at_the_generating_package_src():
+    """The agent is launched against the same src/ tree as the generator that wrote its config."""
+    import semindex
+
+    assert gen.SEMINDEX_SRC_DIR == os.path.dirname(os.path.dirname(os.path.abspath(semindex.__file__)))
 
 
 def test_generate_agent_configs_fill_in_content_name_and_derive_neighbors():
@@ -390,6 +399,8 @@ def test_generate_agent_configs_fill_in_content_name_and_derive_neighbors():
     ]
     assert h0["probes"] == []
     assert "fault" not in h0
+    assert "stop_at_s" not in h0
+    assert "counters_snapshot_at_s" not in h0
 
     h1 = generated.agent_configs["h1"]
     assert h1["neighbors"] == ["h0", "h2"]
@@ -419,6 +430,45 @@ def test_generate_excludes_a_non_agent_host_from_neighbors():
     spec = parse_experiment(raw)
     generated = generate(spec, "/abs/out/mini")
     assert generated.agent_configs["h1"]["neighbors"] == ["h0"]
+
+
+def test_generate_carries_stop_at_s_and_counters_snapshot_at_s_into_every_agent_config():
+    """Generate carries stop at s and counters snapshot at s into every agent config."""
+    raw = _minimal_raw(hosts=3, links=[[0, 1], [1, 2]], agents=[0, 1], stop_at_s=130, counters_snapshot_at_s=[10])
+    spec = parse_experiment(raw)
+    generated = generate(spec, "/abs/out/mini")
+    for node in ("h0", "h1"):
+        assert generated.agent_configs[node]["stop_at_s"] == 130
+        assert generated.agent_configs[node]["counters_snapshot_at_s"] == [10]
+
+
+def test_parse_experiment_accepts_a_float_stop_at_s_and_an_empty_counters_snapshot_at_s():
+    """Boundary values for the two new optional keys: a float stop_at_s, an empty snapshot list."""
+    spec = parse_experiment(_minimal_raw(stop_at_s=130.0, counters_snapshot_at_s=[]))
+    assert spec.stop_at_s == 130.0
+    assert spec.counters_snapshot_at_s == ()
+
+
+def test_parse_experiment_rejects_a_non_numeric_stop_at_s():
+    """A non-numeric stop_at_s must raise, not be silently coerced.
+
+    Exact-match, not `match=` substring (CLAUDE.md: mutation testing shows
+    substring asserts let mutants through).
+    """
+    with pytest.raises(ExperimentError) as excinfo:
+        parse_experiment(_minimal_raw(stop_at_s="130"))
+    assert str(excinfo.value) == "stop_at_s must be a number"
+
+
+def test_parse_experiment_rejects_a_non_list_counters_snapshot_at_s():
+    """A non-list counters_snapshot_at_s must raise, not be silently wrapped.
+
+    Exact-match, not `match=` substring (CLAUDE.md: mutation testing shows
+    substring asserts let mutants through).
+    """
+    with pytest.raises(ExperimentError) as excinfo:
+        parse_experiment(_minimal_raw(counters_snapshot_at_s=10))
+    assert str(excinfo.value) == "counters_snapshot_at_s must be a list of numbers"
 
 
 def test_generate_carries_fault_drop_rec_into_the_right_agent_config():

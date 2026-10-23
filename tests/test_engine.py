@@ -68,8 +68,8 @@ def test_create_record_allocates_sequential_seqs_and_emits_events(tmp_path: Path
     r2 = engine.create_record(content_name="b", zone="zone1", disaster="flood", media="image", observed_at=2)
     assert (r1.seq, r2.seq) == (1, 2)
     assert engine.drain_events() == [
-        {"event": "record_created", "origin": "h0", "seq": 1},
-        {"event": "record_created", "origin": "h0", "seq": 2},
+        {"event": "record_created", "ts_ms": 1, "origin": "h0", "seq": 1},
+        {"event": "record_created", "ts_ms": 2, "origin": "h0", "seq": 2},
     ]
 
 
@@ -143,7 +143,7 @@ def test_on_record_stores_a_valid_record_and_emits_record_stored(tmp_path: Path)
     name = names.build_record_name("g", "h1", "h1", 1)
     engine.on_record(name, payload, now=0.0)
     assert store.get_record("h1", 1) == payload
-    assert engine.drain_events() == [{"event": "record_stored", "origin": "h1", "seq": 1, "holder": "h1"}]
+    assert engine.drain_events() == [{"event": "record_stored", "ts_ms": 0, "origin": "h1", "seq": 1, "holder": "h1"}]
 
 
 def test_on_record_duplicate_is_idempotent_and_silent(tmp_path: Path):
@@ -181,6 +181,7 @@ def test_on_record_conflict_keeps_first_and_emits_conflict_event(tmp_path: Path)
     assert events == [
         {
             "event": "conflict",
+            "ts_ms": 1000,
             "origin": "h1",
             "seq": 1,
             "kept_hash": schema.content_hash(payload_a),
@@ -288,7 +289,7 @@ def test_on_state_decodes_and_feeds_the_tracker_then_plans_fetches(tmp_path: Pat
     payload = holder_state.encode({"origin-x": OriginProgress(hi=2, extra=())})
     engine.on_state("h1", payload, now=0.0)
     events = engine.drain_events()
-    assert events[0] == {"event": "state_rx", "neighbor": "h1", "hi": {"origin-x": 2}}
+    assert events[0] == {"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {"origin-x": 2}}
     sent_names = [n for n, _ in transport.sent]
     assert sent_names == [
         names.build_record_name("g", "h1", "origin-x", 1),
@@ -301,7 +302,7 @@ def test_on_state_drops_malformed_payload_silently(tmp_path: Path):
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     engine.on_state("h1", b"not json", now=0.0)
     events = engine.drain_events()
-    assert events == [{"event": "state_rx", "neighbor": "h1", "hi": {}}]
+    assert events == [{"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
 
@@ -316,7 +317,7 @@ def test_on_state_drops_payload_with_a_malformed_origin_without_crashing(tmp_pat
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     payload = b'{"bad/origin":{"extra":[],"hi":1,"truncated":false}}'
     engine.on_state("h1", payload, now=0.0)  # must not raise
-    assert engine.drain_events() == [{"event": "state_rx", "neighbor": "h1", "hi": {}}]
+    assert engine.drain_events() == [{"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
 
@@ -326,7 +327,7 @@ def test_on_fetch_timeout_emits_event_and_backs_off(tmp_path: Path):
     name = names.build_record_name("g", "h1", "origin-x", 3)
     engine.on_fetch_timeout(name, now=0.0)
     assert engine.drain_events() == [
-        {"event": "fetch_timeout", "origin": "origin-x", "seq": 3, "neighbor": "h1"}
+        {"event": "fetch_timeout", "ts_ms": 0, "origin": "origin-x", "seq": 3, "neighbor": "h1"}
     ]
 
 
@@ -381,3 +382,322 @@ def test_default_fetch_backoff_initial_clears_cefores_pit_grace_window(tmp_path:
 
     engine.on_tick(now=2.0)
     assert fetch_name in [n for n, _ in transport.sent]
+
+
+# -- decision events (map.md "判断の記録") -----------------------------------------
+
+
+def test_on_tick_emits_a_state_poll_decision_per_due_neighbor(tmp_path: Path):
+    """on_tick's state-poll send logs a `decision` event naming the polled neighbor and
+    the jittered interval chosen for its next poll (action_prob 1.0: stage 1's policy
+    is deterministic). With no tracker state at all, decision_state's `origins` is
+    empty for both neighbors."""
+    engine, _, _ = _engine(tmp_path, neighbors=("h1", "h2"))  # default interval 2.0s, no jitter offset
+    engine.on_tick(now=0.0)
+    assert engine.drain_events() == [
+        {
+            "event": "decision",
+            "ts_ms": 0,
+            "kind": "state_poll",
+            "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
+            "action": {"neighbor": "h1", "interval_s": 2.0},
+            "action_prob": 1.0,
+        },
+        {
+            "event": "decision",
+            "ts_ms": 0,
+            "kind": "state_poll",
+            "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
+            "action": {"neighbor": "h2", "interval_s": 2.0},
+            "action_prob": 1.0,
+        },
+    ]
+
+
+def test_send_fetch_plan_emits_a_fetch_plan_decision_only_when_something_is_due(tmp_path: Path):
+    """_send_fetch_plan logs a `decision` event only when it actually hands out new fetch
+    Interests: on_tick calls this every receive-poll cycle (about 10/s live), so an empty
+    plan -- the overwhelmingly common case -- must produce no line, or the log's size would
+    track tick frequency rather than actual fetch activity."""
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
+    engine._tracker.observe_state("origin-x", "h1", hi=2, extra=())
+
+    engine.on_tick(now=0.0)
+    events = engine.drain_events()
+    fetch_plan_decisions = [e for e in events if e["event"] == "decision" and e["kind"] == "fetch_plan"]
+    assert fetch_plan_decisions == [
+        {
+            "event": "decision",
+            "ts_ms": 0,
+            "kind": "fetch_plan",
+            "state": {
+                "in_flight": 0,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"origin-x": {"hi": 0, "missing": 2, "advertised": {"h1": {"hi": 2, "notified_max": 2}}}},
+            },
+            "action": {"neighbor": "h1", "fetched": [["origin-x", 1], ["origin-x", 2]]},
+            "action_prob": 1.0,
+        }
+    ]
+
+    # Both seqs are now in flight and the state poll just fired too; nothing new is
+    # due, so a second on_tick at the same instant logs and sends nothing at all.
+    engine.on_tick(now=0.0)
+    assert engine.drain_events() == []
+    assert len(transport.sent) == 3  # 1 state request + 2 fetch Interests, from the first on_tick only
+
+
+def test_on_fetch_timeout_emits_a_fetch_backoff_decision_for_a_real_in_flight_fetch(tmp_path: Path):
+    """on_fetch_timeout logs a `fetch_backoff` decision giving the pre-failure state and the
+    chosen wait, but only for a real in-flight fetch -- test_on_fetch_timeout_emits_event_and_backs_off's
+    orphan name (never actually fetched) stays a bare fetch_timeout with no decision line,
+    since Tracker._fail has nothing to resolve for it."""
+    engine, _, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=3.0)
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)  # claims the fetch for origin-x/1 against h1
+    engine.drain_events()
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+
+    engine.on_fetch_timeout(fetch_name, now=5.0)
+    assert engine.drain_events() == [
+        {"event": "fetch_timeout", "ts_ms": 5000, "origin": "origin-x", "seq": 1, "neighbor": "h1"},
+        {
+            "event": "decision",
+            "ts_ms": 5000,
+            "kind": "fetch_backoff",
+            "state": {
+                "in_flight": 1,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"origin-x": {"hi": 0, "missing": 1, "advertised": {"h1": {"hi": 1, "notified_max": 1}}}},
+            },
+            "action": {"neighbor": "h1", "origin": "origin-x", "seq": 1, "wait_s": 3.0, "cause": "timeout"},
+            "action_prob": 1.0,
+        },
+    ]
+
+
+def test_on_record_malformed_payload_emits_a_fetch_backoff_decision(tmp_path: Path):
+    """A malformed reply resolves via Tracker.on_fetch_rejected, logged the same way as a
+    timeout but with cause="rejected"."""
+    engine, _, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=4.0)
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)
+    engine.drain_events()
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+
+    engine.on_record(fetch_name, b"not json", now=2.0)
+    assert engine.drain_events() == [
+        {
+            "event": "decision",
+            "ts_ms": 2000,
+            "kind": "fetch_backoff",
+            "state": {
+                "in_flight": 1,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"origin-x": {"hi": 0, "missing": 1, "advertised": {"h1": {"hi": 1, "notified_max": 1}}}},
+            },
+            "action": {"neighbor": "h1", "origin": "origin-x", "seq": 1, "wait_s": 4.0, "cause": "rejected"},
+            "action_prob": 1.0,
+        },
+    ]
+
+
+def test_on_record_name_payload_mismatch_emits_a_fetch_backoff_decision(tmp_path: Path):
+    """A name/payload mismatch is the other on_fetch_rejected call site in on_record; it
+    logs the same decision shape as the malformed-payload case."""
+    engine, _, _ = _engine(tmp_path, neighbors=("h1",), fetch_backoff_initial_s=1.5)
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)
+    engine.drain_events()
+    fetch_name = names.build_record_name("g", "h1", "origin-x", 1)  # claims seq 1
+
+    record = schema.IndexRecord(
+        origin="origin-x", seq=2, content_name="x", zone="zone1", disaster="flood", media="image", observed_at=1
+    )
+    mismatched_payload = schema.encode(record)  # payload says seq 2, name says seq 1
+    engine.on_record(fetch_name, mismatched_payload, now=1.0)
+
+    decisions = [e for e in engine.drain_events() if e["event"] == "decision"]
+    assert decisions == [
+        {
+            "event": "decision",
+            "ts_ms": 1000,
+            "kind": "fetch_backoff",
+            "state": {
+                "in_flight": 1,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"origin-x": {"hi": 0, "missing": 1, "advertised": {"h1": {"hi": 1, "notified_max": 1}}}},
+            },
+            "action": {"neighbor": "h1", "origin": "origin-x", "seq": 1, "wait_s": 1.5, "cause": "rejected"},
+            "action_prob": 1.0,
+        },
+    ]
+
+
+def test_log_decisions_false_emits_no_decision_events(tmp_path: Path):
+    """SyncConfig(log_decisions=False) -- the default is True, and this effort's live
+    configs leave it there -- drops every `decision` event while every other event and
+    every sent Interest stays exactly as it would with logging on (see the fuller proof
+    below)."""
+    engine, transport, _ = _engine(tmp_path, neighbors=("h1", "h2"), log_decisions=False)
+    engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+    engine.on_tick(now=0.0)
+    events = engine.drain_events()
+    assert events == []
+    # The fetch Interest for origin-x/1 and both state requests were still sent.
+    assert len(transport.sent) == 3
+
+
+def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: Path):
+    """The "do NOT change behaviour" proof (map.md "判断の記録"): with log_decisions
+    True vs False, an otherwise identical engine sends the exact same Interests at the
+    exact same times and emits the exact same non-`decision` events. Exact-count
+    assertions on the jitter/backoff callables (poll=2, backoff=1 -- see the two
+    on_tick calls and the one timeout below) confirm logging draws neither rng a
+    second time, and ticking once strictly before the backoff deadline and once at
+    it directly shows a retry is not sent early.
+
+    2026-10-23 bug fix: the prior version of this test returned a *constant* from
+    both jitter callables and only compared call counts between the True/False
+    runs, never against a fixed expected count. A constant jitter makes a hidden
+    double-draw invisible here: calling it twice instead of once still returns the
+    same value both times, so scheduling comes out identical either way and the
+    comparison passes even with the bug. Cycling through distinct values makes an
+    extra draw shift every value drawn after it, in only the buggy run.
+    """
+
+    def _run(label: str, log_decisions: bool):
+        """Build one engine (log_decisions True or False) and drive it through a
+        state poll, a fetch timeout, a tick strictly before the resulting backoff's
+        deadline, and a tick at it, returning what was sent, what was logged, and
+        how many times each rng was actually drawn.
+        """
+        # Same node identity ("h0") in both runs -- only the db file (named by
+        # `label`, not `node`) differs -- so a divergent wire name would signal a
+        # real behavior change, not just a different store path.
+        store = Store(tmp_path / f"{label}.db")
+        transport = RecordingTransport()
+        poll_calls: list[None] = []
+        backoff_calls: list[None] = []
+        # Distinct, non-repeating values (not a constant): a hidden extra draw
+        # from either sequence returns a value it would not otherwise have
+        # reached, shifting every interval/wait computed after it -- a constant
+        # jitter cannot expose that, since drawing it twice looks the same as once.
+        poll_jitter_values = (0.2, 0.8)
+        backoff_jitter_values = (0.25, 0.75)
+
+        def poll_jitter() -> float:
+            """Return the next of poll_jitter_values, cycling; record that it was drawn."""
+            value = poll_jitter_values[len(poll_calls) % len(poll_jitter_values)]
+            poll_calls.append(None)
+            return value
+
+        def backoff_jitter() -> float:
+            """Return the next of backoff_jitter_values, cycling; record that it was drawn."""
+            value = backoff_jitter_values[len(backoff_calls) % len(backoff_jitter_values)]
+            backoff_calls.append(None)
+            return value
+
+        config = SyncConfig(
+            group="g", node="h0", neighbors=("h1",), fetch_backoff_initial_s=1.0, log_decisions=log_decisions
+        )
+        engine = SyncEngine(config, store, transport, poll_jitter_rng=poll_jitter, backoff_jitter=backoff_jitter)
+        engine._tracker.observe_state("origin-x", "h1", hi=1, extra=())
+
+        all_events: list[dict] = []
+        engine.on_tick(now=0.0)  # state poll (due now; poll draw #1) + fetch plan (claims origin-x/1)
+        all_events += engine.drain_events()
+
+        fetch_name = names.build_record_name("g", "h1", "origin-x", 1)
+        engine.on_fetch_timeout(fetch_name, now=0.5)  # backoff draw #1: wait = 1.0 + 0.25 = 1.25s, deadline 1.75
+        all_events += engine.drain_events()
+        sent_count_after_timeout = len(transport.sent)
+
+        engine.on_tick(now=1.0)  # strictly before the 1.75 deadline and the next poll's own due time (>=1.6)
+        all_events += engine.drain_events()
+        sent_count_before_deadline = len(transport.sent)
+
+        # 2026-10-23 test fix: the 1.75s backoff deadline and the next poll's own
+        # ~1.76s due time are only a hundredth of a second apart, so a tick at 1.0
+        # and the next one at 5.0 cannot tell "the retry resent exactly on time" from
+        # "a state poll fired instead" -- nor would either catch a bug that nudges
+        # either deadline by a few hundredths of a second (e.g. only when
+        # log_decisions draws an extra, unaccounted-for rng value). Ticking once
+        # more, strictly before 1.75, and once exactly at it, isolates the fetch
+        # retry from the still-not-due poll and pins the exact Interest each sends.
+        engine.on_tick(now=1.7)  # strictly before both the 1.75 and ~1.76 deadlines
+        all_events += engine.drain_events()
+        sent_before_1_75 = list(transport.sent)
+
+        engine.on_tick(now=1.75)  # exactly the backoff deadline; the poll is not due until 1.76
+        all_events += engine.drain_events()
+        sent_at_1_75 = list(transport.sent)
+
+        # poll_jitter_values[0]=0.2 maps to offset -0.12 (state_poll_jitter_frac's
+        # own default 0.2 -> 0.2*(2*0.2-1)), so the first poll's own interval is
+        # exactly 2.0*(1-0.12)=1.76s: tick there, not at some later catch-all time,
+        # so a bug that nudges this deadline (not just the backoff one above) by a
+        # few hundredths of a second is caught at the instant it would first show.
+        engine.on_tick(now=1.76)  # exactly the next poll's own due time: poll draw #2
+        all_events += engine.drain_events()
+
+        return (
+            transport.sent,
+            all_events,
+            len(poll_calls),
+            len(backoff_calls),
+            sent_count_after_timeout,
+            sent_count_before_deadline,
+            sent_before_1_75,
+            sent_at_1_75,
+            fetch_name,
+            config.interest_lifetime_ms,
+        )
+
+    (
+        sent_on, events_on, polls_on, backoffs_on, after_timeout_on, before_deadline_on,
+        before_1_75_on, at_1_75_on, fetch_name_on, lifetime_on,
+    ) = _run("on", True)
+    (
+        sent_off, events_off, polls_off, backoffs_off, after_timeout_off, before_deadline_off,
+        before_1_75_off, at_1_75_off, fetch_name_off, lifetime_off,
+    ) = _run("off", False)
+
+    assert sent_on == sent_off
+    assert polls_on == 2
+    assert backoffs_on == 1
+    assert polls_off == 2
+    assert backoffs_off == 1
+
+    # The tick strictly before the backoff deadline (now=1.0) sends nothing new in
+    # either run -- the retry is not resent early.
+    assert before_deadline_on == after_timeout_on
+    assert before_deadline_off == after_timeout_off
+
+    # Still nothing new at 1.7s: strictly before both the backoff deadline and the
+    # next poll's own due time.
+    assert before_1_75_on == sent_on[:before_deadline_on]
+    assert before_1_75_off == sent_off[:before_deadline_off]
+
+    # Exactly at the 1.75s deadline, the retry -- and only the retry, not a poll
+    # that is not due until 1.76s -- is resent.
+    assert at_1_75_on[len(before_1_75_on):] == [(fetch_name_on, lifetime_on)]
+    assert at_1_75_off[len(before_1_75_off):] == [(fetch_name_off, lifetime_off)]
+
+    # Exactly at the poll's own 1.76s due time, exactly one more Interest goes
+    # out: the state-request poll itself, not a second copy of the
+    # already-in-flight retry (checked, separately from the retry above, at the
+    # instant the poll is actually due rather than at some later catch-all tick).
+    poll_name = names.build_state_name("g", "h1", "h0", round(1.76 * 1000))
+    assert sent_on[len(at_1_75_on):] == [(poll_name, lifetime_on)]
+    assert sent_off[len(at_1_75_off):] == [(poll_name, lifetime_off)]
+
+    non_decision_on = [e for e in events_on if e["event"] != "decision"]
+    non_decision_off = [e for e in events_off if e["event"] != "decision"]
+    assert non_decision_on == non_decision_off
+    assert any(e["event"] == "decision" for e in events_on)
+    assert not any(e["event"] == "decision" for e in events_off)

@@ -294,6 +294,106 @@ def test_analyze_integrates_every_section(tmp_path: Path):
     assert result["probes"][0]["retrieved"]["bytes"] == 42
 
 
+def test_analyze_output_is_unchanged_by_counters_snapshot_lines(tmp_path: Path):
+    """counters_snapshot (agent.py's own mid-run byte-counter line, config key
+    counters_snapshot_at_s) is named differently from `counters` on purpose: every
+    section here keys off the exact string "counters" (control_bytes) or a
+    specific event name of its own (discovery_latency_ms, all_nodes_consistent,
+    probe_pairs). A counters_snapshot line -- even with byte values that differ
+    from the run's own `counters` line, which would move the result if it were
+    summed in by mistake -- must change nothing analyze() reports.
+    """
+    base_events = {
+        "h0": [
+            {"ts_ms": 100, "event": "record_created", "origin": "h0", "seq": 1},
+            {
+                "ts_ms": 900,
+                "event": "counters",
+                "bytes_sent": 10,
+                "bytes_received": 0,
+                "control_bytes_sent": 10,
+                "control_bytes_received": 0,
+            },
+        ],
+        "h1": [
+            {"ts_ms": 150, "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h0"},
+            {
+                "ts_ms": 900,
+                "event": "counters",
+                "bytes_sent": 5,
+                "bytes_received": 5,
+                "control_bytes_sent": 5,
+                "control_bytes_received": 5,
+            },
+        ],
+    }
+    without_dir = tmp_path / "without"
+    for node, events in base_events.items():
+        _write_jsonl(_node_events_path(without_dir, node), events)
+
+    with_dir = tmp_path / "with"
+    snapshot_event = {
+        "ts_ms": 500,
+        "event": "counters_snapshot",
+        # Deliberately different from both nodes' own `counters` line above:
+        # if this were summed in by mistake, the result would move.
+        "bytes_sent": 999_999,
+        "bytes_received": 999_999,
+        "control_bytes_sent": 999_999,
+        "control_bytes_received": 999_999,
+    }
+    for node, events in base_events.items():
+        with_events = [events[0], snapshot_event, *events[1:]]
+        _write_jsonl(_node_events_path(with_dir, node), with_events)
+
+    assert analyze(str(with_dir)) == analyze(str(without_dir))
+
+
+def test_analyze_output_is_unchanged_by_a_leading_agent_start_line(tmp_path: Path):
+    """2026-10-23: agent.py now writes one `agent_start` line before anything
+
+    else in every life (Agent.__init__). Every section here keys off a
+    specific event name of its own (`record_created`, `record_stored`,
+    `counters`, `probe_discovered`/`probe_retrieved`) -- `agent_start`
+    matches none of them, so prepending it to every node's own events
+    must change nothing analyze() reports.
+    """
+    base_events = {
+        "h0": [
+            {"ts_ms": 100, "event": "record_created", "origin": "h0", "seq": 1},
+            {
+                "ts_ms": 900,
+                "event": "counters",
+                "bytes_sent": 10,
+                "bytes_received": 0,
+                "control_bytes_sent": 10,
+                "control_bytes_received": 0,
+            },
+        ],
+        "h1": [
+            {"ts_ms": 150, "event": "record_stored", "origin": "h0", "seq": 1, "holder": "h0"},
+            {
+                "ts_ms": 900,
+                "event": "counters",
+                "bytes_sent": 5,
+                "bytes_received": 5,
+                "control_bytes_sent": 5,
+                "control_bytes_received": 5,
+            },
+        ],
+    }
+    without_dir = tmp_path / "without"
+    for node, events in base_events.items():
+        _write_jsonl(_node_events_path(without_dir, node), events)
+
+    with_dir = tmp_path / "with"
+    for node, events in base_events.items():
+        agent_start = {"ts_ms": 0, "event": "agent_start", "node": node, "t0_ms": 0}
+        _write_jsonl(_node_events_path(with_dir, node), [agent_start, *events])
+
+    assert analyze(str(with_dir)) == analyze(str(without_dir))
+
+
 def test_main_prints_json_and_exits_0(tmp_path: Path, capsys):
     """Main prints json and exits 0."""
     _write_jsonl(

@@ -240,3 +240,220 @@ def test_default_backoff_initial_clears_cefores_pit_grace_window():
     # Strictly after the 1s PIT grace: nothing is due yet at 1.0s.
     assert tracker.plan_fetches("n1", now=1.0) == []
     assert tracker.plan_fetches("n1", now=2.0) == [("h0", 1)]
+
+
+# -- decision-event support (map.md "判断の記録") ---------------------------------
+
+
+def test_on_fetch_timeout_returns_the_chosen_wait():
+    """on_fetch_timeout returns the backoff wait it just scheduled: the seconds chosen
+    before the next attempt, for a real, in-flight fetch that actually failed."""
+    tracker = Tracker(backoff_initial_s=3.0, jitter=lambda: 0.0)
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    assert tracker.on_fetch_timeout("h0", 1, "n1", now=10.0) == 3.0
+
+
+def test_on_fetch_rejected_returns_the_chosen_wait():
+    """on_fetch_rejected shares _fail with on_fetch_timeout, so it returns the same way."""
+    tracker = Tracker(backoff_initial_s=2.0, jitter=lambda: 0.0)
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    assert tracker.on_fetch_rejected("h0", 1, "n1", now=10.0) == 2.0
+
+
+def test_stale_fetch_timeout_returns_none():
+    """A timeout/rejection that _fail treats as stale (nothing to resolve) returns None, so
+    SyncEngine logs no `decision` event for it -- no choice was actually made."""
+    tracker = Tracker()
+    assert tracker.on_fetch_timeout("never-seen", 1, "n1", now=0.0) is None
+
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    tracker.observe_held("h0", hi=1, extra=())  # satisfied by other means
+    assert tracker.on_fetch_timeout("h0", 1, "n1", now=5.0) is None
+
+
+def test_in_flight_count_reflects_outstanding_fetches_on_a_neighbor():
+    """in_flight_count mirrors plan_fetches'/_fail's own bookkeeping, read-only."""
+    tracker = Tracker()
+    assert tracker.in_flight_count("n1") == 0
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=2, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    assert tracker.in_flight_count("n1") == 2
+    tracker.on_fetch_timeout("h0", 1, "n1", now=0.0)
+    assert tracker.in_flight_count("n1") == 1
+
+
+def test_last_timeout_at_is_none_until_a_real_timeout_then_tracks_it():
+    """last_timeout_at(neighbor) is None until _fail actually resolves a timeout on it,
+    then holds that timeout's `now` -- a stale timeout (see
+    test_stale_fetch_timeout_returns_none) must not set it, since nothing actually
+    failed."""
+    tracker = Tracker()
+    assert tracker.last_timeout_at("n1") is None
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+    tracker.plan_fetches("n1", now=0.0)
+    tracker.on_fetch_timeout("h0", 1, "n1", now=7.5)
+    assert tracker.last_timeout_at("n1") == 7.5
+
+    # A later stale timeout (already resolved) must not overwrite it.
+    tracker.on_fetch_timeout("h0", 1, "n1", now=99.0)
+    assert tracker.last_timeout_at("n1") == 7.5
+
+
+def test_last_timeout_at_ignores_a_rejected_reply():
+    """A rejected reply must not count as a timeout for last_timeout_at: timing out at
+    now=3 and then, on a re-fetch, rejecting a bad reply at now=6 must still report
+    the timeout's own time (3.0), not the rejection's.
+
+    2026-10-23 bug fix: _fail used to record
+    `now` in the same dict for both a timeout and a rejected reply, so the later
+    rejection silently overwrote the timeout's own time, even though decision_state
+    reports this value as "last_timeout_s" -- map.md "判断の記録"'s "直前のタイムア
+    ウトの時刻" means a timeout specifically.
+
+    2026-10-23 test fix: the re-fetch used to be planned at now=3.0, the exact
+    instant the timeout itself fired -- but backoff_initial_s=1.0 means the retry
+    is not actually due until now=4.0, so plan_fetches at 3.0 claimed nothing
+    ([]), on_fetch_rejected at 6.0 found no in-flight fetch to resolve and
+    returned None through _fail's own stale early-return, and the final assert
+    passed on a value the rejection had never touched at all -- it would have
+    passed identically against the pre-fix code this test exists to pin.
+    """
+    tracker = Tracker(backoff_initial_s=1.0, jitter=lambda: 0.0)
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=1, extra=())
+
+    tracker.plan_fetches("n1", now=0.0)
+    tracker.on_fetch_timeout("h0", 1, "n1", now=3.0)
+    assert tracker.last_timeout_at("n1") == 3.0
+
+    # Due only once the 1s backoff has actually elapsed (now=4.0, not 3.0).
+    assert tracker.plan_fetches("n1", now=4.0) == [("h0", 1)]
+    wait = tracker.on_fetch_rejected("h0", 1, "n1", now=6.0)
+    assert wait is not None  # proves this rejection actually resolved a real in-flight fetch
+    assert tracker.last_timeout_at("n1") == 3.0
+
+
+def test_decision_state_missing_is_not_capped_by_the_fetch_planning_limit():
+    """decision_state's own `missing` count must be the true backlog size, not
+    missing()'s own list, which fetch planning deliberately caps at
+    max_missing_per_origin (DEFAULT_MAX_MISSING_PER_ORIGIN=1024) so a single due
+    pass stays bounded.
+
+    2026-10-23 bug fix: decision_state used to
+    report len(missing()), so a run with a backlog beyond the cap showed exactly
+    1024 forever -- indistinguishable from a backlog of exactly 1024 -- hiding how
+    much worse a run that has fallen far behind actually is.
+    """
+    tracker = Tracker(max_missing_per_origin=1024)
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=2000, extra=())
+    assert len(tracker.missing("h0")) == 1024  # fetch planning's own cap, unchanged
+    state = tracker.decision_state("n1")
+    assert state["origins"]["h0"]["missing"] == 2000
+
+
+def test_missing_total_excludes_only_the_held_extras_inside_the_range():
+    """missing_total's arithmetic form (span size minus held extras within that span)
+    must agree with missing()'s own seq-by-seq enumeration, including a held extra
+    that falls outside (held_contiguous, notified_max] -- seq 1, already covered by
+    held_contiguous itself -- which must not be subtracted a second time."""
+    tracker = Tracker()
+    tracker.observe_held("h0", hi=2, extra=(1, 5, 9))
+    tracker.observe_state("h0", "n1", hi=10, extra=())
+    assert tracker.missing("h0") == [3, 4, 6, 7, 8, 10]
+    assert tracker.missing_total("h0") == 6
+
+
+def test_missing_total_runs_in_constant_time_regardless_of_notified_max():
+    """missing_total must not enumerate every seq between held_contiguous and
+    notified_max to count them: on an empty local state, a single neighbor
+    advertising hi=10_000_000 used to take on the order of a tenth of a second to
+    answer this one call -- and on_tick calls it, through decision_state, for
+    every neighbor on every tick of this single-threaded agent's loop, whether or
+    not anything is actually due. The arithmetic form answers in microseconds no
+    matter how high hi is.
+    """
+    import time
+
+    tracker = Tracker()
+    tracker.observe_state("h0", "n1", hi=10_000_000, extra=())
+    started = time.perf_counter()
+    total = tracker.missing_total("h0")
+    elapsed = time.perf_counter() - started
+    assert total == 10_000_000
+    assert elapsed < 0.05
+
+
+def test_decision_state_reports_per_origin_hi_missing_and_every_neighbors_advertisement():
+    """decision_state(neighbor) summarizes, per origin this tracker knows of: this node's
+    own contiguous hold (`hi`), the origin's true missing count, and `advertised` --
+    every neighbor that has advertised this origin, including ones other than
+    `neighbor` itself (origin-y here was only ever advertised by n2, not n1), each
+    with its own {hi, notified_max} -- plus `neighbor`'s own in_flight count and
+    last_timeout_at."""
+    tracker = Tracker()
+    tracker.observe_held("h0", hi=1, extra=())
+    tracker.observe_state("h0", "n1", hi=3, extra=())  # n1 advertised up to 3
+    tracker.observe_held("origin-y", hi=0, extra=())
+    tracker.observe_state("origin-y", "n2", hi=5, extra=())  # n1 never advertised origin-y
+
+    state = tracker.decision_state("n1")
+    assert state == {
+        "in_flight": 0,
+        "last_timeout_s": None,
+        "truncated": False,
+        "origins": {
+            "h0": {"hi": 1, "missing": 2, "advertised": {"n1": {"hi": 3, "notified_max": 3}}},
+            "origin-y": {"hi": 0, "missing": 5, "advertised": {"n2": {"hi": 5, "notified_max": 5}}},
+        },
+    }
+
+
+def test_decision_state_distinguishes_contiguous_from_sparse_advertisements():
+    """Two neighbors advertising the same origin can reach the same highest known
+    seq by different means -- n1 holds 1..5 contiguously, n2 holds only the single
+    sparse seq 5 -- and a fetch from n2 for seq 3 would fail where one from n1
+    would not (see Tracker.plan_fetches's own `seq > hi and seq not in extra_set`
+    check), so decision_state must keep `hi` (contiguous) and `notified_max`
+    (highest known at all) distinct for every neighbor shown, and show every
+    neighbor's advertisement, not only the one this decision concerns.
+
+    2026-10-23 bug fix: decision_state used to report `neighbor`-only, collapsing
+    (hi, extra) into one max() -- these two advertisements produced the identical
+    adv=5, and n2's row (and n1's, had the decision concerned n2) was absent.
+    """
+    tracker = Tracker()
+    tracker.observe_held("h0", hi=0, extra=())
+    tracker.observe_state("h0", "n1", hi=5, extra=())  # n1: contiguous 1..5
+    tracker.observe_state("h0", "n2", hi=0, extra=(5,))  # n2: only sparse seq 5
+
+    state = tracker.decision_state("n1")
+    assert state["origins"]["h0"]["advertised"] == {
+        "n1": {"hi": 5, "notified_max": 5},
+        "n2": {"hi": 0, "notified_max": 5},
+    }
+
+
+def test_decision_state_truncates_beyond_the_origin_cap():
+    """decision_state caps how many origins it reports (DECISION_STATE_MAX_ORIGINS, lowest
+    name first) so a `decision` event's size cannot grow with how many origins a run
+    tracks; `truncated` says whether any were left out."""
+    tracker = Tracker()
+    cap = Tracker.DECISION_STATE_MAX_ORIGINS
+    for i in range(cap + 3):
+        origin = f"o{i:02d}"
+        tracker.observe_held(origin, hi=0, extra=())
+        tracker.observe_state(origin, "n1", hi=1, extra=())
+
+    state = tracker.decision_state("n1")
+    assert state["truncated"] is True
+    assert sorted(state["origins"]) == [f"o{i:02d}" for i in range(cap)]
+    assert len(state["origins"]) == cap

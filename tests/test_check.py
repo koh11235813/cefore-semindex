@@ -254,6 +254,40 @@ def test_check_t1_all_pass(tmp_path: Path):
     assert run_check("t1", str(experiment_path), str(run_dir)) == 0
 
 
+def test_check_t1_ignores_counters_snapshot_lines(tmp_path: Path):
+    """Regression for the agent's mid-run counters_snapshot_at_s lines
+    (semindex.agent.Agent._drain_counters_snapshots): check.py's own counters
+    handling (_events_of(..., "counters")) keys off the exact event name
+    "counters", a different string on purpose (agent.py's own
+    _drain_counters_snapshots docstring), so a counters_snapshot line must be
+    invisible to it -- same exit code with or without one present.
+    """
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_happy_path(run_dir)
+    baseline_rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    # Append one counters_snapshot line, in the same four-field shape a real
+    # mid-run entry would have, to every node's events.jsonl.
+    for node in ("h0", "h1", "h2"):
+        path = _node_events_path(run_dir, node)
+        events = [json.loads(line) for line in path.read_text().splitlines()]
+        events.append(
+            {
+                "ts_ms": _ts_ms(25),
+                "event": "counters_snapshot",
+                "bytes_sent": 999,
+                "bytes_received": 999,
+                "control_bytes_sent": 999,
+                "control_bytes_received": 999,
+            }
+        )
+        _write_jsonl(path, events)
+
+    assert run_check("t1", str(experiment_path), str(run_dir)) == baseline_rc == 0
+
+
 def test_check_t1_protocol_fails_when_the_only_surviving_retrieval_is_the_during_outage_one(
     tmp_path: Path, capsys
 ):
@@ -703,6 +737,30 @@ def test_check_t2a_all_pass(tmp_path: Path):
     _write_experiment(experiment_path, _t2a_experiment())
     run_dir = tmp_path / "run"
     _write_t2a_happy_path(run_dir)
+
+    assert run_check("t2a", str(experiment_path), str(run_dir)) == 0
+
+
+def test_check_t2a_all_pass_is_unaffected_by_a_leading_agent_start_line(tmp_path: Path):
+    """2026-10-23: agent.py now writes one `agent_start` line before anything
+
+    else in every life (see Agent.__init__); every check.py checker reads
+    events.jsonl by filtering on an exact `event` name (e.g.
+    `_events_of(..., "record_stored")`, `_events_of(..., "counters")`), so
+    an event type none of them ever asks for must pass through invisibly.
+    This re-runs the exact t2a happy-path fixture with an `agent_start`
+    line prepended to each node's own events and asserts the same exit
+    code (0) as the unmodified fixture above.
+    """
+    experiment_path = tmp_path / "t2a.json"
+    _write_experiment(experiment_path, _t2a_experiment())
+    run_dir = tmp_path / "run"
+    _write_t2a_happy_path(run_dir)
+    for node in ("h0", "h1"):
+        path = _node_events_path(run_dir, node)
+        events = [json.loads(line) for line in path.read_text().splitlines()]
+        events.insert(0, {"ts_ms": _ts_ms(0), "event": "agent_start", "node": node, "t0_ms": 0})
+        _write_jsonl(path, events)
 
     assert run_check("t2a", str(experiment_path), str(run_dir)) == 0
 
