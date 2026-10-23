@@ -86,8 +86,8 @@ def _new_figure(width_in: float, height_in: float):
     """A Figure bound to an Agg canvas, laid out with constrained_layout.
 
     constrained_layout rather than tight_layout(): the latter emits a
-    UserWarning on layouts it cannot satisfy, and that warning would land
-    on the caller's stderr next to its own diagnostics.
+    UserWarning on layouts it cannot satisfy, and layout noise must not
+    mix into the aggregation's diagnostic output.
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
@@ -297,7 +297,7 @@ def consistency_figure(consistency_rows: list[dict], summary_rows: list[dict]):
     ax = fig.add_subplot()
     _style_axes(ax)
     delivered_s = {p: [r["time_ms"] / 1000.0 for r in rows if not r["censored"]] for p, rows in by_p.items()}
-    # Drawn by hand, not with Axes.boxplot(): boxplot walks every rcParams
+    # 2026-10-23 fix: drawn by hand, not with Axes.boxplot(): boxplot walks every rcParams
     # entry, which auto-resolves matplotlib's backend and imports pyplot --
     # exactly the process-global side effect this module promises not to
     # leave. The quantiles below are descriptive statistics of the rows
@@ -373,7 +373,7 @@ def probe_established_figure(summary_rows: list[dict]):
     """
     title = "Established-probe discovery rate"
     fig = _new_figure(6.0, 4.5)
-    # summary.csv keeps a row per p even when no run of it was pooled (its
+    # 2026-10-23 fix: summary.csv keeps a row per p even when no run of it was pooled (its
     # status counts still matter); with nothing pooled anywhere there is
     # no rate to show, the same "no data" as every other figure.
     if not any(_n_included(row) for row in summary_rows):
@@ -411,7 +411,7 @@ def probe_established_figure(summary_rows: list[dict]):
         )
     for row in summary_rows:
         if row["probe_established_rate"] is None:
-            # A missing rate has three distinct causes; each is named as
+            # 2026-10-23 fix: a missing rate has three distinct causes; each is named as
             # itself, never all folded into "no ground truth".
             if _n_included(row) == 0:
                 text = "no included runs"

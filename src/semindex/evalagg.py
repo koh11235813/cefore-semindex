@@ -181,6 +181,15 @@ def discover_runs(store: str, stage: str) -> list[RunRef]:
     seed directory after the plain int `--seed` it was generated with;
     anything else under a `p<p>/` directory is not a run this module
     knows how to read).
+
+    Raises CheckUsageError when two directories parse to the same
+    numeric (p, seed) -- e.g. `p0/1` and `p0.0/1`, or `1` and `01`.
+    2026-10-23 fix: every later step identifies a run by (p, seed) alone
+    (summary pooling counted both as one condition's runs, and the
+    figures select included runs' rows by that key), so an aliased pair
+    let a flagged run's rows ride on its valid twin's identity. Refusing
+    the store up front, before any output is written, is the only
+    answer that cannot silently mix two runs.
     """
     runs: list[RunRef] = []
     for p_dir in sorted(glob.glob(os.path.join(store, stage, "p*"))):
@@ -194,6 +203,14 @@ def discover_runs(store: str, stage: str) -> list[RunRef]:
             if os.path.isdir(full):
                 runs.append(RunRef(p=p, seed=int(seed_dir), run_dir=full))
     runs.sort(key=lambda r: (r.p, r.seed))
+    seen: dict[tuple[float, int], str] = {}
+    for run in runs:
+        key = (run.p, run.seed)
+        if key in seen:
+            raise CheckUsageError(
+                f"two run directories map to the same run (p={run.p:g}, seed={run.seed}): {seen[key]} and {run.run_dir}"
+            )
+        seen[key] = run.run_dir
     return runs
 
 
@@ -1769,7 +1786,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Entry point: python3 -m semindex.evalagg --store ... --stage ... --out ..."""
     args = parse_args(argv)
-    aggregate(args.store, args.stage, args.outdir, args.include_undone, args.include_unknown)
+    try:
+        aggregate(args.store, args.stage, args.outdir, args.include_undone, args.include_unknown)
+    except CheckUsageError as exc:
+        # A store aggregate() refuses outright (see discover_runs); per-run
+        # problems never reach here, they become rows instead.
+        print(f"semindex.evalagg: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

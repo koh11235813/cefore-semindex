@@ -31,6 +31,7 @@ from semindex.evalagg import (
     classify_probe,
     derive_t0_ms,
     discover_runs,
+    main,
     kaplan_meier_steps,
     km_delivered_fraction_at,
     km_quantile,
@@ -131,6 +132,59 @@ def test_discover_runs_sorts_by_p_then_seed_and_ignores_non_digit_seed_dirs(tmp_
     (tmp_path / "stage" / "p0.2" / "not-a-seed").mkdir(parents=True)
     runs = discover_runs(str(tmp_path), "stage")
     assert [(r.p, r.seed) for r in runs] == [(0.0, 1), (0.2, 2), (0.2, 10)]
+
+
+def test_discover_runs_accepts_a_canonical_store_unchanged(tmp_path: Path):
+    """Distinct (p, seed) per directory, as evalgen writes them: every run found, nothing refused."""
+    for p_dir, seed in [("p0", 1), ("p0", 2), ("p0.1", 1), ("p0.4", 10)]:
+        (tmp_path / "stage" / p_dir / str(seed)).mkdir(parents=True)
+    runs = discover_runs(str(tmp_path), "stage")
+    assert [(r.p, r.seed, os.path.relpath(r.run_dir, tmp_path)) for r in runs] == [
+        (0.0, 1, "stage/p0/1"),
+        (0.0, 2, "stage/p0/2"),
+        (0.1, 1, "stage/p0.1/1"),
+        (0.4, 10, "stage/p0.4/10"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "p", "seed"),
+    [
+        (("p0", "1"), ("p0.0", "1"), "0", 1),  # two spellings of the same p
+        (("p0.2", "01"), ("p0.2", "1"), "0.2", 1),  # two spellings of the same seed
+    ],
+)
+def test_discover_runs_refuses_two_directories_with_the_same_numeric_p_and_seed(
+    tmp_path: Path, first: tuple[str, str], second: tuple[str, str], p: str, seed: int
+):
+    """Aliased run dirs would be pooled as one run identity; refuse the store, naming both directories."""
+    for p_dir, seed_dir in (first, second):
+        (tmp_path / "stage" / p_dir / seed_dir).mkdir(parents=True)
+    with pytest.raises(CheckUsageError) as excinfo:
+        discover_runs(str(tmp_path), "stage")
+    first_dir = os.path.join(str(tmp_path), "stage", *first)
+    second_dir = os.path.join(str(tmp_path), "stage", *second)
+    assert str(excinfo.value) == (
+        f"two run directories map to the same run (p={p}, seed={seed}): {first_dir} and {second_dir}"
+    )
+
+
+def test_main_exits_nonzero_on_an_aliased_store_before_writing_anything(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    """The CLI reports the aliased store on stderr, returns 1, and never creates --out."""
+    for p_dir in ("p0", "p0.0"):
+        _write_run(tmp_path / "store" / "test" / p_dir / "1", {}, meta={"valid": True, "flags": []})
+    outdir = tmp_path / "out"
+    code = main(["--store", str(tmp_path / "store"), "--stage", "test", "--out", str(outdir)])
+    first_dir = os.path.join(str(tmp_path / "store"), "test", "p0", "1")
+    second_dir = os.path.join(str(tmp_path / "store"), "test", "p0.0", "1")
+    assert code == 1
+    assert capsys.readouterr().err == (
+        "semindex.evalagg: two run directories map to the same run (p=0, seed=1): "
+        f"{first_dir} and {second_dir}\n"
+    )
+    assert not outdir.exists()
 
 
 def test_run_has_done_marker(tmp_path: Path):
