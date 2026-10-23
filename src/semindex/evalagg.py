@@ -1713,10 +1713,12 @@ def aggregate(
     os.makedirs(outdir, exist_ok=True)
     survival_rows = build_survival_rows(analyses, include_unknown)
     summary_rows = build_summary_rows(analyses, include_unknown)
-    _write_csv(os.path.join(outdir, "runs.csv"), RUNS_FIELDS, build_runs_rows(analyses))
+    runs_rows = build_runs_rows(analyses)
+    consistency_rows = build_consistency_rows(analyses)
+    _write_csv(os.path.join(outdir, "runs.csv"), RUNS_FIELDS, runs_rows)
     _write_csv(os.path.join(outdir, "discovery.csv"), DISCOVERY_FIELDS, build_discovery_rows(analyses))
     _write_csv(os.path.join(outdir, "survival.csv"), SURVIVAL_FIELDS, survival_rows)
-    _write_csv(os.path.join(outdir, "consistency.csv"), CONSISTENCY_FIELDS, build_consistency_rows(analyses))
+    _write_csv(os.path.join(outdir, "consistency.csv"), CONSISTENCY_FIELDS, consistency_rows)
     _write_csv(os.path.join(outdir, "summary.csv"), SUMMARY_FIELDS, summary_rows)
     _write_csv(
         os.path.join(outdir, "decisions.csv"), DECISIONS_FIELDS, build_decisions_rows(analyses, include_unknown)
@@ -1729,15 +1731,16 @@ def aggregate(
 
         # runs.csv/consistency.csv carry every run, but summary.csv pools
         # only `_included` ones; the figures overlay per-run marks on
-        # summary values, so they get the same builders' rows restricted
-        # by the same filter -- never a second pooling policy of their own.
-        included = _included(analyses, include_unknown)
+        # summary values, so they get the CSVs' own row objects, selected
+        # by that same filter -- never rebuilt, never a second pooling
+        # policy. (p, seed) identifies a run uniquely in one stage.
+        included = {(run.p, run.seed) for run in _included(analyses, include_unknown)}
         evalfig.write_figures(
             outdir,
             survival_rows,
-            build_consistency_rows(included),
+            [row for row in consistency_rows if (row["p"], row["seed"]) in included],
             summary_rows,
-            build_runs_rows(included),
+            [row for row in runs_rows if (row["p"], row["seed"]) in included],
         )
     else:
         print("semindex.evalagg: matplotlib not importable in this venv -- wrote CSVs only, no figures", file=sys.stderr)

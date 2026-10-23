@@ -30,7 +30,7 @@ import math
 import os
 import textwrap
 
-from semindex.evalagg import PROBE_FRESH_S
+from semindex.evalagg import PROBE_FRESH_S, _percentile
 
 # Print-friendly raster resolution; the PDF beside each PNG is the vector
 # copy for a report that wants one.
@@ -86,8 +86,8 @@ def _new_figure(width_in: float, height_in: float):
     """A Figure bound to an Agg canvas, laid out with constrained_layout.
 
     constrained_layout rather than tight_layout(): the latter emits a
-    UserWarning on layouts it cannot satisfy, and evalagg's tests compare
-    aggregate()'s full stderr.
+    UserWarning on layouts it cannot satisfy, and that warning would land
+    on the caller's stderr next to its own diagnostics.
     """
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
@@ -297,21 +297,25 @@ def consistency_figure(consistency_rows: list[dict], summary_rows: list[dict]):
     ax = fig.add_subplot()
     _style_axes(ax)
     delivered_s = {p: [r["time_ms"] / 1000.0 for r in rows if not r["censored"]] for p, rows in by_p.items()}
-    with_box = [p for p in ps if delivered_s[p]]
-    if with_box:
-        ax.boxplot(
-            [delivered_s[p] for p in with_box],
-            positions=with_box,
-            widths=gap * 0.4,
-            whis=(5, 95),
-            showfliers=False,
-            patch_artist=True,
-            manage_ticks=False,
-            boxprops={"facecolor": "#cde2fb", "edgecolor": _SERIES_COLOR, "linewidth": 1.2},
-            whiskerprops={"color": _SERIES_COLOR, "linewidth": 1.2},
-            capprops={"color": _SERIES_COLOR, "linewidth": 1.2},
-            medianprops={"linewidth": 0},
+    # Drawn by hand, not with Axes.boxplot(): boxplot walks every rcParams
+    # entry, which auto-resolves matplotlib's backend and imports pyplot --
+    # exactly the process-global side effect this module promises not to
+    # leave. The quantiles below are descriptive statistics of the rows
+    # being drawn (the box's own geometry), not a reported metric; the
+    # metric for this figure is summary.csv's KM median, drawn separately.
+    from matplotlib.patches import Rectangle
+
+    half = gap * 0.2
+    for p in ps:
+        values = sorted(delivered_s[p])
+        if not values:
+            continue
+        p05, q1, q3, p95 = (_percentile(values, q) for q in (0.05, 0.25, 0.75, 0.95))
+        ax.add_patch(
+            Rectangle((p - half, q1), 2 * half, q3 - q1, facecolor="#cde2fb", edgecolor=_SERIES_COLOR, linewidth=1.2)
         )
+        ax.vlines([p, p], [p05, q3], [q1, p95], color=_SERIES_COLOR, linewidth=1.2)
+        ax.hlines([p05, p95], p - half / 2, p + half / 2, color=_SERIES_COLOR, linewidth=1.2)
     medians = [(p, km_median_s[p]) for p in ps if p in km_median_s]
     if medians:
         ax.plot(
@@ -354,6 +358,11 @@ def consistency_figure(consistency_rows: list[dict], summary_rows: list[dict]):
     return fig
 
 
+def _n_included(summary_row: dict) -> int:
+    """How many runs summary.csv pooled for this p (with or without probe ground truth)."""
+    return summary_row["n_runs_probe_truth"] + summary_row["n_runs_probe_truth_missing"]
+
+
 def probe_established_figure(summary_rows: list[dict]):
     """Established-probe discovery rate per p with its Wilson 95% interval, from summary.csv rows.
 
@@ -364,7 +373,10 @@ def probe_established_figure(summary_rows: list[dict]):
     """
     title = "Established-probe discovery rate"
     fig = _new_figure(6.0, 4.5)
-    if not summary_rows:
+    # summary.csv keeps a row per p even when no run of it was pooled (its
+    # status counts still matter); with nothing pooled anywhere there is
+    # no rate to show, the same "no data" as every other figure.
+    if not any(_n_included(row) for row in summary_rows):
         return _no_data(fig, title)
 
     ps = [row["p"] for row in summary_rows]
@@ -399,8 +411,14 @@ def probe_established_figure(summary_rows: list[dict]):
         )
     for row in summary_rows:
         if row["probe_established_rate"] is None:
-            n_runs = row["n_runs_probe_truth"] + row["n_runs_probe_truth_missing"]
-            text = f"no ground truth\n(0 of {n_runs} runs)"
+            # A missing rate has three distinct causes; each is named as
+            # itself, never all folded into "no ground truth".
+            if _n_included(row) == 0:
+                text = "no included runs"
+            elif row["n_runs_probe_truth"] == 0:
+                text = f"no ground truth\n(0 of {_n_included(row)} runs)"
+            else:
+                text = f"no established probes\n({row['n_runs_probe_truth']} runs with ground truth)"
             ax.text(row["p"], 0.5, text, transform=ax.get_xaxis_transform(), ha="center", va="center",
                     fontsize=_FONT_SIZE - 1, color=_TEXT_SECONDARY)
         else:
@@ -436,7 +454,7 @@ def control_bytes_figure(runs_rows: list[dict], summary_rows: list[dict]):
     # .get: a runs row for a run with analysis_error carries only its
     # identity/status columns, no metric keys at all (see build_runs_rows).
     points = [row for row in runs_rows if row.get("control_bytes_sent_per_record") is not None]
-    if not points and not summary_rows:
+    if not points and not any(row["control_bytes_sent_per_record_median"] is not None for row in summary_rows):
         return _no_data(fig, title)
 
     ps = sorted({row["p"] for row in points} | {row["p"] for row in summary_rows})

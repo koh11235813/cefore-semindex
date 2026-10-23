@@ -9,6 +9,9 @@ against exactly the runs whose CSV values that suite already pins.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,8 +19,10 @@ import pytest
 pytest.importorskip("matplotlib")
 
 from semindex import evalfig  # noqa: E402
+from semindex import evalagg  # noqa: E402
 from semindex.evalagg import aggregate  # noqa: E402
 
+from test_evalagg import WINDOW_END_MS, WINDOW_START_MS, _write_run  # noqa: E402
 from test_evalagg import synthetic_store  # noqa: E402,F401  (pytest fixture, used by name)
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -87,6 +92,7 @@ def test_write_figures_returns_every_path_it_wrote(tmp_path: Path):
     paths = evalfig.write_figures(str(tmp_path), [], [], [], [])
     expected = [str(tmp_path / f"{stem}.{ext}") for stem in FIGURE_STEMS for ext in ("png", "pdf")]
     assert paths == expected
+    assert [Path(path).is_file() for path in paths] == [True] * len(expected)
 
 
 def test_empty_rows_still_write_every_figure_with_a_no_data_note(tmp_path: Path):
@@ -100,8 +106,8 @@ def test_empty_rows_still_write_every_figure_with_a_no_data_note(tmp_path: Path)
     assert _texts(evalfig.control_bytes_figure([], [])) == ["no data"]
 
 
-def test_probe_figure_marks_a_p_without_ground_truth_instead_of_plotting_it():
-    """A p whose established rate is None gets a "no ground truth" note, the other p its k/n count."""
+def test_probe_figure_tells_no_ground_truth_apart_from_no_established_probes():
+    """Rate None has two causes, each labelled as itself: no run had ground truth, or none of its probes was established."""
     rows = [
         _summary_row(
             0.0,
@@ -113,9 +119,21 @@ def test_probe_figure_marks_a_p_without_ground_truth_instead_of_plotting_it():
             probe_established_rate_wilson_hi=0.99,
         ),
         _summary_row(0.2, n_runs_probe_truth=0, n_runs_probe_truth_missing=3),
+        _summary_row(
+            0.4,
+            n_runs_probe_truth=2,
+            probe_none_total=1,
+            probe_fresh_total=1,
+            probe_established_total=0,
+            probe_established_discovered=0,
+        ),
     ]
     fig = evalfig.probe_established_figure(rows)
-    assert _texts(fig) == ["19/20\n2 runs", "no ground truth\n(0 of 3 runs)"]
+    assert _texts(fig) == [
+        "19/20\n2 runs",
+        "no ground truth\n(0 of 3 runs)",
+        "no established probes\n(2 runs with ground truth)",
+    ]
 
 
 def test_consistency_figure_all_censored_p_has_no_box_but_says_so():
@@ -129,6 +147,12 @@ def test_consistency_figure_all_censored_p_has_no_box_but_says_so():
     summary = [_summary_row(0.0, consistency_time_median_ms=1000.0), _summary_row(0.4)]
     fig = evalfig.consistency_figure(consistency, summary)
     assert _texts(fig) == ["0/2 censored", "all 2 censored"]
+    (ax,) = fig.axes
+    # One box only (p=0), spanning Q1..Q3 of its delivered times 1 s and 3 s.
+    assert [(b.get_x() + b.get_width() / 2, b.get_y(), b.get_height()) for b in ax.patches] == [(0.0, 1.5, 1.0)]
+    # The KM median marker comes from summary rows: present for p=0 only.
+    medians = [(ln.get_xdata().tolist(), ln.get_ydata().tolist()) for ln in ax.get_lines() if ln.get_marker() == "D"]
+    assert medians == [([0.0], [1.0])]
 
 
 def test_survival_figure_puts_each_groups_censored_count_in_its_legend():
@@ -148,6 +172,7 @@ def test_survival_figure_puts_each_groups_censored_count_in_its_legend():
         ["p=0 (1/6 censored)"],
     ]
     assert [ax.get_title() for ax in fig.axes] == ["hop distance 1", "hop distance 2"]
+    assert [ln.get_ydata().tolist() for ln in fig.axes[0].get_lines()] == [[0.0, 1.0], [0.0, 0.0]]
 
 
 def test_control_bytes_figure_skips_runs_with_no_per_record_value():
@@ -171,6 +196,10 @@ def test_control_bytes_figure_skips_runs_with_no_per_record_value():
     (ax,) = fig.axes
     run_points = ax.collections[0].get_offsets()
     assert [float(y) for _, y in run_points] == [260.0, 280.0]
+    (median_bar,) = ax.containers
+    data_line, _caps, (bar_lines,) = median_bar.lines
+    assert data_line.get_ydata().tolist() == [270.0]
+    assert [[float(y) for _, y in seg] for seg in bar_lines.get_segments()] == [[265.0, 275.0]]
 
 
 def test_probe_figure_tolerates_a_wilson_bound_a_float_hair_below_a_rate_of_one():
@@ -188,6 +217,14 @@ def test_probe_figure_tolerates_a_wilson_bound_a_float_hair_below_a_rate_of_one(
     ]
     fig = evalfig.probe_established_figure(rows)
     assert _texts(fig) == ["110/110\n10 runs"]
+    (ax,) = fig.axes
+    (bar,) = ax.containers
+    data_line, _caps, (bar_lines,) = bar.lines
+    assert data_line.get_xydata().tolist() == [[0.0, 1.0]]
+    # Lower end at the Wilson bound; upper error length clamped to 0, so it ends at the rate.
+    ((x_lo, y_lo), (x_hi, y_hi)) = bar_lines.get_segments()[0]
+    assert (x_lo, x_hi, y_hi) == (0.0, 0.0, 1.0)
+    assert y_lo == pytest.approx(0.9662560647018358, abs=1e-15)
 
 
 def _curve(p: float, hop: int, fracs: list[float]) -> list[dict]:
@@ -213,6 +250,7 @@ def test_p_keeps_its_colour_and_dash_whichever_other_p_values_the_stage_has():
     flat = [1.0, 1.0]
 
     def style_of_p02(ps: list[float]) -> tuple:
+        """p=0.2's line colour and dash pattern in a survival figure drawn for the p values `ps`."""
         rows = [row for p in ps for row in _curve(p, 1, flat)]
         (ax,) = evalfig.discovery_survival_figure(rows).axes
         line = ax.get_lines()[ps.index(0.2)]
@@ -221,3 +259,119 @@ def test_p_keeps_its_colour_and_dash_whichever_other_p_values_the_stage_has():
         return line.get_color(), line._unscaled_dash_pattern
 
     assert style_of_p02([0.2]) == style_of_p02([0.0, 0.2, 0.4])
+
+
+def _unknown_only_store(store: Path) -> None:
+    """A stage whose only run has no meta.json (status unknown) but real events: one delivered pair."""
+    t0 = 1_000_000_000_000.0
+    counters = [
+        {"event": "counters_snapshot", "ts_ms": t0 + WINDOW_START_MS, "control_bytes_sent": 1, "control_bytes_received": 1},
+        {"event": "counters", "ts_ms": t0 + WINDOW_END_MS, "control_bytes_sent": 2, "control_bytes_received": 2},
+    ]
+    _write_run(
+        store / "test" / "p0" / "1",
+        {
+            "h0": [{"event": "record_created", "origin": "h0", "seq": 1, "ts_ms": t0 + 15_000}, *counters],
+            "h1": [{"event": "record_stored", "origin": "h0", "seq": 1, "holder": "h0", "ts_ms": t0 + 16_000}, *counters],
+        },
+    )
+
+
+def test_no_included_run_gives_every_figure_the_same_no_data_treatment(tmp_path: Path, monkeypatch):
+    """Only an unknown run, not pooled: summary.csv still has a status-count row, yet every figure says "no data"."""
+    store = tmp_path / "store"
+    _unknown_only_store(store)
+    captured = {}
+    monkeypatch.setattr(evalfig, "write_figures", lambda outdir, *rows: captured.setdefault("rows", rows))
+    aggregate(str(store), "test", str(tmp_path / "out"), include_undone=False, include_unknown=False)
+
+    survival, consistency, summary, runs = captured["rows"]
+    assert [row["p"] for row in summary] == [0.0]
+    assert _texts(evalfig.discovery_survival_figure(survival)) == ["no data"]
+    assert _texts(evalfig.consistency_figure(consistency, summary)) == ["no data"]
+    assert _texts(evalfig.probe_established_figure(summary)) == ["no data"]
+    assert _texts(evalfig.control_bytes_figure(runs, summary)) == ["no data"]
+
+
+def test_aggregate_builds_runs_and_consistency_rows_once_and_hands_figures_the_csv_rows(
+    synthetic_store: Path, tmp_path: Path, monkeypatch  # noqa: F811
+):
+    """The figure rows are selected from the very lists the CSVs were written from, never rebuilt."""
+    calls = {"build_runs_rows": [], "build_consistency_rows": []}
+    for name in calls:
+        original = getattr(evalagg, name)
+
+        def counting(analyses, _name=name, _original=original):
+            """Record the list this builder returned, then return it unchanged."""
+            rows = _original(analyses)
+            calls[_name].append(rows)
+            return rows
+
+        monkeypatch.setattr(evalagg, name, counting)
+    captured = {}
+    monkeypatch.setattr(evalfig, "write_figures", lambda outdir, *rows: captured.setdefault("rows", rows))
+    aggregate(str(synthetic_store), "test", str(tmp_path / "out"), include_undone=False, include_unknown=True)
+
+    assert {name: len(lists) for name, lists in calls.items()} == {"build_runs_rows": 1, "build_consistency_rows": 1}
+    _survival, consistency, _summary, runs = captured["rows"]
+    # Every figure row is one of the CSV's own row objects (identity, not just equal values).
+    csv_runs_ids = {id(row) for row in calls["build_runs_rows"][0]}
+    csv_consistency_ids = {id(row) for row in calls["build_consistency_rows"][0]}
+    assert runs and all(id(row) in csv_runs_ids for row in runs)
+    assert consistency and all(id(row) in csv_consistency_ids for row in consistency)
+    # ...and only the pooled runs': the synthetic tree's flagged run (p=0, seed 2) is left out.
+    assert (0.0, 2) not in {(row["p"], row["seed"]) for row in runs}
+
+
+# Run in a fresh interpreter: matplotlib's backend, once resolved, stays
+# resolved for the whole process, so only a new process can show that
+# drawing never triggered it. rcParams._get_backend_or_none() is private,
+# but it is the one way to ask "still unresolved?" without resolving it.
+_GLOBAL_STATE_SCRIPT = """
+import json, sys
+import matplotlib
+from semindex import evalfig
+rows = json.loads(sys.argv[2])
+before = matplotlib.rcParams._get_backend_or_none()
+evalfig.write_figures(sys.argv[1], *rows)
+print(json.dumps({
+    "before": before,
+    "after": matplotlib.rcParams._get_backend_or_none(),
+    "pyplot": "matplotlib.pyplot" in sys.modules,
+}))
+"""
+
+
+def test_drawing_all_figures_leaves_no_process_global_matplotlib_state(tmp_path: Path):
+    """All four figures with real data: pyplot never imported, the backend never auto-resolved."""
+    survival = _curve(0.0, 1, [0.0, 0.5, 1.0])
+    consistency = [
+        {"p": 0.0, "seed": 1, "origin": "h0", "seq": seq, "time_ms": ms, "censored": False}
+        for seq, ms in enumerate([1000.0, 2000.0, 3000.0, 4000.0], start=1)
+    ]
+    summary = [
+        _summary_row(
+            0.0,
+            consistency_time_median_ms=2000.0,
+            control_bytes_sent_per_record_median=270.0,
+            control_bytes_sent_per_record_q1=265.0,
+            control_bytes_sent_per_record_q3=275.0,
+            n_runs_probe_truth=1,
+            probe_established_total=10,
+            probe_established_discovered=9,
+            probe_established_rate=0.9,
+            probe_established_rate_wilson_lo=0.6,
+            probe_established_rate_wilson_hi=0.98,
+        )
+    ]
+    runs = [{"p": 0.0, "seed": 1, "control_bytes_sent_per_record": 270.0}]
+    env = {k: v for k, v in __import__("os").environ.items() if k != "MPLBACKEND"}
+    env["MPLCONFIGDIR"] = str(tmp_path / "mplconfig")
+    result = subprocess.run(
+        [sys.executable, "-c", _GLOBAL_STATE_SCRIPT, str(tmp_path), json.dumps([survival, consistency, summary, runs])],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    )
+    assert json.loads(result.stdout) == {"before": None, "after": None, "pyplot": False}
