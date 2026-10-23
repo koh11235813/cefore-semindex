@@ -188,37 +188,47 @@ def control_bytes(nodes: dict[str, list[dict]]) -> dict:
     return {"per_node": per_node, "total": total}
 
 
-def probe_pairs(nodes: dict[str, list[dict]]) -> list[dict]:
-    """Every probe_discovered, paired with the probe_retrieved that followed it (None if no match)."""
+def node_probe_pairs(node: str, events: list[dict]) -> list[dict]:
+    """One node's probe_discovered events, each paired with the probe_retrieved that followed it, in FILE order.
+
+    File order is the agent's own firing order; ts_ms is wall clock and
+    can step backwards, so lining events up with a config's probe list
+    needs this order, not `probe_pairs`' ts-sorted one.
+    """
     pairs = []
-    for node, events in nodes.items():
-        discovered_idxs = [i for i, e in enumerate(events) if e.get("event") == "probe_discovered"]
-        retrieved_iter = iter(i for i, e in enumerate(events) if e.get("event") == "probe_retrieved")
-        for idx in discovered_idxs:
-            discovered = events[idx]
-            retrieved = None
-            if discovered.get("matches"):
-                retrieved_idx = next(retrieved_iter, None)
-                if retrieved_idx is not None:
-                    retrieved = events[retrieved_idx]
-            pairs.append(
-                {
-                    "node": node,
-                    "discovered_ts_ms": discovered["ts_ms"],
-                    "match_count": len(discovered.get("matches", [])),
-                    "retrieved": (
-                        None
-                        if retrieved is None
-                        else {
-                            "ts_ms": retrieved["ts_ms"],
-                            "origin": retrieved.get("origin"),
-                            "seq": retrieved.get("seq"),
-                            "success": retrieved.get("success"),
-                            "bytes": retrieved.get("bytes"),
-                        }
-                    ),
-                }
-            )
+    discovered_idxs = [i for i, e in enumerate(events) if e.get("event") == "probe_discovered"]
+    retrieved_iter = iter(i for i, e in enumerate(events) if e.get("event") == "probe_retrieved")
+    for idx in discovered_idxs:
+        discovered = events[idx]
+        retrieved = None
+        if discovered.get("matches"):
+            retrieved_idx = next(retrieved_iter, None)
+            if retrieved_idx is not None:
+                retrieved = events[retrieved_idx]
+        pairs.append(
+            {
+                "node": node,
+                "discovered_ts_ms": discovered["ts_ms"],
+                "match_count": len(discovered.get("matches", [])),
+                "retrieved": (
+                    None
+                    if retrieved is None
+                    else {
+                        "ts_ms": retrieved["ts_ms"],
+                        "origin": retrieved.get("origin"),
+                        "seq": retrieved.get("seq"),
+                        "success": retrieved.get("success"),
+                        "bytes": retrieved.get("bytes"),
+                    }
+                ),
+            }
+        )
+    return pairs
+
+
+def probe_pairs(nodes: dict[str, list[dict]]) -> list[dict]:
+    """Every probe_discovered, paired with the probe_retrieved that followed it (None if no match), sorted by (node, ts)."""
+    pairs = [pair for node, events in nodes.items() for pair in node_probe_pairs(node, events)]
     pairs.sort(key=lambda p: (p["node"], p["discovered_ts_ms"]))
     return pairs
 

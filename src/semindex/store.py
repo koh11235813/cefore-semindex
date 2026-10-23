@@ -43,6 +43,24 @@ class StoreResult:
     existing_hash: str | None = None
 
 
+def attrs_match(record, *, zone: str | None, disaster: str | None, media: str | None) -> bool:
+    """Whether `record`'s zone/disaster/media satisfy a probe query: each filter is exact-equal, None is a wildcard, all ANDed.
+
+    `record` is anything carrying `.zone`/`.disaster`/`.media` (a stored
+    schema.IndexRecord, or a config's not-yet-created agent.ScheduledRecord).
+    This is the one definition of "a probe matches a record", kept as a
+    pure function so that rebuilding ground truth from configs applies
+    exactly the rule the live index query applies, and the two cannot drift.
+    """
+    if zone is not None and record.zone != zone:
+        return False
+    if disaster is not None and record.disaster != disaster:
+        return False
+    if media is not None and record.media != media:
+        return False
+    return True
+
+
 class Store:
     """Append-only SQLite store for Index records and per-origin progress."""
 
@@ -154,13 +172,8 @@ class Store:
         matches: list[schema.IndexRecord] = []
         for (payload,) in rows:
             record = schema.decode(payload)
-            if zone is not None and record.zone != zone:
-                continue
-            if disaster is not None and record.disaster != disaster:
-                continue
-            if media is not None and record.media != media:
-                continue
-            matches.append(record)
+            if attrs_match(record, zone=zone, disaster=disaster, media=media):
+                matches.append(record)
         return matches
 
     # -- writes ----------------------------------------------------------------
