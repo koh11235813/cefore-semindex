@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# PR runs are grouped per PR and cancel superseded runs; push runs are grouped
+# per SHA so rapid merges cannot replace a queued run and skip verifying a
+# main commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# uv discipline shared by every job: a bare `uv run` auto-locks and auto-syncs,
+# which would quietly heal a stale uv.lock and make the lock gate meaningless.
+# So: `uv lock --check` (fail on a stale lock), `uv sync --locked` (install
+# exactly the lock), `uv run --no-sync` (never re-resolve). uv is pinned to the
+# version used locally; Python comes from the tracked .python-version.
+#
+# cefpyco is not installed here: it is not on PyPI (it is built with Cefore),
+# and the unit tests reach it only through the transport adapter. Tests that
+# read live-run data under /home/lab_shared skip themselves on the runner.
+#
+# mypy and `ruff format` are deliberately not gates yet (local-only, see
+# CLAUDE.md): the tree does not pass them today.
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.10.11"
+          enable-cache: true
+      - run: uv lock --check
+      # --extra plot so evalagg runs with matplotlib importable, the way the
+      # aggregation is actually used.
+      - run: uv sync --locked --group dev --extra plot
+      - run: uv run --no-sync pytest -p no:cacheprovider tests
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.10.11"
+          enable-cache: true
+      - run: uv lock --check
+      - run: uv sync --locked --group dev
+      - run: uv run --no-sync ruff check src tests
