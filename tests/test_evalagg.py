@@ -21,6 +21,7 @@ from semindex import evalgen, evalrun
 from semindex.check import CheckUsageError
 from semindex.agent import ScheduledProbe, ScheduledRecord
 from semindex.evalagg import (
+    FIGURES_AVAILABLE,
     PROBE_FRESH_S,
     RunAnalysis,
     Sample,
@@ -1270,6 +1271,15 @@ def _write_configs(run_dir: Path, configs: dict[str, dict], dirname: str = "test
 
 T0_PROBE = 2_000_000_000_000.0
 
+
+def _expected_stderr(warnings: list[str]) -> str:
+    """aggregate()'s full stderr for these warning lines: each one, then the no-matplotlib notice when it applies."""
+    lines = list(warnings)
+    if not FIGURES_AVAILABLE:
+        lines.append("semindex.evalagg: matplotlib not importable in this venv -- wrote CSVs only, no figures")
+    return "".join(line + "\n" for line in lines)
+
+
 # h0 creates two records; h2 runs four probes, one of each interesting
 # kind. Ages (probe at_s minus earliest matching record at_s):
 #   15 zone1 -> 15-13 = 2.0 fresh, discovered
@@ -1429,6 +1439,8 @@ def test_aggregate_writes_probes_csv_and_established_summary_columns(tmp_path: P
     lo, hi = wilson_interval(1, 2)
     assert summary["probe_established_rate_wilson_lo"] == str(lo)
     assert summary["probe_established_rate_wilson_hi"] == str(hi)
+    assert (summary["n_runs_probe_truth"], summary["n_runs_probe_truth_missing"]) == ("1", "0")
+    assert summary["probe_unclassified_total"] == "0"
 
 
 def test_probe_count_mismatch_leaves_classes_empty_and_warns(tmp_path: Path, capsys: pytest.CaptureFixture):
@@ -1456,7 +1468,7 @@ def test_probe_count_mismatch_leaves_classes_empty_and_warns(tmp_path: Path, cap
     outdir = tmp_path / "out"
     aggregate(str(store), "test", str(outdir), include_undone=False)
     err = capsys.readouterr().err
-    assert f"semindex.evalagg: {run_dir}: probe ground truth unavailable: {expected_error}\n" in err
+    assert err == _expected_stderr([f"semindex.evalagg: {run_dir}: probe ground truth unavailable: {expected_error}"])
     runs = _read_csv(outdir / "runs.csv")
     assert runs[0]["probe_established"] == ""
     assert runs[0]["probe_truth_error"] == expected_error
@@ -1481,7 +1493,7 @@ def test_missing_configs_leave_classes_empty_and_warn(tmp_path: Path, capsys: py
     outdir = tmp_path / "out"
     aggregate(str(store), "test", str(outdir), include_undone=False)
     err = capsys.readouterr().err
-    assert f"semindex.evalagg: {run_dir}: probe ground truth unavailable: {expected_error}\n" in err
+    assert err == _expected_stderr([f"semindex.evalagg: {run_dir}: probe ground truth unavailable: {expected_error}"])
     probes = _read_csv(outdir / "probes.csv")
     assert len(probes) == 5
     assert [r["probe_class"] for r in probes] == [""] * 5
@@ -1490,6 +1502,8 @@ def test_missing_configs_leave_classes_empty_and_warn(tmp_path: Path, capsys: py
     summary = _read_csv(outdir / "summary.csv")[0]
     assert summary["probe_none_total"] == ""
     assert summary["probe_discovery_rate"] == "0.6"
+    assert (summary["n_runs_probe_truth"], summary["n_runs_probe_truth_missing"]) == ("0", "1")
+    assert summary["probe_unclassified_total"] == "5"
 
 
 def test_config_missing_for_one_node_is_missing_configs(tmp_path: Path):
@@ -1500,6 +1514,100 @@ def test_config_missing_for_one_node_is_missing_configs(tmp_path: Path):
     run = analyze_run(0.0, 1, str(run_dir))
     assert run.probe_truth_error == "no agent config for node(s) h0"
     assert run.probe_established is None
+
+
+def _write_h0_h2_run(run_dir: Path, h2_events: list[dict], h2_probes: list[dict]) -> None:
+    """A two-node run: h0 schedules one zone1 record at 13 s, h2 runs `h2_probes` and logs `h2_events`."""
+    start = {"event": "agent_start", "t0_ms": T0_PROBE, "ts_ms": T0_PROBE + 100}
+    _write_run(
+        run_dir,
+        {"h0": [{**start, "node": "h0"}], "h2": [{**start, "node": "h2"}, *h2_events]},
+        meta={"valid": True, "flags": []},
+    )
+    schedule = [{"at_s": 13.0, "zone": "zone1", "disaster": "flood", "media": "video"}]
+    _write_configs(run_dir, {"h0": _agent_config("h0", schedule, []), "h2": _agent_config("h2", [], h2_probes)})
+
+
+def test_restart_duplicate_first_probe_and_unfired_last_is_unclassified(tmp_path: Path):
+    """A re-run first probe plus a never-fired last one cancel in the counts; a second life must still block pairing.
+
+    The crash lands between probe_discovered(15 s) and the restart-cursor
+    update, so the 20 s life re-runs the 15 s probe; the 25 s probe then
+    succeeds and the 125 s one never fires. Index pairing would shift the
+    25 s success onto the 125 s probe and report established 0/1.
+    """
+    run_dir = tmp_path / "store" / "test" / "p0" / "1"
+    _write_h0_h2_run(
+        run_dir,
+        [
+            _discovered(15.0, 0),
+            {"event": "agent_start", "node": "h2", "t0_ms": T0_PROBE, "ts_ms": T0_PROBE + 20_000},
+            _discovered(20.0, 0),
+            _discovered(25.0, 1),
+            _retrieved(25.0, True),
+        ],
+        [{"at_s": 15.0, "zone": "zone3"}, {"at_s": 25.0, "zone": "zone1"}, {"at_s": 125.0, "zone": "zone3"}],
+    )
+    run = analyze_run(0.0, 1, str(run_dir))
+    assert run.probe_truth_error == "h2: 2 agent_start lines (restarted), probe pairing is ambiguous"
+    assert (run.probe_established, run.probe_established_discovered) == (None, None)
+    assert [r["probe_class"] for r in run.probe_rows] == [None, None, None]
+    assert run.probe_issued == 3
+    assert run.probe_discovered == 1
+
+
+def test_event_earlier_than_its_paired_probe_is_unclassified(tmp_path: Path):
+    """Within one life, a probe_discovered stamped before its paired probe's scheduled instant is a wrong pairing."""
+    run_dir = tmp_path / "store" / "test" / "p0" / "1"
+    _write_h0_h2_run(
+        run_dir,
+        [_discovered(15.0, 1), _retrieved(15.0, True), _discovered(20.0, 1), _retrieved(20.0, True)],
+        [{"at_s": 15.0, "zone": "zone1"}, {"at_s": 25.0, "zone": "zone1"}],
+    )
+    run = analyze_run(0.0, 1, str(run_dir))
+    assert run.probe_truth_error == (
+        f"h2: probe_discovered at ts_ms {T0_PROBE + 20_003} is earlier than its paired probe's scheduled at_s 25.0"
+    )
+    assert run.probe_established is None
+    assert [r["probe_class"] for r in run.probe_rows] == [None, None]
+
+
+def test_summary_reports_probe_truth_coverage_for_mixed_runs(tmp_path: Path):
+    """One run with ground truth and one without: the established rate stands on 1 run, and summary.csv says so."""
+    store = tmp_path / "store"
+    _probe_truth_run(store / "test" / "p0" / "1")
+    _probe_truth_run(store / "test" / "p0" / "2", configs=False)
+    outdir = tmp_path / "out"
+    aggregate(str(store), "test", str(outdir), include_undone=False)
+    summary = _read_csv(outdir / "summary.csv")[0]
+    assert {
+        k: summary[k]
+        for k in (
+            "n_valid",
+            "probe_issued_total",
+            "probe_discovered_total",
+            "n_runs_probe_truth",
+            "n_runs_probe_truth_missing",
+            "probe_unclassified_total",
+            "probe_none_total",
+            "probe_fresh_total",
+            "probe_established_total",
+            "probe_established_discovered",
+            "probe_established_rate",
+        )
+    } == {
+        "n_valid": "2",
+        "probe_issued_total": "10",
+        "probe_discovered_total": "6",
+        "n_runs_probe_truth": "1",
+        "n_runs_probe_truth_missing": "1",
+        "probe_unclassified_total": "5",
+        "probe_none_total": "1",
+        "probe_fresh_total": "2",
+        "probe_established_total": "2",
+        "probe_established_discovered": "1",
+        "probe_established_rate": "0.5",
+    }
 
 
 TRIAL_MANUAL_STORE = "/home/lab_shared/semindex-eval"

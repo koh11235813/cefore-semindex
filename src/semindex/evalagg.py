@@ -49,7 +49,10 @@ one a later effort picks -- can read a table directly, no reshaping:
   `probe_established_*` columns (rate + Wilson interval over probes
   whose oldest matching record is at least PROBE_FRESH_S old) are the
   system's own miss rate, with `probe_none_total`/`probe_fresh_total`
-  alongside.
+  alongside. Those class columns cover only the included runs that have
+  ground truth (`n_runs_probe_truth`; `n_runs_probe_truth_missing` runs
+  and their `probe_unclassified_total` in-window probes are left out),
+  never the full `probe_issued_total`.
 - decisions.csv: one row per (p, kind, field) -- see `build_decisions_rows`
   for the full field list and why a boolean field (`truncated`) reports
   a `frequency` instead of a median.
@@ -752,19 +755,47 @@ def load_run_configs(run_dir: str, nodes: dict[str, list[dict]]) -> tuple[dict[s
     return configs, None
 
 
+# How much earlier than its scheduled instant (t0_ms + at_s*1000) a
+# paired probe_discovered's ts_ms may be before the pairing is rejected.
+# agent.py's _drain_probes only fires a probe once `now - t0_ms/1000 >=
+# at_s`, and EventWriter stamps probe_discovered at write time, after
+# that check, rounded to the nearest ms -- so on the node's own
+# agent_start t0 a correct pairing is never more than 0.5 ms early. The
+# rest of the margin covers runs with no agent_start line, where t0 is
+# the run's derived one (the scheduler rung's measured spread is under
+# 25 ms, see `_t0_from_results`). A wrong pairing is off by whole probe
+# intervals (seconds), far outside this.
+_PROBE_EARLY_SLACK_MS = 100.0
+
+
 def _probe_rows(
-    nodes: dict[str, list[dict]], configs: dict[str, AgentConfig] | None, window_start_ms: float, window_end_ms: float
+    nodes: dict[str, list[dict]],
+    configs: dict[str, AgentConfig] | None,
+    run_t0_ms: float,
+    window_start_ms: float,
+    window_end_ms: float,
 ) -> tuple[list[dict], str | None]:
     """One row per in-window probe, joined with its config query and ground-truth class when `configs` allows.
 
-    Pairing: agent.py fires a node's probes in at_s order (it sorts them,
-    and its restart cursor only skips already-fired ones), writing one
-    probe_discovered each, so the k-th probe_discovered in a node's file
-    is the k-th config probe by at_s. That only holds when the counts
-    agree; if any node's do not (a crash between the event and the
-    cursor update, a lost tail of events, a stop before the last probe),
-    which probe went missing cannot be told from counts alone, so the
-    whole run is left unclassified (returned error) instead of guessed.
+    Pairing: agent.py fires a node's probes in at_s order (it sorts them),
+    writing one probe_discovered each, so within ONE life the k-th
+    probe_discovered in a node's file is the k-th config probe by at_s.
+    Any doubt leaves the whole run unclassified (returned error) instead
+    of guessed:
+
+    - a node with more than one life (more than one agent_start line).
+      2026-10-23 review fix: agent.py writes probe_discovered before
+      persisting its restart cursor, so a crash in between re-runs that
+      probe in the next life while a later one may never fire -- the
+      counts cancel and still agree, yet every pairing after the
+      duplicate is shifted by one. Stage 1's validity already requires
+      exactly one agent_start per node, so this costs nothing on real data.
+    - counts that disagree (a lost tail of events, a stop before the
+      last probe): which probe is missing cannot be told from counts.
+    - an event stamped earlier than its paired probe's scheduled instant
+      minus `_PROBE_EARLY_SLACK_MS`: the agent never fires a probe early,
+      so such a pairing is provably wrong.
+
     The window cut is applied after pairing, on discovered_ts_ms like the
     existing probe counts, so the two always count the same probes.
     """
@@ -776,10 +807,29 @@ def _probe_rows(
     paired: dict[str, list[ScheduledProbe]] = {}
     if configs is not None:
         for node in sorted(set(pairs_by_node) | set(configs), key=_node_sort_key):
+            starts = [e for e in nodes.get(node, []) if e.get("event") == "agent_start"]
+            if len(starts) > 1:
+                error = f"{node}: {len(starts)} agent_start lines (restarted), probe pairing is ambiguous"
+                break
             probes = sorted(configs[node].probes, key=lambda e: e.at_s) if node in configs else []
-            n_events = len(pairs_by_node.get(node, []))
-            if n_events != len(probes):
-                error = f"{node}: {n_events} probe_discovered event(s) but {len(probes)} configured probe(s)"
+            node_pairs = pairs_by_node.get(node, [])
+            if len(node_pairs) != len(probes):
+                error = f"{node}: {len(node_pairs)} probe_discovered event(s) but {len(probes)} configured probe(s)"
+                break
+            node_t0_ms = float(starts[0]["t0_ms"]) if starts and "t0_ms" in starts[0] else run_t0_ms
+            early = next(
+                (
+                    (pair, probe)
+                    for pair, probe in zip(node_pairs, probes)
+                    if pair["discovered_ts_ms"] < node_t0_ms + probe.at_s * 1000.0 - _PROBE_EARLY_SLACK_MS
+                ),
+                None,
+            )
+            if early is not None:
+                error = (
+                    f"{node}: probe_discovered at ts_ms {early[0]['discovered_ts_ms']} is earlier than "
+                    f"its paired probe's scheduled at_s {early[1].at_s}"
+                )
                 break
             paired[node] = probes
     truth = configs is not None and error is None
@@ -917,7 +967,7 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
     sent_window, received_window = _window_control_bytes(nodes, window_start_ms, window_end_ms)
 
     configs, probe_truth_error = load_run_configs(run_dir, nodes)
-    probe_rows, pairing_error = _probe_rows(nodes, configs, window_start_ms, window_end_ms)
+    probe_rows, pairing_error = _probe_rows(nodes, configs, t0.t0_ms, window_start_ms, window_end_ms)
     probe_truth_error = probe_truth_error or pairing_error
     probe_issued = len(probe_rows)
     probe_discovered = sum(1 for row in probe_rows if row["match_count"] > 0)
@@ -1316,7 +1366,13 @@ SURVIVAL_FIELDS = [
 
 
 def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> list[dict]:
-    """summary.csv: per p, run-status counts (including n_incomplete), discovery/consistency/control-byte summaries, probe discovery rate."""
+    """summary.csv: per p, run-status counts (including n_incomplete), discovery/consistency/control-byte summaries, probe discovery rate.
+
+    The probe_none/fresh/established_* columns (and the established rate's
+    Wilson interval) cover only included runs with probe ground truth;
+    n_runs_probe_truth / n_runs_probe_truth_missing / probe_unclassified_total
+    say how much of the pooled set that is.
+    """
     by_p: dict[float, list[RunAnalysis]] = {}
     for run in analyses:
         by_p.setdefault(run.p, []).append(run)
@@ -1379,6 +1435,12 @@ def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> li
         established_discovered = _truth_total("probe_established_discovered")
         established_rate = established_discovered / established_total if established_total else None
         established_wilson = wilson_interval(established_discovered, established_total) if established_total else None
+        # Coverage of the established rate, so summary.csv alone says how
+        # many runs/probes it actually stands on (2026-10-23 review fix:
+        # n_valid and probe_issued_total also count runs without truth).
+        n_runs_probe_truth = len(with_truth)
+        n_runs_probe_truth_missing = len(included) - n_runs_probe_truth
+        probe_unclassified_total = sum(1 for r in included for row in r.probe_rows if row["probe_class"] is None)
 
         rows.append(
             {
@@ -1407,6 +1469,9 @@ def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> li
                 "probe_discovery_rate": rate,
                 "probe_discovery_rate_wilson_lo": wilson[0] if wilson else None,
                 "probe_discovery_rate_wilson_hi": wilson[1] if wilson else None,
+                "n_runs_probe_truth": n_runs_probe_truth,
+                "n_runs_probe_truth_missing": n_runs_probe_truth_missing,
+                "probe_unclassified_total": probe_unclassified_total,
                 "probe_none_total": _truth_total("probe_none"),
                 "probe_fresh_total": _truth_total("probe_fresh"),
                 "probe_established_total": established_total,
@@ -1450,6 +1515,9 @@ SUMMARY_FIELDS = [
     "probe_discovery_rate",
     "probe_discovery_rate_wilson_lo",
     "probe_discovery_rate_wilson_hi",
+    "n_runs_probe_truth",
+    "n_runs_probe_truth_missing",
+    "probe_unclassified_total",
     "probe_none_total",
     "probe_fresh_total",
     "probe_established_total",
