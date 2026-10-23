@@ -1,9 +1,9 @@
 """semindex.evalagg: aggregate stage-1 evaluation runs into map.md's metrics.
 
 Reads every (p, seed) run stored under `<store>/<stage>/p<p>/<seed>/`
-(semindex.evalgen's own layout, map.md "データの置き場所") and writes six
+(semindex.evalgen's own layout, map.md "データの置き場所") and writes seven
 CSV files into --out: runs.csv, discovery.csv, survival.csv,
-consistency.csv, summary.csv, decisions.csv. Nothing here duplicates
+consistency.csv, summary.csv, decisions.csv, probes.csv. Nothing here duplicates
 semindex.analyze's event discovery or pairing -- this module calls into
 it for event-reading, (origin, seq) creation times, control-byte summing
 and probe pairing, and only adds the window cut, censoring, and the
@@ -24,8 +24,11 @@ one a later effort picks -- can read a table directly, no reshaping:
   that case, never a misleading 0. Otherwise: counts (`n_records_created`, `n_pairs`,
   `n_delivered_in_window`, `n_censored`), control bytes strictly inside
   the window (per-node as a JSON cell, plus the total and the per-record
-  figure), probe counts, and which t0 rung won (`t0_source`) plus its
-  own cross-checks (`t0_agent_start_disagreement`, `t0_consistency_ms`).
+  figure), probe counts (plus per-class `probe_none`/`probe_fresh`/
+  `probe_established`/`probe_established_discovered`, empty with
+  `probe_truth_error` saying why when no ground truth could be built),
+  and which t0 rung won (`t0_source`) plus its own cross-checks
+  (`t0_agent_start_disagreement`, `t0_consistency_ms`).
 - discovery.csv: one row per (run, origin, seq, node) pair -- every
   processed run's rows, regardless of status (see `build_discovery_rows`
   for why). `latency_ms` empty when `censored` is true.
@@ -40,9 +43,22 @@ one a later effort picks -- can read a table directly, no reshaping:
   `n_incomplete`), pooled discovery-pair
   counts/censoring, KM-quantile latency/consistency medians, control
   bytes per record, and probe discovery rate with its Wilson interval.
+  That raw rate counts as misses probes that could not have matched
+  anything yet (a random query issued before any matching record
+  existed), so it mostly measures the query generator; the
+  `probe_established_*` columns (rate + Wilson interval over probes
+  whose oldest matching record is at least PROBE_FRESH_S old) are the
+  system's own miss rate, with `probe_none_total`/`probe_fresh_total`
+  alongside.
 - decisions.csv: one row per (p, kind, field) -- see `build_decisions_rows`
   for the full field list and why a boolean field (`truncated`) reports
   a `frequency` instead of a median.
+- probes.csv: one row per (run, in-window probe) -- the probe's own
+  config query, discovery/retrieval outcome, `oldest_match_age_s` (probe
+  at_s minus the earliest matching record scheduled at or before it, on
+  any node, from the run's stored agent configs) and `probe_class`
+  (none/fresh/established, see `classify_probe`). Re-threshold from
+  `oldest_match_age_s` here rather than from summary.csv.
 
 t0 (map.md "計測の窓"): every agent's own `elapsed_s` is `now -
 t0_ms/1000`, and `t0_ms` only ever reaches the agent as a CLI override
@@ -74,6 +90,7 @@ import sys
 from dataclasses import dataclass, field
 
 from semindex import evalgen
+from semindex.agent import AgentConfig, ScheduledProbe, ScheduledRecord, load_config
 from semindex.analyze import (
     _created_ts_by_key,
     _node_sort_key,
@@ -81,6 +98,7 @@ from semindex.analyze import (
     probe_pairs,
 )
 from semindex.check import CheckUsageError, agent_start_t0, agent_start_t0_values, read_results, results_ts_ms
+from semindex.store import attrs_match
 
 # Whether a figure step could even run in this interpreter. Checked once,
 # at import time, rather than inside main() on every invocation; a
@@ -103,6 +121,16 @@ _WILSON_Z = 1.959963984540054
 # so this module never carries its own copy of that number to drift from
 # evalgen's.
 _GRID_STEP_S = 0.5
+
+
+# How old (seconds) a probe's oldest matching record must be before a
+# miss counts against the system rather than against propagation still
+# in flight. Well above pilot2's p=0 discovery-latency Q3 (~3.5 s), so a
+# record this old has, in the no-disconnect case, almost surely reached
+# every node already: a miss on it is a real system miss. probes.csv
+# carries the raw oldest_match_age_s, so an analyst can re-threshold
+# without re-running this module.
+PROBE_FRESH_S = 5.0
 
 
 def _window_duration_s() -> float:
@@ -522,6 +550,16 @@ class RunAnalysis:
     probe_issued: int = 0
     probe_discovered: int = 0
     probe_retrieved: int = 0
+    # One dict per in-window probe (see `_probe_rows`). The class counts
+    # below are None -- never 0 -- whenever `probe_truth_error` is set:
+    # no ground truth could be built, which is not the same as "no probe
+    # fell into that class".
+    probe_rows: list[dict] = field(default_factory=list)
+    probe_truth_error: str | None = None
+    probe_none: int | None = None
+    probe_fresh: int | None = None
+    probe_established: int | None = None
+    probe_established_discovered: int | None = None
     decision_rows: list[dict] = field(default_factory=list)  # kind, in_flight, missing (list), wait_s
 
 
@@ -651,6 +689,127 @@ def _window_control_bytes(
     return sent, received
 
 
+# -- probe ground truth --------------------------------------------------------
+
+
+def oldest_match_age_s(probe: ScheduledProbe, records: list[ScheduledRecord]) -> float | None:
+    """`probe.at_s` minus the earliest at_s of any record matching its query that was scheduled at or before it.
+
+    None when no such record exists anywhere: that probe could not have
+    matched no matter how well the system worked. `records` is every
+    node's config schedule pooled -- a probe queries the probing node's
+    own copy of the whole Semantic Index, and every at_s shares the one
+    t0, so no clock conversion is needed. The rule is the agent's own
+    (`semindex.store.attrs_match`); records are never deleted or expired
+    from a Store, so "scheduled at or before the probe" is the only time
+    condition.
+    """
+    matching = [
+        r.at_s
+        for r in records
+        if r.at_s <= probe.at_s and attrs_match(r, zone=probe.zone, disaster=probe.disaster, media=probe.media)
+    ]
+    return probe.at_s - min(matching) if matching else None
+
+
+def classify_probe(age_s: float | None) -> str:
+    """`none` (no matching record yet), `fresh` (age < PROBE_FRESH_S) or `established` (age >= PROBE_FRESH_S)."""
+    if age_s is None:
+        return "none"
+    return "fresh" if age_s < PROBE_FRESH_S else "established"
+
+
+def load_run_configs(run_dir: str, nodes: dict[str, list[dict]]) -> tuple[dict[str, AgentConfig] | None, str | None]:
+    """Every node's stored agent config under `run_dir`, keyed by node; or (None, why not).
+
+    evalrun copies evalgen's generated `<name>/<node>.json` verbatim into
+    the run dir (and the hand-stored trial-manual sample keeps them under
+    `agent-configs/`), so the one directory one level down holding
+    `h*.json` is the config set, whatever it is called. Parsed through
+    agent.load_config so a probe's unspecified fields become None exactly
+    as the agent itself saw them. More than one such directory, an
+    unreadable/invalid file, or a node that logged events without a
+    config all mean no ground truth: a partial schedule would make
+    `oldest_match_age_s` silently wrong rather than visibly missing.
+    """
+    pattern = os.path.join(run_dir, "*", "h*.json")
+    paths = sorted(glob.glob(pattern))
+    if not paths:
+        return None, f"no agent configs found at {pattern}"
+    dirs = sorted({os.path.dirname(path) for path in paths})
+    if len(dirs) > 1:
+        return None, f"agent configs in more than one directory: {', '.join(dirs)}"
+    configs: dict[str, AgentConfig] = {}
+    for path in paths:
+        try:
+            config = load_config(path)
+        except (OSError, ValueError) as exc:  # ConfigError and json.JSONDecodeError are both ValueErrors
+            return None, f"{path}: {exc}"
+        configs[config.node] = config
+    missing = sorted(set(nodes) - set(configs), key=_node_sort_key)
+    if missing:
+        return None, f"no agent config for node(s) {', '.join(missing)}"
+    return configs, None
+
+
+def _probe_rows(
+    nodes: dict[str, list[dict]], configs: dict[str, AgentConfig] | None, window_start_ms: float, window_end_ms: float
+) -> tuple[list[dict], str | None]:
+    """One row per in-window probe, joined with its config query and ground-truth class when `configs` allows.
+
+    Pairing: agent.py fires a node's probes in at_s order (it sorts them,
+    and its restart cursor only skips already-fired ones), writing one
+    probe_discovered each, so the k-th probe_discovered in a node's file
+    is the k-th config probe by at_s. That only holds when the counts
+    agree; if any node's do not (a crash between the event and the
+    cursor update, a lost tail of events, a stop before the last probe),
+    which probe went missing cannot be told from counts alone, so the
+    whole run is left unclassified (returned error) instead of guessed.
+    The window cut is applied after pairing, on discovered_ts_ms like the
+    existing probe counts, so the two always count the same probes.
+    """
+    pairs_by_node: dict[str, list[dict]] = {}
+    for pair in probe_pairs(nodes):
+        pairs_by_node.setdefault(pair["node"], []).append(pair)
+
+    error = None
+    paired: dict[str, list[ScheduledProbe]] = {}
+    if configs is not None:
+        for node in sorted(set(pairs_by_node) | set(configs), key=_node_sort_key):
+            probes = sorted(configs[node].probes, key=lambda e: e.at_s) if node in configs else []
+            n_events = len(pairs_by_node.get(node, []))
+            if n_events != len(probes):
+                error = f"{node}: {n_events} probe_discovered event(s) but {len(probes)} configured probe(s)"
+                break
+            paired[node] = probes
+    truth = configs is not None and error is None
+    records = [r for config in configs.values() for r in config.schedule] if truth else []
+
+    rows = []
+    for node, pairs in pairs_by_node.items():
+        for idx, pair in enumerate(pairs):
+            if not (window_start_ms <= pair["discovered_ts_ms"] <= window_end_ms):
+                continue
+            probe = paired[node][idx] if truth else None
+            age = oldest_match_age_s(probe, records) if probe is not None else None
+            retrieved = pair["retrieved"]
+            rows.append(
+                {
+                    "node": node,
+                    "probe_at_s": probe.at_s if probe else None,
+                    "zone": probe.zone if probe else None,
+                    "disaster": probe.disaster if probe else None,
+                    "media": probe.media if probe else None,
+                    "discovered_ts_ms": pair["discovered_ts_ms"],
+                    "match_count": pair["match_count"],
+                    "retrieved_success": retrieved.get("success") if retrieved is not None else None,
+                    "oldest_match_age_s": age,
+                    "probe_class": classify_probe(age) if probe is not None else None,
+                }
+            )
+    return rows, error
+
+
 def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
     """Build one run's full RunAnalysis: window cut, discovery/consistency pairs, control bytes, probes, decisions.
 
@@ -757,16 +916,19 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
 
     sent_window, received_window = _window_control_bytes(nodes, window_start_ms, window_end_ms)
 
-    probe_rows = [
-        p_pair
-        for p_pair in probe_pairs(nodes)
-        if window_start_ms <= p_pair["discovered_ts_ms"] <= window_end_ms
-    ]
+    configs, probe_truth_error = load_run_configs(run_dir, nodes)
+    probe_rows, pairing_error = _probe_rows(nodes, configs, window_start_ms, window_end_ms)
+    probe_truth_error = probe_truth_error or pairing_error
     probe_issued = len(probe_rows)
     probe_discovered = sum(1 for row in probe_rows if row["match_count"] > 0)
-    probe_retrieved = sum(
-        1 for row in probe_rows if row["retrieved"] is not None and row["retrieved"].get("success") is True
-    )
+    probe_retrieved = sum(1 for row in probe_rows if row["retrieved_success"] is True)
+    class_counts: dict[str, int | None] = {"none": None, "fresh": None, "established": None}
+    probe_established_discovered = None
+    if probe_truth_error is None:
+        class_counts = {c: sum(1 for row in probe_rows if row["probe_class"] == c) for c in class_counts}
+        probe_established_discovered = sum(
+            1 for row in probe_rows if row["probe_class"] == "established" and row["match_count"] > 0
+        )
 
     decision_rows: list[dict] = []
     for events in nodes.values():
@@ -854,6 +1016,12 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
         probe_issued=probe_issued,
         probe_discovered=probe_discovered,
         probe_retrieved=probe_retrieved,
+        probe_rows=probe_rows,
+        probe_truth_error=probe_truth_error,
+        probe_none=class_counts["none"],
+        probe_fresh=class_counts["fresh"],
+        probe_established=class_counts["established"],
+        probe_established_discovered=probe_established_discovered,
         decision_rows=decision_rows,
     )
 
@@ -948,6 +1116,11 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "probe_issued": run.probe_issued,
                 "probe_discovered": run.probe_discovered,
                 "probe_retrieved": run.probe_retrieved,
+                "probe_none": run.probe_none,
+                "probe_fresh": run.probe_fresh,
+                "probe_established": run.probe_established,
+                "probe_established_discovered": run.probe_established_discovered,
+                "probe_truth_error": run.probe_truth_error,
                 "t0_ms": run.t0_ms,
                 "t0_source": run.t0_source,
                 "t0_agent_start_disagreement": run.t0_agent_start_disagreement,
@@ -976,6 +1149,11 @@ RUNS_FIELDS = [
     "probe_issued",
     "probe_discovered",
     "probe_retrieved",
+    "probe_none",
+    "probe_fresh",
+    "probe_established",
+    "probe_established_discovered",
+    "probe_truth_error",
     "t0_ms",
     "t0_source",
     "t0_agent_start_disagreement",
@@ -1030,6 +1208,27 @@ def build_consistency_rows(analyses: list[RunAnalysis]) -> list[dict]:
 
 
 CONSISTENCY_FIELDS = ["p", "seed", "origin", "seq", "time_ms", "censored"]
+
+
+def build_probes_rows(analyses: list[RunAnalysis]) -> list[dict]:
+    """probes.csv: one row per (run, in-window probe), every run regardless of status (like discovery.csv)."""
+    return [{"p": run.p, "seed": run.seed, **row} for run in analyses for row in run.probe_rows]
+
+
+PROBES_FIELDS = [
+    "p",
+    "seed",
+    "node",
+    "probe_at_s",
+    "zone",
+    "disaster",
+    "media",
+    "discovered_ts_ms",
+    "match_count",
+    "retrieved_success",
+    "oldest_match_age_s",
+    "probe_class",
+]
 
 
 def _included(analyses: list[RunAnalysis], include_unknown: bool) -> list[RunAnalysis]:
@@ -1166,6 +1365,20 @@ def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> li
         probe_discovered_total = sum(r.probe_discovered for r in included)
         rate = probe_discovered_total / probe_issued_total if probe_issued_total else None
         wilson = wilson_interval(probe_discovered_total, probe_issued_total)
+        # Pooled only over included runs that HAVE ground truth (class
+        # counts not None: neither probe_truth_error nor analysis_error
+        # set), so none+fresh+established can be less than
+        # probe_issued_total; all None when no included run had it.
+        with_truth = [r for r in included if r.probe_established is not None]
+
+        def _truth_total(attr: str) -> int | None:
+            """Sum of one per-run class count over `with_truth`; None when there is no such run."""
+            return sum(getattr(r, attr) for r in with_truth) if with_truth else None
+
+        established_total = _truth_total("probe_established")
+        established_discovered = _truth_total("probe_established_discovered")
+        established_rate = established_discovered / established_total if established_total else None
+        established_wilson = wilson_interval(established_discovered, established_total) if established_total else None
 
         rows.append(
             {
@@ -1194,6 +1407,13 @@ def build_summary_rows(analyses: list[RunAnalysis], include_unknown: bool) -> li
                 "probe_discovery_rate": rate,
                 "probe_discovery_rate_wilson_lo": wilson[0] if wilson else None,
                 "probe_discovery_rate_wilson_hi": wilson[1] if wilson else None,
+                "probe_none_total": _truth_total("probe_none"),
+                "probe_fresh_total": _truth_total("probe_fresh"),
+                "probe_established_total": established_total,
+                "probe_established_discovered": established_discovered,
+                "probe_established_rate": established_rate,
+                "probe_established_rate_wilson_lo": established_wilson[0] if established_wilson else None,
+                "probe_established_rate_wilson_hi": established_wilson[1] if established_wilson else None,
             }
         )
     return rows
@@ -1230,6 +1450,13 @@ SUMMARY_FIELDS = [
     "probe_discovery_rate",
     "probe_discovery_rate_wilson_lo",
     "probe_discovery_rate_wilson_hi",
+    "probe_none_total",
+    "probe_fresh_total",
+    "probe_established_total",
+    "probe_established_discovered",
+    "probe_established_rate",
+    "probe_established_rate_wilson_lo",
+    "probe_established_rate_wilson_hi",
 ]
 
 
@@ -1350,7 +1577,7 @@ DECISIONS_FIELDS = ["p", "kind", "decision_count", "field", "n", "median", "q1",
 def aggregate(
     store: str, stage: str, outdir: str, include_undone: bool, include_unknown: bool = False
 ) -> list[RunAnalysis]:
-    """Discover every run, analyze the ones this call will process, write all six CSVs into `outdir`.
+    """Discover every run, analyze the ones this call will process, write all seven CSVs into `outdir`.
 
     Returns every run's RunAnalysis -- every discovered run gets one now,
     including a run missing its DONE marker. `analyze_run` itself no
@@ -1391,7 +1618,13 @@ def aggregate(
             analyses.append(RunAnalysis(p=ref.p, seed=ref.seed, status="incomplete", flags=[]))
             continue
         try:
-            analyses.append(analyze_run(ref.p, ref.seed, ref.run_dir))
+            run = analyze_run(ref.p, ref.seed, ref.run_dir)
+            analyses.append(run)
+            if run.analysis_error is None and run.probe_truth_error is not None:
+                print(
+                    f"semindex.evalagg: {ref.run_dir}: probe ground truth unavailable: {run.probe_truth_error}",
+                    file=sys.stderr,
+                )
         except CheckUsageError as exc:
             # Last-resort safety net: analyze_run's own try/except already
             # turns an unreadable run into a RunAnalysis with
@@ -1417,6 +1650,7 @@ def aggregate(
     _write_csv(
         os.path.join(outdir, "decisions.csv"), DECISIONS_FIELDS, build_decisions_rows(analyses, include_unknown)
     )
+    _write_csv(os.path.join(outdir, "probes.csv"), PROBES_FIELDS, build_probes_rows(analyses))
     if not FIGURES_AVAILABLE:
         print("semindex.evalagg: matplotlib not importable in this venv -- wrote CSVs only, no figures", file=sys.stderr)
     return analyses
@@ -1427,7 +1661,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--store", required=True, help="Root directory holding <store>/<stage>/p<p>/<seed>/ runs")
     parser.add_argument("--stage", required=True, help="Stage label (the <stage> path component under --store)")
-    parser.add_argument("--out", required=True, dest="outdir", help="Directory to write the six CSV files into")
+    parser.add_argument("--out", required=True, dest="outdir", help="Directory to write the seven CSV files into")
     parser.add_argument(
         "--include-undone",
         action="store_true",

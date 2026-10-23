@@ -19,18 +19,22 @@ import pytest
 
 from semindex import evalgen, evalrun
 from semindex.check import CheckUsageError
+from semindex.agent import ScheduledProbe, ScheduledRecord
 from semindex.evalagg import (
+    PROBE_FRESH_S,
     RunAnalysis,
     Sample,
     aggregate,
     analyze_run,
     build_decisions_rows,
+    classify_probe,
     derive_t0_ms,
     discover_runs,
     kaplan_meier_steps,
     km_delivered_fraction_at,
     km_quantile,
     median_q1_q3,
+    oldest_match_age_s,
     read_meta,
     run_has_done_marker,
     wilson_interval,
@@ -890,8 +894,8 @@ def test_analyze_run_run_c_derives_t0_via_scheduler_and_hop_distance_two(synthet
     assert rows["h2"]["censored"] is True  # stored after window end
 
 
-def test_aggregate_writes_all_six_csvs_with_expected_rows(synthetic_store: Path, tmp_path: Path):
-    """Aggregate writes all six csvs with expected rows (--include-unknown, so the synthetic
+def test_aggregate_writes_all_seven_csvs_with_expected_rows(synthetic_store: Path, tmp_path: Path):
+    """Aggregate writes all seven csvs with expected rows (--include-unknown, so the synthetic
 
     tree's two unknown runs are pooled -- see the sibling test below for
     the default, exclude-unknown behaviour).
@@ -899,7 +903,15 @@ def test_aggregate_writes_all_six_csvs_with_expected_rows(synthetic_store: Path,
     outdir = tmp_path / "out"
     aggregate(str(synthetic_store), "test", str(outdir), include_undone=False, include_unknown=True)
 
-    for name in ("runs.csv", "discovery.csv", "survival.csv", "consistency.csv", "summary.csv", "decisions.csv"):
+    for name in (
+        "runs.csv",
+        "discovery.csv",
+        "survival.csv",
+        "consistency.csv",
+        "summary.csv",
+        "decisions.csv",
+        "probes.csv",
+    ):
         assert (outdir / name).is_file()
 
     runs = _read_csv(outdir / "runs.csv")
@@ -1187,6 +1199,309 @@ def test_aggregate_keeps_an_unreadable_run_counted_rather_than_dropping_it(tmp_p
 
 # -- real-sample smoke test ------------------------------------------------
 
+# -- probe ground truth (oldest_match_age_s / classify_probe / probes.csv) --
+
+
+def _rec(at_s: float, zone: str, disaster: str = "unknown", media: str = "video") -> ScheduledRecord:
+    """One config schedule entry as agent.validate_config builds it; content_name is irrelevant to matching."""
+    return ScheduledRecord(at_s=at_s, content_name="ccnx:/content/x/body", zone=zone, disaster=disaster, media=media)
+
+
+def _probe(
+    at_s: float, zone: str | None = None, disaster: str | None = None, media: str | None = None
+) -> ScheduledProbe:
+    """One config probes entry as agent.validate_config builds it (None = field left out = wildcard)."""
+    return ScheduledProbe(at_s=at_s, zone=zone, disaster=disaster, media=media)
+
+
+def test_classify_probe_boundary_age_exactly_fresh_threshold_is_established():
+    """Age exactly PROBE_FRESH_S is established; just under is fresh; no matching record is none."""
+    assert PROBE_FRESH_S == 5.0
+    assert classify_probe(None) == "none"
+    assert classify_probe(0.0) == "fresh"
+    assert classify_probe(4.999) == "fresh"
+    assert classify_probe(5.0) == "established"
+    assert classify_probe(60.0) == "established"
+
+
+def test_oldest_match_age_s_uses_earliest_matching_record_across_origins_and_wildcards():
+    """Records from two origins pooled; unspecified probe fields are wildcards; later records never count."""
+    records = [
+        _rec(13.0, "zone1", "flood", "video"),  # origin A
+        _rec(11.0, "zone1", "collapse", "image"),  # origin B -- the earliest zone1 record
+        _rec(12.0, "zone2", "flood", "video"),  # origin B
+        _rec(16.0, "zone3", "fire", "sensor"),  # after every probe below but one
+    ]
+    assert oldest_match_age_s(_probe(15.0, zone="zone1"), records) == 4.0
+    assert oldest_match_age_s(_probe(15.0, zone="zone1", disaster="flood"), records) == 2.0
+    assert oldest_match_age_s(_probe(15.0, disaster="flood"), records) == 3.0
+    assert oldest_match_age_s(_probe(15.0, media="video", zone="zone2"), records) == 3.0
+    assert oldest_match_age_s(_probe(15.0), records) == 4.0  # all three fields wildcard
+    assert oldest_match_age_s(_probe(10.0, zone="zone1"), records) is None  # scheduled only after the probe
+    assert oldest_match_age_s(_probe(15.0, zone="zone3"), records) is None
+    assert oldest_match_age_s(_probe(16.0, zone="zone3"), records) == 0.0  # same instant counts
+    assert oldest_match_age_s(_probe(15.0, zone="zone1", media="sensor"), records) is None  # AND, not OR
+
+
+def _agent_config(node: str, schedule: list[dict], probes: list[dict]) -> dict:
+    """A stored agent config shaped like evalgen's own output (placeholders included) that agent.load_config accepts."""
+    return {
+        "cefore_conf_dir": "/placeholder-overridden-by---cefore-conf-dir",
+        "counters_snapshot_at_s": [10.0],
+        "group": "test",
+        "neighbors": ["h1"] if node != "h1" else ["h0"],
+        "node": node,
+        "probes": probes,
+        "schedule": [{"content_name": f"ccnx:/content/{node}/body", **entry} for entry in schedule],
+        "state_dir": "/placeholder-overridden-by---state-dir",
+        "stop_at_s": 130.0,
+        "t0_ms": 0,
+    }
+
+
+def _write_configs(run_dir: Path, configs: dict[str, dict], dirname: str = "test_p0_seed1") -> None:
+    """Write each node's agent config to `<run_dir>/<dirname>/<node>.json`, evalrun's own stored layout."""
+    config_dir = run_dir / dirname
+    config_dir.mkdir(parents=True, exist_ok=True)
+    for node, config in configs.items():
+        with open(config_dir / f"{node}.json", "w", encoding="utf-8") as f:
+            json.dump(config, f)
+
+
+T0_PROBE = 2_000_000_000_000.0
+
+# h0 creates two records; h2 runs four probes, one of each interesting
+# kind. Ages (probe at_s minus earliest matching record at_s):
+#   15 zone1 -> 15-13 = 2.0 fresh, discovered
+#   18 zone1 -> 18-13 = 5.0 established (boundary), discovered + retrieved
+#   20 zone3 -> no zone3 record anywhere -> none
+#   25 zone2 -> 25-15 = 10.0 established, missed (match_count 0)
+# h2's own record (zone4, at 11) matches none of the probes but proves
+# h2's own schedule is pooled too: the 5th probe (h1, zone4 at 12) has
+# age 1.0 fresh and comes from a node that is not h2.
+_PROBE_SCHEDULES = {
+    "h0": [
+        {"at_s": 13.0, "zone": "zone1", "disaster": "flood", "media": "video"},
+        {"at_s": 15.0, "zone": "zone2", "disaster": "fire", "media": "image"},
+    ],
+    "h1": [],
+    "h2": [{"at_s": 11.0, "zone": "zone4", "disaster": "unknown", "media": "sensor"}],
+}
+_PROBE_PROBES = {
+    "h0": [],
+    "h1": [{"at_s": 12.0, "zone": "zone4"}],
+    # Deliberately NOT in at_s order: agent.py sorts them before firing.
+    "h2": [
+        {"at_s": 18.0, "zone": "zone1"},
+        {"at_s": 15.0, "zone": "zone1"},
+        {"at_s": 20.0, "zone": "zone3"},
+        {"at_s": 25.0, "zone": "zone2"},
+    ],
+}
+
+
+def _discovered(at_s: float, matches: int) -> dict:
+    """One probe_discovered line logged `at_s` seconds after T0_PROBE with `matches` dummy matches."""
+    return {
+        "event": "probe_discovered",
+        "ts_ms": T0_PROBE + at_s * 1000 + 3,
+        "matches": [{"origin": "h0", "seq": i + 1, "content_name": "ccnx:/content/h0/body"} for i in range(matches)],
+    }
+
+
+def _retrieved(at_s: float, success: bool) -> dict:
+    """The probe_retrieved line following a matched probe_discovered."""
+    return {
+        "event": "probe_retrieved",
+        "ts_ms": T0_PROBE + at_s * 1000 + 50,
+        "origin": "h0",
+        "seq": 1,
+        "content_name": "ccnx:/content/h0/body",
+        "success": success,
+        "bytes": 10,
+    }
+
+
+def _probe_truth_run(run_dir: Path, *, h2_probe_events: list[dict] | None = None, configs: bool = True) -> None:
+    """Write the probe-ground-truth fixture run (see _PROBE_SCHEDULES/_PROBE_PROBES) into `run_dir`."""
+    start = {"event": "agent_start", "t0_ms": T0_PROBE, "ts_ms": T0_PROBE + 100}
+    if h2_probe_events is None:
+        h2_probe_events = [
+            _discovered(15.0, 1),
+            _retrieved(15.0, False),
+            _discovered(18.0, 2),
+            _retrieved(18.0, True),
+            _discovered(20.0, 0),
+            _discovered(25.0, 0),
+        ]
+    _write_run(
+        run_dir,
+        {
+            "h0": [{**start, "node": "h0"}],
+            "h1": [{**start, "node": "h1"}, _discovered(12.0, 1), _retrieved(12.0, True)],
+            "h2": [{**start, "node": "h2"}, *h2_probe_events],
+        },
+        meta={"valid": True, "flags": []},
+    )
+    if configs:
+        _write_configs(run_dir, {n: _agent_config(n, _PROBE_SCHEDULES[n], _PROBE_PROBES[n]) for n in _PROBE_SCHEDULES})
+
+
+def test_analyze_run_classifies_each_probe_from_stored_configs(tmp_path: Path):
+    """Each in-window probe gets its config query, oldest_match_age_s and class, paired in config at_s order."""
+    run_dir = tmp_path / "store" / "test" / "p0" / "1"
+    _probe_truth_run(run_dir)
+    run = analyze_run(0.0, 1, str(run_dir))
+    assert run.probe_truth_error is None
+    assert run.probe_issued == 5
+    assert run.probe_discovered == 3
+    assert [
+        (r["node"], r["probe_at_s"], r["zone"], r["match_count"], r["oldest_match_age_s"], r["probe_class"])
+        for r in run.probe_rows
+    ] == [
+        ("h1", 12.0, "zone4", 1, 1.0, "fresh"),
+        ("h2", 15.0, "zone1", 1, 2.0, "fresh"),
+        ("h2", 18.0, "zone1", 2, 5.0, "established"),
+        ("h2", 20.0, "zone3", 0, None, "none"),
+        ("h2", 25.0, "zone2", 0, 10.0, "established"),
+    ]
+    assert [r["retrieved_success"] for r in run.probe_rows] == [True, False, True, None, None]
+    assert [r["disaster"] for r in run.probe_rows] == [None] * 5
+    assert run.probe_none == 1
+    assert run.probe_fresh == 2
+    assert run.probe_established == 2
+    assert run.probe_established_discovered == 1
+
+
+def test_aggregate_writes_probes_csv_and_established_summary_columns(tmp_path: Path):
+    """probes.csv has one row per in-window probe; summary/runs carry the class counts and established rate."""
+    store = tmp_path / "store"
+    _probe_truth_run(store / "test" / "p0" / "1")
+    outdir = tmp_path / "out"
+    aggregate(str(store), "test", str(outdir), include_undone=False)
+
+    probes = _read_csv(outdir / "probes.csv")
+    assert list(probes[0].keys()) == [
+        "p",
+        "seed",
+        "node",
+        "probe_at_s",
+        "zone",
+        "disaster",
+        "media",
+        "discovered_ts_ms",
+        "match_count",
+        "retrieved_success",
+        "oldest_match_age_s",
+        "probe_class",
+    ]
+    assert probes[2] == {
+        "p": "0.0",
+        "seed": "1",
+        "node": "h2",
+        "probe_at_s": "18.0",
+        "zone": "zone1",
+        "disaster": "",
+        "media": "",
+        "discovered_ts_ms": str(T0_PROBE + 18_003),
+        "match_count": "2",
+        "retrieved_success": "true",
+        "oldest_match_age_s": "5.0",
+        "probe_class": "established",
+    }
+    assert [r["probe_class"] for r in probes] == ["fresh", "fresh", "established", "none", "established"]
+
+    runs = _read_csv(outdir / "runs.csv")
+    assert (runs[0]["probe_none"], runs[0]["probe_fresh"], runs[0]["probe_established"]) == ("1", "2", "2")
+    assert runs[0]["probe_established_discovered"] == "1"
+    assert runs[0]["probe_truth_error"] == ""
+
+    summary = _read_csv(outdir / "summary.csv")[0]
+    # Existing columns unchanged: 3 of 5 probes discovered anything.
+    assert summary["probe_issued_total"] == "5"
+    assert summary["probe_discovered_total"] == "3"
+    assert summary["probe_discovery_rate"] == "0.6"
+    assert summary["probe_none_total"] == "1"
+    assert summary["probe_fresh_total"] == "2"
+    assert summary["probe_established_total"] == "2"
+    assert summary["probe_established_discovered"] == "1"
+    assert summary["probe_established_rate"] == "0.5"
+    lo, hi = wilson_interval(1, 2)
+    assert summary["probe_established_rate_wilson_lo"] == str(lo)
+    assert summary["probe_established_rate_wilson_hi"] == str(hi)
+
+
+def test_probe_count_mismatch_leaves_classes_empty_and_warns(tmp_path: Path, capsys: pytest.CaptureFixture):
+    """A node whose probe_discovered count differs from its config probes is never guessed at: whole run unclassified."""
+    store = tmp_path / "store"
+    run_dir = store / "test" / "p0" / "1"
+    # Only three of h2's four configured probes logged.
+    _probe_truth_run(
+        run_dir,
+        h2_probe_events=[_discovered(15.0, 0), _discovered(18.0, 0), _discovered(20.0, 0)],
+    )
+    run = analyze_run(0.0, 1, str(run_dir))
+    expected_error = "h2: 3 probe_discovered event(s) but 4 configured probe(s)"
+    assert run.probe_truth_error == expected_error
+    assert run.probe_issued == 4  # the existing, config-free counts are unaffected
+    assert (run.probe_none, run.probe_fresh, run.probe_established, run.probe_established_discovered) == (
+        None,
+        None,
+        None,
+        None,
+    )
+    assert [r["probe_class"] for r in run.probe_rows] == [None] * 4
+    assert [r["probe_at_s"] for r in run.probe_rows] == [None] * 4
+
+    outdir = tmp_path / "out"
+    aggregate(str(store), "test", str(outdir), include_undone=False)
+    err = capsys.readouterr().err
+    assert f"semindex.evalagg: {run_dir}: probe ground truth unavailable: {expected_error}\n" in err
+    runs = _read_csv(outdir / "runs.csv")
+    assert runs[0]["probe_established"] == ""
+    assert runs[0]["probe_truth_error"] == expected_error
+    summary = _read_csv(outdir / "summary.csv")[0]
+    assert summary["probe_issued_total"] == "4"
+    assert summary["probe_established_total"] == ""
+    assert summary["probe_established_rate"] == ""
+
+
+def test_missing_configs_leave_classes_empty_and_warn(tmp_path: Path, capsys: pytest.CaptureFixture):
+    """A run with no stored agent configs still aggregates; class columns are empty and stderr says why."""
+    store = tmp_path / "store"
+    run_dir = store / "test" / "p0" / "1"
+    _probe_truth_run(run_dir, configs=False)
+    run = analyze_run(0.0, 1, str(run_dir))
+    expected_error = f"no agent configs found at {run_dir}/*/h*.json"
+    assert run.probe_truth_error == expected_error
+    assert run.probe_issued == 5
+    assert run.probe_established is None
+    assert [r["probe_class"] for r in run.probe_rows] == [None] * 5
+
+    outdir = tmp_path / "out"
+    aggregate(str(store), "test", str(outdir), include_undone=False)
+    err = capsys.readouterr().err
+    assert f"semindex.evalagg: {run_dir}: probe ground truth unavailable: {expected_error}\n" in err
+    probes = _read_csv(outdir / "probes.csv")
+    assert len(probes) == 5
+    assert [r["probe_class"] for r in probes] == [""] * 5
+    assert [r["oldest_match_age_s"] for r in probes] == [""] * 5
+    assert probes[0]["match_count"] == "1"
+    summary = _read_csv(outdir / "summary.csv")[0]
+    assert summary["probe_none_total"] == ""
+    assert summary["probe_discovery_rate"] == "0.6"
+
+
+def test_config_missing_for_one_node_is_missing_configs(tmp_path: Path):
+    """A node that logged events but has no config makes the ground truth incomplete, so none is claimed."""
+    run_dir = tmp_path / "store" / "test" / "p0" / "1"
+    _probe_truth_run(run_dir)
+    (run_dir / "test_p0_seed1" / "h0.json").unlink()
+    run = analyze_run(0.0, 1, str(run_dir))
+    assert run.probe_truth_error == "no agent config for node(s) h0"
+    assert run.probe_established is None
+
+
 TRIAL_MANUAL_STORE = "/home/lab_shared/semindex-eval"
 TRIAL_MANUAL_STAGE = "trial-manual"
 
@@ -1231,7 +1546,15 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
     assert run.probe_discovered == 11
     assert run.probe_retrieved == 7
 
-    for name in ("runs.csv", "discovery.csv", "survival.csv", "consistency.csv", "summary.csv", "decisions.csv"):
+    for name in (
+        "runs.csv",
+        "discovery.csv",
+        "survival.csv",
+        "consistency.csv",
+        "summary.csv",
+        "decisions.csv",
+        "probes.csv",
+    ):
         assert (outdir / name).is_file()
     runs = _read_csv(outdir / "runs.csv")
     assert len(runs) == 1
