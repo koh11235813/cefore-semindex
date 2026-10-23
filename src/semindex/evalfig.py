@@ -65,6 +65,9 @@ _P_DASHES = [
     (0, (3, 2)),
     (0, (12, 3)),
 ]
+# Top of the fixed p scale colors are laid out on (see _p_styles); covers
+# every p the stage-1 sweep runs, with room for one more step.
+_P_COLOR_MAX = 0.5
 _SERIES_COLOR = "#2a78d6"
 _TEXT_PRIMARY = "#0b0b0b"
 _TEXT_SECONDARY = "#52514e"
@@ -129,21 +132,26 @@ def _footnote(fig, text: str) -> None:
 
 
 def _p_label(p: float) -> str:
-    """How a p value is written in legends and tick labels."""
-    return f"p={p:g}" if p != int(p) else f"p={p:.1f}"
+    """How a p value is written in legends: the same `{:g}` form as every p tick label ("p=0", "p=0.1")."""
+    return f"p={p:g}"
 
 
 def _p_styles(ps: list[float]) -> dict[float, tuple[str, object]]:
-    """(color, dash) per p: colors spread evenly over the ordinal ramp in ascending p, dashes cycled.
+    """(color, dash) per p, each a function of the p VALUE alone, never of which other p values are present.
 
-    Spread over the whole ramp (not the first n steps) so neighbouring
-    p values stay visibly apart when there are only a few of them.
+    Color: p's position on a fixed [0, _P_COLOR_MAX] scale picks the
+    ramp step, so the same p keeps the same color in every stage's
+    figures (a stage with only p=0.2 must not paint it the lightest
+    blue). The scale widens only if a larger p ever appears. Dash: p's
+    0.1-grid index modulo the pattern count, likewise value-keyed; the
+    sweep's p values are multiples of 0.1, so neighbours on that grid
+    always differ.
     """
-    ordered = sorted(set(ps))
+    scale_max = max([_P_COLOR_MAX, *ps])
     styles = {}
-    for i, p in enumerate(ordered):
-        idx = 0 if len(ordered) == 1 else round(i * (len(_P_RAMP) - 1) / (len(ordered) - 1))
-        styles[p] = (_P_RAMP[idx], _P_DASHES[i % len(_P_DASHES)])
+    for p in set(ps):
+        idx = round(p / scale_max * (len(_P_RAMP) - 1))
+        styles[p] = (_P_RAMP[idx], _P_DASHES[round(p * 10) % len(_P_DASHES)])
     return styles
 
 
@@ -198,16 +206,18 @@ def discovery_survival_figure(survival_rows: list[dict]):
     hops = sorted({hop for _, hop in groups})
     styles = _p_styles([p for p, _ in groups])
 
-    # The grid spans the whole window, but curves usually plateau long
-    # before its end; cut the x axis at the latest plateau (plus a margin)
-    # so the rise is readable, and say so in the footnote.
+    # The grid spans the whole window, but curves approach their final
+    # value long before its end, often through a long thin tail; cut the x
+    # axis at the earliest grid time where every curve is within 1 % of its
+    # own final value (rounded up to a 5 s tick), so the rise -- the part
+    # the figure is about -- gets the width, and say so in the footnote.
     window_end_s = max(row["t_s"] for row in survival_rows)
-    plateau_s = 0.0
+    reach_s = 0.0
     for rows in groups.values():
         rows.sort(key=lambda r: r["t_s"])
         final = rows[-1]["delivered_fraction"]
-        plateau_s = max(plateau_s, next(r["t_s"] for r in rows if r["delivered_fraction"] >= final - 1e-12))
-    x_max = min(window_end_s, max(5.0, 5.0 * math.ceil(plateau_s * 1.1 / 5.0)))
+        reach_s = max(reach_s, next(r["t_s"] for r in rows if r["delivered_fraction"] >= 0.99 * final))
+    x_max = min(window_end_s, max(5.0, 5.0 * math.ceil(reach_s / 5.0)))
 
     ncols = 1 if len(hops) == 1 else 2
     nrows = math.ceil(len(hops) / ncols)
@@ -219,7 +229,7 @@ def discovery_survival_figure(survival_rows: list[dict]):
         for p in sorted(p for p, h in groups if h == hop):
             rows = groups[(p, hop)]
             color, dash = styles[p]
-            label = f"{_p_label(p)}  ({rows[0]['n_censored']}/{rows[0]['n_pairs']} censored)"
+            label = f"{_p_label(p)} ({rows[0]['n_censored']}/{rows[0]['n_pairs']} censored)"
             line = ax.step(
                 [r["t_s"] for r in rows],
                 [r["delivered_fraction"] for r in rows],
@@ -244,7 +254,10 @@ def discovery_survival_figure(survival_rows: list[dict]):
         "KM keeps each one at risk for its own follow-up time."
     )
     if x_max < window_end_s:
-        note += f" x axis cut at {x_max:g} s: every curve is flat from there to the window end ({window_end_s:g} s)."
+        note += (
+            f" x axis cut at {x_max:g} s, where every curve is within 1 % of its final value"
+            f" (the grid runs to the window end, {window_end_s:g} s)."
+        )
     _footnote(fig, note)
     return fig
 
@@ -462,7 +475,7 @@ def control_bytes_figure(runs_rows: list[dict], summary_rows: list[dict]):
     _set_p_axis(ax, ps)
     ax.set_ylabel("control bytes sent per record [bytes]")
     fig.suptitle(title, fontsize=_FONT_SIZE + 2, color=_TEXT_PRIMARY)
-    _footnote(fig, "Sync-protocol bytes sent by all nodes inside the window, divided by records created in the run.")
+    _footnote(fig, "Sync-protocol bytes sent by all nodes inside the window / records created in that run.")
     return fig
 
 

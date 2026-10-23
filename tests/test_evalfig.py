@@ -144,8 +144,8 @@ def test_survival_figure_puts_each_groups_censored_count_in_its_legend():
     fig = evalfig.discovery_survival_figure(rows)
     legends = [[t.get_text() for t in ax.get_legend().get_texts()] for ax in fig.axes]
     assert legends == [
-        ["p=0.0  (0/4 censored)", "p=0.4  (4/4 censored)"],
-        ["p=0.0  (1/6 censored)"],
+        ["p=0 (0/4 censored)", "p=0.4 (4/4 censored)"],
+        ["p=0 (1/6 censored)"],
     ]
     assert [ax.get_title() for ax in fig.axes] == ["hop distance 1", "hop distance 2"]
 
@@ -188,3 +188,36 @@ def test_probe_figure_tolerates_a_wilson_bound_a_float_hair_below_a_rate_of_one(
     ]
     fig = evalfig.probe_established_figure(rows)
     assert _texts(fig) == ["110/110\n10 runs"]
+
+
+def _curve(p: float, hop: int, fracs: list[float]) -> list[dict]:
+    """survival rows for one (p, hop) curve on a 1 s grid, delivered fraction fracs[i] at t=i."""
+    return [_survival_row(p, hop, float(t), f, 10, 0) for t, f in enumerate(fracs)]
+
+
+def test_survival_x_limit_is_where_every_curve_is_within_one_percent_of_final_rounded_to_5s():
+    """x max = earliest t with every curve >= 0.99 x its final value (here 12 s), rounded up to 15 s.
+
+    The slow curve creeps from 0.995 to 1.0 only at t=30, so a "full
+    plateau" rule would give 35 s instead; the window runs to 60 s, so
+    the cap does not decide it either.
+    """
+    fast = [min(1.0, t / 7) for t in range(61)]
+    slow = [min(0.995, t / 12 * 0.99) if t < 30 else 1.0 for t in range(61)]
+    fig = evalfig.discovery_survival_figure(_curve(0.0, 1, fast) + _curve(0.4, 2, slow))
+    assert [ax.get_xlim() for ax in fig.axes] == [(0.0, 15.0), (0.0, 15.0)]
+
+
+def test_p_keeps_its_colour_and_dash_whichever_other_p_values_the_stage_has():
+    """p=0.2 is drawn identically alone and alongside p=0 and p=0.4 (style keyed by value, not rank)."""
+    flat = [1.0, 1.0]
+
+    def style_of_p02(ps: list[float]) -> tuple:
+        rows = [row for p in ps for row in _curve(p, 1, flat)]
+        (ax,) = evalfig.discovery_survival_figure(rows).axes
+        line = ax.get_lines()[ps.index(0.2)]
+        # Line2D has no public getter for a custom dash pattern (get_linestyle
+        # reports every one as "--"), so the unscaled pattern is read directly.
+        return line.get_color(), line._unscaled_dash_pattern
+
+    assert style_of_p02([0.2]) == style_of_p02([0.0, 0.2, 0.4])
