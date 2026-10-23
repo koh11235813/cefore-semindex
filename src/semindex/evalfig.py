@@ -63,7 +63,9 @@ _P_DASHES = [
     (0, (1, 1.5)),
     (0, (6, 2, 1, 2)),
     (0, (3, 2)),
-    (0, (12, 3)),
+    # Short enough that a legend handle shows at least two dashes; a
+    # longer dash read as a solid line there, i.e. as p=0.
+    (0, (7, 3)),
 ]
 # Top of the fixed p scale colors are laid out on (see _p_styles); covers
 # every p the stage-1 sweep runs, with room for one more step.
@@ -243,7 +245,7 @@ def discovery_survival_figure(survival_rows: list[dict]):
         ax.set_title(f"hop distance {hop}", fontsize=_FONT_SIZE + 1, color=_TEXT_PRIMARY)
         ax.set_xlim(0, x_max)
         ax.set_ylim(0, 1.02)
-        ax.legend(loc="lower right", fontsize=_FONT_SIZE - 1, frameon=False, handlelength=3)
+        ax.legend(loc="lower right", fontsize=_FONT_SIZE - 1, frameon=False, handlelength=4.5)
         ax.set_xlabel("time since record creation [s]")
         ax.set_ylabel("delivered fraction")
         # Shared axes: keep tick labels and axis titles on the outer panels only.
