@@ -795,7 +795,8 @@ def _probe_rows(
     - an event stamped earlier than its paired probe's scheduled instant
       minus `_PROBE_EARLY_SLACK_MS`, judged only against the node's own
       agent_start t0: the agent never fires a probe early, so such a
-      pairing is provably wrong. Skipped for a node without agent_start
+      pairing is wrong unless the wall clock stepped back by more than the
+      slack, and either way the pairing cannot be trusted. Skipped for a node without agent_start
       (see the constant's comment).
 
     The window cut is applied after pairing, on discovered_ts_ms like the

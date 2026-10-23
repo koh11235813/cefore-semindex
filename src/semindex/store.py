@@ -48,10 +48,9 @@ def attrs_match(record, *, zone: str | None, disaster: str | None, media: str | 
 
     `record` is anything carrying `.zone`/`.disaster`/`.media` (a stored
     schema.IndexRecord, or a config's not-yet-created agent.ScheduledRecord).
-    This is the one definition of "a probe matches a record":
-    `Store.query_by_attrs` (what the agent actually runs) and
-    semindex.evalagg's ground-truth reconstruction from configs both call
-    it, so the analysis can never drift from the live query's rule.
+    This is the one definition of "a probe matches a record", kept as a
+    pure function so that rebuilding ground truth from configs applies
+    exactly the rule the live index query applies, and the two cannot drift.
     """
     if zone is not None and record.zone != zone:
         return False

@@ -192,9 +192,8 @@ def node_probe_pairs(node: str, events: list[dict]) -> list[dict]:
     """One node's probe_discovered events, each paired with the probe_retrieved that followed it, in FILE order.
 
     File order is the agent's own firing order; ts_ms is wall clock and
-    can step backwards, so a caller that must line events up with the
-    config's probe list (semindex.evalagg) needs this order, not
-    `probe_pairs`' ts-sorted one.
+    can step backwards, so lining events up with a config's probe list
+    needs this order, not `probe_pairs`' ts-sorted one.
     """
     pairs = []
     discovered_idxs = [i for i, e in enumerate(events) if e.get("event") == "probe_discovered"]
