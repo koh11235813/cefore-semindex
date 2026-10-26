@@ -71,10 +71,12 @@ class SyncConfig:
     log_decisions: bool = True
 
 
-# How long past its Interest lifetime a state poll can still be answered:
-# Cefore v0.12 keeps a PIT entry for interest_lifetime + CefC_Pit_CleaningTime
-# (1 s; see tracker.DEFAULT_BACKOFF_INITIAL_S's comment), so Data for an older
-# poll has nowhere to go. _PollReplies drops unanswered polls past this.
+# 2026-10-26 fix: the poll-reply history grew by one entry per poll for a silent
+# neighbor. How long past its Interest lifetime a state poll can still be
+# answered: Cefore v0.12 keeps a PIT entry for interest_lifetime +
+# CefC_Pit_CleaningTime (1 s; see tracker.DEFAULT_BACKOFF_INITIAL_S's comment),
+# so Data for an older poll has nowhere to go. _PollReplies ignores replies to,
+# and drops, unanswered polls past this unless they are still the newest poll.
 POLL_REPLY_GRACE_S = 1.0
 
 
@@ -94,14 +96,18 @@ class _PollReplies:
     "判断の状態に足すもの") -- read-only bookkeeping for the `state_poll` decision state,
     never consulted by any scheduling decision.
 
-    Each reply is matched to its own poll by the epoch_ms in the reply's name: with
+    2026-10-26 fix: replies used to be attributed to the latest poll. Each reply
+    is now matched to its own poll by the epoch_ms in the reply's name: with
     an interval shorter than the Interest lifetime several polls are outstanding at
     once, and a late reply to poll N must not mark poll N+1 answered.
 
-    A poll's status is judged at decision time: "answered" once its reply has
-    arrived (even late, as long as the poll is still held -- see `_expire`), else "timed_out" once send time + interest_lifetime_ms <=
-    now -- CefpycoTransport's own deadline rule -- else "pending". It is judged here
-    from the clock rather than from the transport's timeout callback because
+    A reply to a poll is accepted iff, at reply time, that poll is still the
+    newest poll sent or the reply time is <= its send time + lifetime +
+    POLL_REPLY_GRACE_S; otherwise it is ignored (the poll stays timed out). A
+    poll's status is judged at decision time: "answered" once an accepted reply
+    has arrived (even after its lifetime), else "timed_out" once send time +
+    interest_lifetime_ms <= now -- CefpycoTransport's own deadline rule -- else
+    "pending". It is judged here from the clock rather than from the transport's timeout callback because
     Agent.step() runs that callback in poll() against a `now` read *before*
     on_tick's: a deadline falling between the two reads would still look pending
     to a callback-driven status although its lifetime had passed when the decision
@@ -114,8 +120,8 @@ class _PollReplies:
     # `expired_timeouts` below. An answered poll survives only while it is the
     # newest poll (its status is then last_poll_status).
     polls: list[_Poll] = field(default_factory=list)
-    # Polls sent after the newest answered one that passed lifetime +
-    # POLL_REPLY_GRACE_S unanswered and were dropped from `polls`. They count as
+    # Polls sent after the newest answered one that went past lifetime +
+    # POLL_REPLY_GRACE_S unanswered while not the newest, and were dropped from `polls`. They count as
     # timed out for good, which keeps `polls` bounded by how many polls fit in
     # lifetime + grace, however long a neighbor stays silent.
     expired_timeouts: int = 0
@@ -124,38 +130,51 @@ class _PollReplies:
         """Record a new poll sent at `now`; it is pending until answered or expired."""
         self.polls.append(_Poll(epoch_ms, now))
 
-    def replied(self, epoch_ms: int) -> None:
-        """Mark the poll whose name carried `epoch_ms` answered and drop everything older.
+    def replied(self, epoch_ms: int, now: float, lifetime_s: float) -> None:
+        """Apply a reply that arrived at `now` to the poll whose name carried `epoch_ms`.
 
-        A reply to a poll no longer held (dropped as expired, or older than an
-        answered one) changes nothing. Every expired poll is older than any poll
-        still held, so a reply to a held poll also clears `expired_timeouts`.
+        2026-10-26 fix: acceptance used to depend on whether `_expire` had
+        happened to run since the poll went stale; it is now decided from the
+        time alone, by the rule in the class docstring. An accepted reply marks
+        the poll answered and drops everything older. Every expired poll is
+        older than any poll still held, so it also clears `expired_timeouts`. A
+        reply to a poll no longer held (older than an answered one, or dropped
+        as expired -- which the time rule would reject anyway) changes nothing.
         """
         for index, poll in enumerate(self.polls):
-            if poll.epoch_ms == epoch_ms:
+            if poll.epoch_ms != epoch_ms:
+                continue
+            newest = index == len(self.polls) - 1
+            if newest or now <= poll.sent_at + lifetime_s + POLL_REPLY_GRACE_S:
                 poll.replied = True
                 del self.polls[:index]
                 self.expired_timeouts = 0
-                return
+            return
 
     def _expire(self, now: float, lifetime_s: float) -> None:
-        """Drop polls the reported values no longer need, oldest first; the newest
-        poll is always kept, since last_poll_status is its status.
+        """Drop the oldest polls the reported values no longer need, in one slice
+        deletion; the newest poll is always kept, since last_poll_status is its status.
 
         An answered poll at the front is no longer needed once a newer poll exists.
-        An unanswered one older than lifetime + POLL_REPLY_GRACE_S can no longer be
-        answered in practice (Cefore has dropped its PIT entry), so it is folded
-        into `expired_timeouts`.
+        An unanswered one whose reply would now be rejected (now > send time +
+        lifetime + POLL_REPLY_GRACE_S) is folded into `expired_timeouts`. Strictly
+        greater, matching `replied`: a reply exactly at that boundary is accepted.
+
+        2026-10-26 fix: dropping with pop(0) per poll moved every remaining entry
+        each time, quadratic when many polls expire at once (a long tick delay, or
+        a long interval chosen after short ones).
         """
-        while len(self.polls) > 1:
-            oldest = self.polls[0]
-            if oldest.replied:
-                self.polls.pop(0)
-            elif oldest.sent_at + lifetime_s + POLL_REPLY_GRACE_S <= now:
-                self.polls.pop(0)
+        cut = 0
+        while cut < len(self.polls) - 1:
+            poll = self.polls[cut]
+            if poll.replied:
+                cut += 1
+            elif poll.sent_at + lifetime_s + POLL_REPLY_GRACE_S < now:
+                cut += 1
                 self.expired_timeouts += 1
             else:
-                return
+                break
+        del self.polls[:cut]
 
     def snapshot(self, now: float, lifetime_s: float) -> tuple[str | None, int]:
         """(status of the most recent poll, consecutive timed-out polls) as of `now`.
@@ -443,7 +462,7 @@ class SyncEngine:
         # answering -- what the poll-reply status is there to tell the policy.
         replies = self._poll_replies.get(neighbor)
         if replies is not None:
-            replies.replied(poll_epoch_ms)
+            replies.replied(poll_epoch_ms, now, self._config.interest_lifetime_ms / 1000.0)
         try:
             decoded = holder_state.decode(payload)
         except holder_state.HolderStateError:

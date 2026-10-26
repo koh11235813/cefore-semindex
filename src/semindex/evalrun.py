@@ -846,8 +846,9 @@ def run_all(
     # own per-pair try/except (below) logging the identical failure once
     # per (p, seed) pair and still reporting the sweep as "ran".
     _validate_stage(stage)
-    # Same reasoning as the stage check above: bad k / interval choices would make
-    # every pair fail identically inside the loop's own try/except.
+    # 2026-10-26 fix: bad k / interval choices used to surface only inside the
+    # loop, failing every pair identically under its own try/except (same
+    # reasoning as the stage check above), so they are refused here once.
     evalgen.validate_settings(k, state_poll_interval_choices_s)
     if not allow_dirty:
         dirty = _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess)

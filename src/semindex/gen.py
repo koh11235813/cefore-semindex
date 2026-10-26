@@ -492,8 +492,8 @@ def parse_state_poll_interval_choices_s(raw) -> tuple[float, ...] | None:
     """Validate the optional `state_poll_interval_choices_s` top-level key, or None if absent.
 
     Forwarded verbatim into every generated agent config, the same as
-    stop_at_s. Each value must be a finite number > 0 -- checked here, not
-    only by the agent, because a non-finite interval stops that agent's
+    stop_at_s. 2026-10-26 fix: each value must be a finite number > 0 -- NaN
+    and infinity used to pass -- checked here, not only by the agent, because a non-finite interval stops that agent's
     polling for good and would otherwise surface only after a full run;
     agent.validate_config still owns the rest of the policy's rules
     (non-empty, no duplicates).

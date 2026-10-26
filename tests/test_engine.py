@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from semindex import holder_state, names, schema
-from semindex.engine import SyncConfig, SyncEngine
+from semindex.engine import SyncConfig, SyncEngine, _PollReplies
 from semindex.store import OriginProgress, Store
 
 
@@ -1004,11 +1004,12 @@ def test_a_late_reply_after_the_lifetime_still_counts_as_answered(tmp_path: Path
 def test_a_long_silent_outage_keeps_the_poll_history_bounded(tmp_path: Path):
     """2000 s of 0.5 s polls with no reply: the count keeps growing (every poll sent at
     least 2 s before the decision has timed out), but only the polls still within
-    lifetime + 1 s grace are held -- 5 of them, plus the poll just sent."""
+    lifetime + 1 s grace are held -- the 6 sent in [T - 3, T - 0.5] (a reply exactly at
+    send + 3 s is still accepted), plus the poll just sent."""
     engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
     rows = _poll_reply_states(engine, [("tick", i * 0.5) for i in range(4001)])
     assert rows[-1] == (2_000_000, "pending", 3997)
-    assert len(engine._poll_replies["h1"].polls) == 6
+    assert len(engine._poll_replies["h1"].polls) == 7
 
 
 def test_a_reply_later_than_lifetime_plus_grace_to_an_older_poll_is_ignored(tmp_path: Path):
@@ -1021,6 +1022,56 @@ def test_a_reply_later_than_lifetime_plus_grace_to_an_older_poll_is_ignored(tmp_
         (3500, "pending", 4),
         (4000, "pending", 5),
     ]
+
+
+def test_a_reply_after_grace_to_a_poll_no_longer_newest_is_ignored_even_before_expiry(tmp_path: Path):
+    """Lifetime 2 s, 4 s interval: polls at 0 and 4. The reply to poll 0 arrives at 4.1,
+    when poll 0 is no longer the newest and 4.1 > 0 + 2 + 1, so it is ignored even
+    though no decision has dropped poll 0 yet: at 8 both polls count as timed out."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(4.0,))
+    steps = [("tick", 0.0), ("tick", 4.0), ("reply", 4.1, 0), ("tick", 8.0)]
+    assert _poll_reply_states(engine, steps) == [
+        (0, None, 0),
+        (4000, "timed_out", 1),
+        (8000, "timed_out", 2),
+    ]
+
+
+def test_a_reply_exactly_at_lifetime_plus_grace_is_accepted(tmp_path: Path):
+    """0.5 s polls: the reply to poll 0 at exactly 0 + 2 + 1 = 3.0 s is accepted, so
+    only the polls after it (0.5, 1.0, 1.5) count as timed out at 3.5."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    steps = [("tick", i * 0.5) for i in range(7)] + [("reply", 3.0, 0), ("tick", 3.5)]
+    assert _poll_reply_states(engine, steps)[-1] == (3500, "pending", 3)
+
+
+def test_a_reply_just_after_lifetime_plus_grace_is_ignored(tmp_path: Path):
+    """The same reply at 3.01 s is past the grace, so poll 0 stays timed out: 4 at 3.5."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    steps = [("tick", i * 0.5) for i in range(7)] + [("reply", 3.01, 0), ("tick", 3.5)]
+    assert _poll_reply_states(engine, steps)[-1] == (3500, "pending", 4)
+
+
+def test_a_reply_to_the_newest_poll_is_accepted_however_late(tmp_path: Path):
+    """While a poll is still the newest one sent, its reply is accepted even past
+    lifetime + grace (3.9 s here); the same poll stops being so once the next is sent."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(4.0,))
+    steps = [("tick", 0.0), ("reply", 3.9, 0), ("tick", 4.0)]
+    assert _poll_reply_states(engine, steps) == [
+        (0, None, 0),
+        (4000, "answered", 0),
+    ]
+
+
+def test_bulk_expiry_drops_the_whole_stale_prefix_at_once(tmp_path: Path):
+    """After 1000 polls 0.5 s apart with no reply, one decision 100 s later drops every
+    stale poll in one go, keeping only the newest, and counts all 1000 as timed out."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    replies = engine._poll_replies.setdefault("h1", _PollReplies())
+    for i in range(1000):
+        replies.sent(i * 500, i * 0.5)
+    assert replies.snapshot(600.0, 2.0) == ("timed_out", 1000)
+    assert len(replies.polls) == 1
 
 
 def test_a_reply_that_fails_to_decode_still_counts_as_answered(tmp_path: Path):
