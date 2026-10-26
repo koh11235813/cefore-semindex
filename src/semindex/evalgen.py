@@ -218,10 +218,16 @@ def _format_p_fixed(p: float) -> str:
     return f"{percent:03d}"
 
 
-def _validate_k(k: int) -> None:
-    """Reject a records-per-generation count that is not an integer >= 1."""
+def validate_settings(k: int, state_poll_interval_choices_s: list[float] | None) -> None:
+    """Reject a records-per-generation count that is not an integer >= 1, or interval
+    choices semindex.gen would refuse (see gen.parse_state_poll_interval_choices_s).
+
+    Public so a sweep can refuse bad settings once, up front, instead of failing
+    every (p, seed) run of it the same way.
+    """
     if not isinstance(k, int) or isinstance(k, bool) or k < 1:
         raise gen.ExperimentError(f"k must be an integer >= 1, got {k!r}")
+    gen.parse_state_poll_interval_choices_s(state_poll_interval_choices_s)
 
 
 def _record_schedule(host: int, seed: int, k: int = 1) -> list[dict]:
@@ -351,7 +357,7 @@ def build_experiment(
     1's schedule and agent configs.
     """
     _validate_p(p)
-    _validate_k(k)
+    validate_settings(k, state_poll_interval_choices_s)
     name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
     schedule = {str(host): _record_schedule(host, seed, k) for host in RECORD_ORIGIN_HOSTS}
     raw = {

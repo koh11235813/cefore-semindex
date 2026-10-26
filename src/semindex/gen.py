@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -487,19 +488,28 @@ def _parse_counters_snapshot_at_s(raw) -> tuple[float, ...]:
     return tuple(_require_number(v, f"counters_snapshot_at_s[{idx}]") for idx, v in enumerate(raw))
 
 
-def _parse_state_poll_interval_choices_s(raw) -> tuple[float, ...] | None:
+def parse_state_poll_interval_choices_s(raw) -> tuple[float, ...] | None:
     """Validate the optional `state_poll_interval_choices_s` top-level key, or None if absent.
 
     Forwarded verbatim into every generated agent config, the same as
-    stop_at_s; this module checks only that it is a list of numbers.
-    agent.validate_config owns the policy's own rules (non-empty, positive,
-    no duplicates).
+    stop_at_s. Each value must be a finite number > 0 -- checked here, not
+    only by the agent, because a non-finite interval stops that agent's
+    polling for good and would otherwise surface only after a full run;
+    agent.validate_config still owns the rest of the policy's rules
+    (non-empty, no duplicates).
     """
     if raw is None:
         return None
     if not isinstance(raw, list):
         raise ExperimentError("state_poll_interval_choices_s must be a list of numbers")
-    return tuple(_require_number(v, f"state_poll_interval_choices_s[{idx}]") for idx, v in enumerate(raw))
+    result = []
+    for idx, v in enumerate(raw):
+        label = f"state_poll_interval_choices_s[{idx}]"
+        value = _require_number(v, label)
+        if not math.isfinite(value) or value <= 0:
+            raise ExperimentError(f"{label} must be a finite number > 0")
+        result.append(value)
+    return tuple(result)
 
 
 def parse_experiment(raw: dict) -> ExperimentSpec:
@@ -560,7 +570,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
     events = _parse_events(raw.get("events"), hosts)
     stop_at_s = _parse_stop_at_s(raw.get("stop_at_s"))
     counters_snapshot_at_s = _parse_counters_snapshot_at_s(raw.get("counters_snapshot_at_s"))
-    state_poll_interval_choices_s = _parse_state_poll_interval_choices_s(raw.get("state_poll_interval_choices_s"))
+    state_poll_interval_choices_s = parse_state_poll_interval_choices_s(raw.get("state_poll_interval_choices_s"))
 
     all_at_s = [entry.at_s for entries in schedule.values() for entry in entries]
     if all_at_s and min(all_at_s) < MIN_FIRST_RECORD_MARGIN_S:

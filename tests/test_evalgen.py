@@ -579,3 +579,21 @@ def test_gen_rejects_non_list_choices():
     with pytest.raises(ExperimentError) as excinfo:
         parse_experiment(raw)
     assert str(excinfo.value) == "state_poll_interval_choices_s must be a list of numbers"
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1.0])
+def test_a_non_finite_or_non_positive_choice_is_rejected_before_anything_is_written(tmp_path: Path, bad: float):
+    """A NaN/infinite interval would stop an agent's polling for good, so generation
+    refuses it (and a zero or negative one) before writing any file."""
+    outdir = tmp_path / "run"
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.generate_run(0.2, 7, "s2", str(outdir), state_poll_interval_choices_s=[1.0, bad])
+    assert str(excinfo.value) == "state_poll_interval_choices_s[1] must be a finite number > 0"
+    assert not outdir.exists()
+
+
+def test_cli_rejects_a_nan_interval_choice(tmp_path: Path, capsys):
+    """--interval-choices nan fails with exit 1 and the exact diagnostic."""
+    rc = evalgen.main(["--p", "0.2", "--seed", "7", "--stage", "s2", "--out", str(tmp_path / "run"), "--interval-choices", "nan"])
+    assert rc == 1
+    assert capsys.readouterr().err == "semindex.evalgen: state_poll_interval_choices_s[0] must be a finite number > 0\n"

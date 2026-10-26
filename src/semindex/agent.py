@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import signal
@@ -318,7 +319,13 @@ def _validate_poll_interval_choices(raw) -> tuple[float, ...] | None:
     if not isinstance(raw_list, list) or not raw_list:
         raise ConfigError("state_poll_interval_choices_s must be a non-empty list")
     for idx, value in enumerate(raw_list):
-        _check_numeric(f"state_poll_interval_choices_s[{idx}]", value, float, positive=True)
+        label = f"state_poll_interval_choices_s[{idx}]"
+        _check_numeric(label, value, float, positive=True)
+        # 2026-10-26 fix: NaN and +Infinity (both accepted by Python's json)
+        # passed the > 0 check, and a non-finite interval makes the next poll's
+        # due time unreachable, so that neighbor was never polled again.
+        if not math.isfinite(value):
+            raise ConfigError(f"{label} must be finite")
     if len(set(raw_list)) != len(raw_list):
         raise ConfigError("state_poll_interval_choices_s must not contain duplicates")
     for key in ("state_poll_interval_s", "state_poll_jitter_frac"):

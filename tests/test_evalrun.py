@@ -1132,6 +1132,22 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
     assert experiment["state_poll_interval_choices_s"] == [1.0, 2.0]
 
 
+def test_main_refuses_a_non_finite_interval_choice_before_any_run(tmp_path: Path, monkeypatch, capsys):
+    """An infinite choice is refused once, up front (exit 2), and no run is attempted."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s2", "--p", "0", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--interval-choices", "1", "inf"]
+    )
+    assert rc == 2
+    assert calls == []
+    assert capsys.readouterr().err == "semindex.evalrun: state_poll_interval_choices_s[1] must be a finite number > 0\n"
+
+
 def test_main_passes_k_and_interval_choices_to_run_all(tmp_path: Path, monkeypatch):
     """--k and --interval-choices reach run_all as k / state_poll_interval_choices_s."""
     seen: dict = {}

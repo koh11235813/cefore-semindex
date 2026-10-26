@@ -888,6 +888,9 @@ def test_build_agent_seeds_the_engine_s_poll_jitter_from_the_node_name(tmp_path:
         ({"state_poll_interval_choices_s": 2.0}, "state_poll_interval_choices_s must be a non-empty list"),
         ({"state_poll_interval_choices_s": [1, 0]}, "state_poll_interval_choices_s[1] must be > 0"),
         ({"state_poll_interval_choices_s": [1, True]}, "state_poll_interval_choices_s[1] must be a number"),
+        ({"state_poll_interval_choices_s": [1, float("nan")]}, "state_poll_interval_choices_s[1] must be finite"),
+        ({"state_poll_interval_choices_s": [1, float("inf")]}, "state_poll_interval_choices_s[1] must be finite"),
+        ({"state_poll_interval_choices_s": [float("-inf")]}, "state_poll_interval_choices_s[0] must be > 0"),
         ({"state_poll_interval_choices_s": [1, 2, 1.0]}, "state_poll_interval_choices_s must not contain duplicates"),
         (
             {"state_poll_interval_choices_s": [1, 2], "state_poll_jitter_frac": 0.2},
@@ -907,6 +910,18 @@ def test_validate_config_rejects_a_bad_state_poll_interval_choices_s(overrides: 
     with pytest.raises(ConfigError) as exc_info:
         validate_config(raw)
     assert str(exc_info.value) == message
+
+
+def test_load_config_rejects_a_nan_or_infinity_choice_written_as_json(tmp_path: Path):
+    """Python's json reads the NaN/Infinity literals, so a config file can carry them;
+    they must be refused there too, not only when built in Python."""
+    for literal in ("NaN", "Infinity"):
+        path = tmp_path / f"{literal}.json"
+        text = json.dumps({**_minimal_raw(), "seed": 1, "state_poll_interval_choices_s": [1.0, 2.0]})
+        path.write_text(text.replace("[1.0, 2.0]", f"[1.0, {literal}]"), encoding="utf-8")
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(str(path))
+        assert str(exc_info.value) == "state_poll_interval_choices_s[1] must be finite"
 
 
 def test_validate_config_carries_choices_as_floats_and_the_seed():

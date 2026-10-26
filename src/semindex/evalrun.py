@@ -846,6 +846,9 @@ def run_all(
     # own per-pair try/except (below) logging the identical failure once
     # per (p, seed) pair and still reporting the sweep as "ran".
     _validate_stage(stage)
+    # Same reasoning as the stage check above: bad k / interval choices would make
+    # every pair fail identically inside the loop's own try/except.
+    evalgen.validate_settings(k, state_poll_interval_choices_s)
     if not allow_dirty:
         dirty = _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess)
         if dirty is not False:
@@ -944,7 +947,7 @@ def main(argv: list[str] | None = None) -> int:
             k=args.k,
             state_poll_interval_choices_s=args.interval_choices,
         )
-    except DirtySemindexError as exc:
+    except (DirtySemindexError, gen.ExperimentError) as exc:
         print(f"semindex.evalrun: {exc}", file=sys.stderr)
         return 2
     finally:
