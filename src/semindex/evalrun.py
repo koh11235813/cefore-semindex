@@ -21,7 +21,7 @@ Run as:
         --recefore /home/lab_shared/cefore-emu-sslab \\
         [--k 4] [--interval-choices 1 2 4]
 
-`--k` and `--interval-choices` (stage-2 map ticket 03) go straight to
+`--k` and `--interval-choices` (stage-2 map "生成器と集計") go straight to
 semindex.evalgen and are recorded in each run's meta.json. They are not
 part of the store path, so a sweep with different values needs its own
 `--stage` label.

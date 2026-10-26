@@ -755,7 +755,10 @@ def _poll_decisions(engine: SyncEngine, ticks: list[float]) -> list[tuple[float,
 def test_unset_choices_keeps_stage_1_jittered_intervals_and_action_prob_1(tmp_path: Path):
     """With no state_poll_interval_choices_s, the interval is still 2 s +/- 20% from
     poll_jitter_rng (0.2 -> 1.76 s, 0.8 -> 2.24 s), action_prob is still 1.0, and the
-    choice rng is never drawn -- stage 1's policy and decision lines, unchanged."""
+    choice rng is never drawn -- stage 1's policy, intervals, action and rng draws are
+    unchanged. The decision line's state does gain the two poll-reply fields (pinned in
+    test_on_tick_emits_a_state_poll_decision_per_due_neighbor), so this compares only
+    ts_ms, action and action_prob."""
     store = Store(tmp_path / "h0.db")
     jitter = _Cycle(0.2, 0.8)
     choice = _Cycle(0.5)
@@ -808,7 +811,7 @@ def test_choices_draw_one_value_per_poll_with_action_prob_one_over_len(tmp_path:
 
 def test_a_single_choice_is_a_fixed_interval_policy_with_action_prob_1(tmp_path: Path):
     """One choice is a deterministic fixed-interval policy: every interval is that
-    value and action_prob is 1.0 (the trial runs these to compare intervals)."""
+    value and action_prob is 1.0."""
     engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
     assert _poll_decisions(engine, [0.0, 0.5, 1.0]) == [
         (0, {"neighbor": "h1", "interval_s": 0.5}, 1.0),

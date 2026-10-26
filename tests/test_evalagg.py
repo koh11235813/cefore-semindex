@@ -1819,7 +1819,7 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
     assert summary[0]["probe_discovered_total"] == "11"
 
 
-# -- stage 2 (stage-2 map ticket 03): generator settings and poll-reply decision fields --
+# -- stage 2 (stage-2 map "生成器と集計"): generator settings and poll-reply decision fields --
 
 
 def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():

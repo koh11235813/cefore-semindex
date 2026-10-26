@@ -200,7 +200,7 @@ def _format_p_fixed(p: float) -> str:
     """Render `p` as a fixed-width, three-digit percentage for the run name and group
     (0 -> "000", 0.1 -> "010", 1 -> "100"), so every p gives the same name length.
 
-    2026-10-26 (stage-2 map ticket 03): stage 1 named runs with `_format_p`, so
+    2026-10-26 (stage-2 map "生成器と集計"): stage 1 named runs with `_format_p`, so
     p = 0 gave `s1_p0_seedN`, two characters shorter than every other p; the
     group is part of every Interest name, and that alone made p = 0's control
     traffic about 47 B/record lower (evidence/s1-breakdown/). Three digits is

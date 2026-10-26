@@ -47,7 +47,7 @@
 - k は、生成の時刻（段 1 と同じ origin ごとに 30 回、2 秒おき）1 回あたりのレコードの数。窓と生成の時刻は変えないので、origin ごとのレコードは 30k 件になる。属性はレコードごとに seed から引く（同じ流れから順に引くので、k = 1 なら段 1 と同じ値）。
 - 間隔の選択肢は、生成器の `--interval-choices` から実験の記述の `state_poll_interval_choices_s` を通り、各エージェント設定に、run の seed（`seed`）と一緒に書く。与えないときは、どちらもエージェント設定に書かない（k = 1 なら段 1 と同じ設定になる）。
 - 回し手（`--k`・`--interval-choices`）は、k と選択肢を `meta.json` の `k`・`state_poll_interval_choices_s` に残す。保存先の道のりには入らないので、値を変えるときは `--stage` を変える。集計は `runs.csv` の最後の 2 列に出す（記録の無い段 1 の run では空）。
-- 集計の `decisions.csv` には、段 2 のエージェントが書いた `state_poll` の行があるときだけ、`action_prob` と `consecutive_poll_timeouts`（中央値と四分位）、`last_poll_status=<値>` の頻度（`null`・`answered`・`timed_out`・`pending` の順）を足す。pilot2 を元のコードと集計し直して比べ、`runs.csv` 以外の CSV と図がバイト単位で同じ、`runs.csv` は足した 2 列（空）を除いて同じことを確かめた。
+- 集計の `decisions.csv` には、段 2 のエージェントが書いた `state_poll` の行があるときだけ、`action_prob` と `consecutive_poll_timeouts`（中央値と四分位）、`last_poll_status=<値>` の頻度（`null`・`answered`・`timed_out`・`pending` の順）を足す。pilot2 を元のコードと集計し直して比べ、`runs.csv` 以外の CSV と PNG の図がバイト単位で同じ、PDF の図は `CreationDate` を除いて同じ、`runs.csv` は足した 2 列（空）を除いて同じことを確かめた。
 
 ### 報酬の材料（2026-10-26 決定）
 - 報酬は「遅れ」と「制御の通信量」の重みづけで組む。遅れには、ホップ数が多いほど重い重みを掛ける。

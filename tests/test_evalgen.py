@@ -474,7 +474,7 @@ def test_generated_yaml_passes_recefore_config_validator(tmp_path: Path):
     assert result.stdout.strip() == "[]"
 
 
-# -- stage 2 (stage-2 map ticket 03): k records per time, choices, fixed-width names --
+# -- stage 2 (stage-2 map "生成器と集計"): k records per time, choices, fixed-width names --
 
 
 def _normalized_digest(raw: dict) -> str:
