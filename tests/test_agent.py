@@ -14,6 +14,7 @@ from semindex import evalagg, evalgen, gen, holder_state, names, schema
 from semindex.agent import (
     ConfigError,
     ScheduledProbe,
+    _poll_choice_jitter_rng,
     _poll_choice_rng,
     _poll_jitter_rng,
     build_agent,
@@ -898,6 +899,23 @@ def test_build_agent_seeds_the_engine_s_poll_jitter_from_the_node_name(tmp_path:
         ),
         ({"state_poll_interval_choices_s": [1, 2]}, "state_poll_interval_choices_s requires seed"),
         ({"state_poll_interval_choices_s": [1, 2], "seed": "7"}, "seed must be an integer"),
+        ({"state_poll_choice_jitter_frac": 0.1}, "state_poll_choice_jitter_frac requires state_poll_interval_choices_s"),
+        (
+            {"state_poll_interval_choices_s": [1], "seed": 1, "state_poll_choice_jitter_frac": -0.1},
+            "state_poll_choice_jitter_frac must be >= 0",
+        ),
+        (
+            {"state_poll_interval_choices_s": [1], "seed": 1, "state_poll_choice_jitter_frac": 1.0},
+            "state_poll_choice_jitter_frac must be < 1",
+        ),
+        (
+            {"state_poll_interval_choices_s": [1], "seed": 1, "state_poll_choice_jitter_frac": float("nan")},
+            "state_poll_choice_jitter_frac must be finite",
+        ),
+        (
+            {"state_poll_interval_choices_s": [1], "seed": 1, "state_poll_choice_jitter_frac": True},
+            "state_poll_choice_jitter_frac must be a number",
+        ),
     ],
 )
 def test_validate_config_rejects_a_bad_state_poll_interval_choices_s(overrides: dict, message: str):
@@ -952,6 +970,32 @@ def test_poll_choice_rng_is_deterministic_per_seed_and_node():
     assert first != [_poll_choice_rng(7, "h1")() for _ in range(5)]
 
 
+def test_validate_config_carries_the_choice_jitter_and_defaults_it_to_0_1():
+    """A given j reaches SyncConfig; with choices but no j, SyncConfig's 0.1 applies."""
+    raw = _minimal_raw()
+    raw.update(state_poll_interval_choices_s=[0.5], seed=1, state_poll_choice_jitter_frac=0)
+    assert build_sync_config(validate_config(raw)).state_poll_choice_jitter_frac == 0.0
+    del raw["state_poll_choice_jitter_frac"]
+    assert build_sync_config(validate_config(raw)).state_poll_choice_jitter_frac == 0.1
+
+
+def test_poll_choice_jitter_rng_is_its_own_stream_per_seed_and_node():
+    """The jitter stream is reproducible per (seed, node), differs across seeds and
+    nodes, and is not the choice stream itself."""
+    first = [_poll_choice_jitter_rng(7, "h0")() for _ in range(5)]
+    assert first == [_poll_choice_jitter_rng(7, "h0")() for _ in range(5)]
+    assert first != [_poll_choice_jitter_rng(8, "h0")() for _ in range(5)]
+    assert first != [_poll_choice_jitter_rng(7, "h1")() for _ in range(5)]
+    assert first != [_poll_choice_rng(7, "h0")() for _ in range(5)]
+
+
+def test_build_agent_wires_the_choice_jitter_rng_from_seed_and_node(tmp_path: Path):
+    """build_agent hands the engine the (seed, node) jitter stream, not the default."""
+    config = _config(tmp_path, neighbors=["h1"], state_poll_interval_choices_s=[0.5], seed=7)
+    agent = build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))
+    assert agent._engine._poll_choice_jitter_rng() == random.Random("state_poll_interval_jitter:7:h0").random()
+
+
 def _chosen_intervals(tmp_path: Path, seed: int, node: str = "h0") -> list[tuple[float, float]]:
     """Build one agent with choices (1, 2, 4) and `seed`, tick its engine through 30
     polls to h1, and return each state_poll decision's (interval_s, action_prob)."""
@@ -971,7 +1015,7 @@ def _chosen_intervals(tmp_path: Path, seed: int, node: str = "h0") -> list[tuple
         for event in engine.drain_events():
             if event["event"] == "decision" and event["kind"] == "state_poll":
                 rows.append((event["action"]["interval_s"], event["action_prob"]))
-                now += event["action"]["interval_s"]
+                now += event["action"]["applied_interval_s"]
     return rows
 
 
@@ -984,6 +1028,55 @@ def test_build_agent_draws_choices_from_the_run_seed_and_node(tmp_path: Path):
     assert {prob for _, prob in rows} == {1 / 3}
     assert rows == _chosen_intervals(tmp_path / "again", seed=7)
     assert rows != _chosen_intervals(tmp_path, seed=8)
+
+
+def test_built_agents_keep_every_applied_interval_within_the_jitter_bounds(tmp_path: Path):
+    """End to end through build_agent with the default j = 0.1: each applied interval
+    lies in [0.9, 1.1] times its chosen value, and the jitter is actually applied."""
+    config = _config(tmp_path, neighbors=["h1"], state_poll_interval_choices_s=[1, 2, 4], seed=7)
+    engine = build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))._engine
+    ratios = []
+    now = 0.0
+    while len(ratios) < 200:
+        engine.on_tick(now)
+        for event in engine.drain_events():
+            if event["event"] == "decision" and event["kind"] == "state_poll":
+                ratios.append(event["action"]["applied_interval_s"] / event["action"]["interval_s"])
+                now += event["action"]["applied_interval_s"]
+    assert all(0.9 <= r <= 1.1 for r in ratios)
+    assert len(set(ratios)) == 200
+
+
+def _coincident_fraction(tmp_path: Path, jitter_frac: float) -> float:
+    """Two agents (h0, h1) with a single 0.5 s choice, seed 1, ticked at the same
+    instants every 10 ms for 60 s: the fraction of h0's polls with an h1 poll
+    within 10 ms."""
+    sent: dict[str, list[int]] = {}
+    engines = {}
+    for node in ("h0", "h1"):
+        config = _config(
+            tmp_path / f"{node}-{jitter_frac}",
+            node=node,
+            neighbors=["h2"],
+            state_poll_interval_choices_s=[0.5],
+            seed=1,
+            state_poll_choice_jitter_frac=jitter_frac,
+        )
+        engines[node] = build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))._engine
+        sent[node] = []
+    for i in range(6001):
+        for node, engine in engines.items():
+            engine.on_tick(i * 0.01)
+            sent[node] += [e["ts_ms"] for e in engine.drain_events() if e.get("kind") == "state_poll"]
+    return sum(1 for t in sent["h0"] if any(abs(t - u) <= 10 for u in sent["h1"])) / len(sent["h0"])
+
+
+def test_a_single_choice_with_jitter_no_longer_polls_in_lock_step(tmp_path: Path):
+    """The trial's failure mode: agents starting together with one fixed interval poll in
+    exact lock-step forever (j = 0: every poll coincides). With j = 0.1 their phases
+    drift apart and coincidences fall to about what chance gives (7 of 119 here)."""
+    assert _coincident_fraction(tmp_path, 0.0) == 1.0
+    assert _coincident_fraction(tmp_path, 0.1) < 0.2
 
 
 def test_two_agents_converge_their_stores_over_cross_wired_fake_handles(tmp_path: Path):

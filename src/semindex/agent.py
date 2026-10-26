@@ -133,7 +133,14 @@ _REQUIRED_KEYS = (
 )
 _ALLOWED_KEYS = (
     frozenset(_REQUIRED_KEYS)
-    | {"fault", "stop_at_s", "counters_snapshot_at_s", "seed", "state_poll_interval_choices_s"}
+    | {
+        "fault",
+        "stop_at_s",
+        "counters_snapshot_at_s",
+        "seed",
+        "state_poll_interval_choices_s",
+        "state_poll_choice_jitter_frac",
+    }
     | set(_SYNC_OVERRIDE_KEYS)
     | set(_AGENT_NUMERIC_KEYS)
 )
@@ -334,6 +341,26 @@ def _validate_poll_interval_choices(raw) -> tuple[float, ...] | None:
     return tuple(float(value) for value in raw_list)
 
 
+def _validate_choice_jitter_frac(raw, *, have_choices: bool) -> float | None:
+    """Validate the optional `state_poll_choice_jitter_frac` (stage-2 map "選択肢の間隔のゆらぎ").
+
+    Only meaningful with choices, so it is refused without them rather than
+    silently ignored. Must be finite and in [0, 1): 1 or more would let the
+    applied interval reach 0 or go negative. Absent means SyncConfig's default.
+    """
+    if "state_poll_choice_jitter_frac" not in raw:
+        return None
+    if not have_choices:
+        raise ConfigError("state_poll_choice_jitter_frac requires state_poll_interval_choices_s")
+    value = raw["state_poll_choice_jitter_frac"]
+    _check_numeric("state_poll_choice_jitter_frac", value, float)
+    if not math.isfinite(value):
+        raise ConfigError("state_poll_choice_jitter_frac must be finite")
+    if value >= 1:
+        raise ConfigError("state_poll_choice_jitter_frac must be < 1")
+    return float(value)
+
+
 def _validate_seed(raw, *, required: bool) -> int | None:
     """Validate the optional run `seed`; `required` when a policy actually draws from it."""
     if "seed" not in raw:
@@ -422,6 +449,9 @@ def validate_config(raw) -> AgentConfig:
     poll_interval_choices = _validate_poll_interval_choices(raw)
     if poll_interval_choices is not None:
         sync_overrides["state_poll_interval_choices_s"] = poll_interval_choices
+    choice_jitter_frac = _validate_choice_jitter_frac(raw, have_choices=poll_interval_choices is not None)
+    if choice_jitter_frac is not None:
+        sync_overrides["state_poll_choice_jitter_frac"] = choice_jitter_frac
     seed = _validate_seed(raw, required=poll_interval_choices is not None)
 
     return AgentConfig(
@@ -500,6 +530,16 @@ def _poll_choice_rng(seed: int, node: str) -> Callable[[], float]:
     processes and independent of PYTHONHASHSEED.
     """
     return random.Random(f"state_poll_interval:{seed}:{node}").random
+
+
+def _poll_choice_jitter_rng(seed: int, node: str) -> Callable[[], float]:
+    """Build the [0, 1) source for one node's choices-mode interval jitter.
+
+    Seeded from (seed, node) like _poll_choice_rng but under its own prefix, so
+    it is a separate stream: changing j, or the number of choices, never shifts
+    which value the choice rng picks.
+    """
+    return random.Random(f"state_poll_interval_jitter:{seed}:{node}").random
 
 
 def build_sync_config(config: AgentConfig) -> SyncConfig:
@@ -972,8 +1012,15 @@ def build_agent(config: AgentConfig, handle: CefpycoHandle, *, clock: Callable[[
     store = Store(os.path.join(config.state_dir, "index.db"))
     transport = CefpycoTransport(handle, clock=clock, receive_timeout_ms=config.receive_timeout_ms)
     # validate_config guarantees a seed whenever choices are set; without
-    # choices the engine never draws poll_choice_rng, so its default stays.
-    choice_rng = {} if config.seed is None else {"poll_choice_rng": _poll_choice_rng(config.seed, config.node)}
+    # choices the engine never draws either choices-mode rng, so their defaults stay.
+    choice_rng = (
+        {}
+        if config.seed is None
+        else {
+            "poll_choice_rng": _poll_choice_rng(config.seed, config.node),
+            "poll_choice_jitter_rng": _poll_choice_jitter_rng(config.seed, config.node),
+        }
+    )
     engine = SyncEngine(
         build_sync_config(config), store, transport, poll_jitter_rng=_poll_jitter_rng(config.node), **choice_rng
     )

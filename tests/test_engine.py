@@ -796,9 +796,9 @@ def test_choices_draw_one_value_per_poll_with_action_prob_one_over_len(tmp_path:
     # 3.9 and 4.9 are strictly before the 4 s and then 1 s intervals elapse, so
     # neither tick polls; 4.0 and 5.0 are exactly when each comes due.
     assert _poll_decisions(engine, [0.0, 3.9, 4.0, 4.9, 5.0]) == [
-        (0, {"neighbor": "h1", "interval_s": 4.0}, 1 / 3),
-        (4000, {"neighbor": "h1", "interval_s": 1.0}, 1 / 3),
-        (5000, {"neighbor": "h1", "interval_s": 2.0}, 1 / 3),
+        (0, {"neighbor": "h1", "interval_s": 4.0, "applied_interval_s": 4.0}, 1 / 3),
+        (4000, {"neighbor": "h1", "interval_s": 1.0, "applied_interval_s": 1.0}, 1 / 3),
+        (5000, {"neighbor": "h1", "interval_s": 2.0, "applied_interval_s": 2.0}, 1 / 3),
     ]
     assert [n for n, _ in transport.sent] == [
         names.build_state_name("g", "h1", "h0", 0),
@@ -814,17 +814,80 @@ def test_a_single_choice_is_a_fixed_interval_policy_with_action_prob_1(tmp_path:
     value and action_prob is 1.0."""
     engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
     assert _poll_decisions(engine, [0.0, 0.5, 1.0]) == [
-        (0, {"neighbor": "h1", "interval_s": 0.5}, 1.0),
-        (500, {"neighbor": "h1", "interval_s": 0.5}, 1.0),
-        (1000, {"neighbor": "h1", "interval_s": 0.5}, 1.0),
+        (0, {"neighbor": "h1", "interval_s": 0.5, "applied_interval_s": 0.5}, 1.0),
+        (500, {"neighbor": "h1", "interval_s": 0.5, "applied_interval_s": 0.5}, 1.0),
+        (1000, {"neighbor": "h1", "interval_s": 0.5, "applied_interval_s": 0.5}, 1.0),
     ]
+
+
+def test_choice_jitter_scales_the_applied_interval_but_not_the_action(tmp_path: Path):
+    """With j = 0.1, each poll's applied interval is the chosen value times
+    1 + 0.1 * (2u - 1) for the jitter draw u: u = 0 -> 0.9, u = 0.75 -> 1.05,
+    u = 0.5 -> 1.0. The action keeps the chosen value with action_prob 1/2, the
+    applied interval is recorded beside it, and the next poll is due that far
+    after this one's own send time (jitter accumulates, it is not undone)."""
+    store = Store(tmp_path / "h0.db")
+    transport = RecordingTransport()
+    engine = SyncEngine(
+        SyncConfig(
+            group="g",
+            node="h0",
+            neighbors=("h1",),
+            state_poll_interval_choices_s=(1.0, 2.0),
+            state_poll_choice_jitter_frac=0.1,
+        ),
+        store,
+        transport,
+        poll_choice_rng=_Cycle(0.0, 0.9),
+        poll_choice_jitter_rng=_Cycle(0.0, 0.75, 0.5),
+    )
+    first, second = 1.0 * 0.9, 2.0 * 1.05
+    ticks = [0.0, first - 0.01, first, first + second - 0.01, first + second]
+    assert _poll_decisions(engine, ticks) == [
+        (0, {"neighbor": "h1", "interval_s": 1.0, "applied_interval_s": first}, 0.5),
+        (round(first * 1000), {"neighbor": "h1", "interval_s": 2.0, "applied_interval_s": second}, 0.5),
+        (round((first + second) * 1000), {"neighbor": "h1", "interval_s": 1.0, "applied_interval_s": 1.0}, 0.5),
+    ]
+    assert len(transport.sent) == 3
+
+
+def test_choice_jitter_zero_reproduces_jitter_free_choices(tmp_path: Path):
+    """j = 0: whatever the jitter rng returns, the applied interval is exactly the chosen
+    value, so polls go out at exactly the times the choices alone give (4, 1, 2 s)."""
+    store = Store(tmp_path / "h0.db")
+    transport = RecordingTransport()
+    jitter = _Cycle(0.0, 0.99)
+    engine = SyncEngine(
+        SyncConfig(
+            group="g",
+            node="h0",
+            neighbors=("h1",),
+            state_poll_interval_choices_s=(1.0, 2.0, 4.0),
+            state_poll_choice_jitter_frac=0.0,
+        ),
+        store,
+        transport,
+        poll_choice_rng=_Cycle(0.9, 0.0, 0.5),
+        poll_choice_jitter_rng=jitter,
+    )
+    assert _poll_decisions(engine, [0.0, 3.9, 4.0, 4.9, 5.0]) == [
+        (0, {"neighbor": "h1", "interval_s": 4.0, "applied_interval_s": 4.0}, 1 / 3),
+        (4000, {"neighbor": "h1", "interval_s": 1.0, "applied_interval_s": 1.0}, 1 / 3),
+        (5000, {"neighbor": "h1", "interval_s": 2.0, "applied_interval_s": 2.0}, 1 / 3),
+    ]
+    assert [n for n, _ in transport.sent] == [
+        names.build_state_name("g", "h1", "h0", 0),
+        names.build_state_name("g", "h1", "h0", 4000),
+        names.build_state_name("g", "h1", "h0", 5000),
+    ]
+    assert jitter.calls == 3
 
 
 def test_decision_logging_leaves_interests_and_other_events_unchanged_under_choices(tmp_path: Path):
     """Stage 1's "logging adds no behavior" property, for the choices policy: with
     log_decisions True vs False, the same Interests go out at the same times, the
-    non-`decision` events match, and the choice rng is drawn the same number of
-    times (once per poll) while the jitter rng is never drawn at all."""
+    non-`decision` events match, and the choice rng and the choices-mode jitter rng
+    are each drawn exactly once per poll while stage 1's jitter rng is never drawn."""
 
     def _run(label: str, log_decisions: bool):
         """Drive one engine through polls, a reply and a fetch timeout; return what it sent,
@@ -833,6 +896,7 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged_under_choi
         transport = RecordingTransport()
         jitter = _Cycle(0.2)
         choice = _Cycle(0.1, 0.7, 0.4)
+        choice_jitter = _Cycle(0.1, 0.9, 0.3)
         config = SyncConfig(
             group="g",
             node="h0",
@@ -840,24 +904,34 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged_under_choi
             state_poll_interval_choices_s=(0.5, 1.0, 2.0),
             log_decisions=log_decisions,
         )
-        engine = SyncEngine(store=store, transport=transport, config=config, poll_jitter_rng=jitter, poll_choice_rng=choice)
+        engine = SyncEngine(
+            store=store,
+            transport=transport,
+            config=config,
+            poll_jitter_rng=jitter,
+            poll_choice_rng=choice,
+            poll_choice_jitter_rng=choice_jitter,
+        )
         events: list[dict] = []
         engine.on_tick(0.0)
         engine.on_state("h1", holder_state.encode({"origin-x": OriginProgress(hi=1, extra=())}), 0.1, poll_epoch_ms=0)
         events += engine.drain_events()
         engine.on_fetch_timeout(names.build_record_name("g", "h1", "origin-x", 1), 0.3)
-        for now in (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0):
-            engine.on_tick(now)
+        # 0.05 s ticks: the jittered due times are off the 0.5 s grid.
+        for i in range(10, 81):
+            engine.on_tick(i * 0.05)
             events += engine.drain_events()
-        return transport.sent, events, choice.calls, jitter.calls
+        return transport.sent, events, choice.calls, jitter.calls, choice_jitter.calls
 
-    sent_on, events_on, choice_on, jitter_on = _run("on", True)
-    sent_off, events_off, choice_off, jitter_off = _run("off", False)
+    sent_on, events_on, choice_on, jitter_on, choice_jitter_on = _run("on", True)
+    sent_off, events_off, choice_off, jitter_off, choice_jitter_off = _run("off", False)
     assert sent_on == sent_off
     assert [e for e in events_on if e["event"] != "decision"] == [e for e in events_off if e["event"] != "decision"]
     polls = sum(1 for n, _ in sent_on if isinstance(names.parse(n), names.StateName))
     assert choice_on == polls
     assert choice_off == polls
+    assert choice_jitter_on == polls
+    assert choice_jitter_off == polls
     assert jitter_on == 0
     assert jitter_off == 0
     assert any(e["event"] == "decision" for e in events_on)
