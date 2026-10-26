@@ -284,27 +284,33 @@ def read_meta(run_dir: str) -> tuple[str, list[str]]:
     return "unknown", flags
 
 
-def read_meta_generation(run_dir: str) -> tuple[int | None, list[float] | None]:
+def read_meta_generation(run_dir: str) -> tuple[int | None, list[float] | None, float | None]:
     """This run's generator settings from `<run_dir>/meta.json`: (k, state-poll
-    interval choices).
+    interval choices, choices-mode jitter j).
 
     2026-10-26 (stage-2 map "生成器と集計"): semindex.evalrun records both from then
     on. k is None when meta.json does not record it (every stage-1 run, or no
     readable meta.json); the choices are None both then and for a run that
     used the default jittered policy -- `k` is what says whether this run
-    recorded its settings at all.
+    recorded its settings at all. j is None without choices, and for a run
+    recorded before the choices-mode jitter existed (which ran with none).
     """
     path = os.path.join(run_dir, "meta.json")
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return None, None
+        return None, None, None
     if not isinstance(data, dict):
-        return None, None
+        return None, None, None
     k = data.get("k")
     choices = data.get("state_poll_interval_choices_s")
-    return (k if isinstance(k, int) else None), (choices if isinstance(choices, list) else None)
+    jitter = data.get("state_poll_choice_jitter_frac")
+    return (
+        k if isinstance(k, int) else None,
+        choices if isinstance(choices, list) else None,
+        jitter if isinstance(jitter, (int, float)) and not isinstance(jitter, bool) else None,
+    )
 
 
 # -- t0 derivation ---------------------------------------------------------
@@ -611,6 +617,7 @@ class RunAnalysis:
     # this run's meta.json does not record them (every stage-1 run).
     k: int | None = None
     state_poll_interval_choices_s: list[float] | None = None
+    state_poll_choice_jitter_frac: float | None = None
 
 
 def _split_lives(events: list[dict]) -> list[list[dict]]:
@@ -933,7 +940,9 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
         analysis = _analyze_run_metrics(p, seed, run_dir, status, flags)
     except CheckUsageError as exc:
         analysis = RunAnalysis(p=p, seed=seed, status=status, flags=flags, analysis_error=str(exc))
-    analysis.k, analysis.state_poll_interval_choices_s = read_meta_generation(run_dir)
+    analysis.k, analysis.state_poll_interval_choices_s, analysis.state_poll_choice_jitter_frac = read_meta_generation(
+        run_dir
+    )
     return analysis
 
 
@@ -1185,6 +1194,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                     "analysis_error": run.analysis_error,
                     "k": run.k,
                     "state_poll_interval_choices_s": _choices_cell(run.state_poll_interval_choices_s),
+                    "state_poll_choice_jitter_frac": run.state_poll_choice_jitter_frac,
                 }
             )
             continue
@@ -1238,6 +1248,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "t0_consistency_ms": run.t0_consistency_ms,
                 "k": run.k,
                 "state_poll_interval_choices_s": _choices_cell(run.state_poll_interval_choices_s),
+                "state_poll_choice_jitter_frac": run.state_poll_choice_jitter_frac,
             }
         )
     return rows
@@ -1280,6 +1291,7 @@ RUNS_FIELDS = [
     # position; empty for a run whose meta.json does not record them.
     "k",
     "state_poll_interval_choices_s",
+    "state_poll_choice_jitter_frac",
 ]
 
 

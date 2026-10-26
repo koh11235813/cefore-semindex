@@ -145,6 +145,7 @@ class ExperimentSpec:
     stop_at_s: float | None
     counters_snapshot_at_s: tuple[float, ...]
     state_poll_interval_choices_s: tuple[float, ...] | None
+    state_poll_choice_jitter_frac: float | None
 
 
 _TOP_LEVEL_REQUIRED = (
@@ -167,6 +168,7 @@ _TOP_LEVEL_OPTIONAL = (
     "stop_at_s",
     "counters_snapshot_at_s",
     "state_poll_interval_choices_s",
+    "state_poll_choice_jitter_frac",
 )
 _TOP_LEVEL_ALLOWED = frozenset(_TOP_LEVEL_REQUIRED) | frozenset(_TOP_LEVEL_OPTIONAL)
 
@@ -512,6 +514,23 @@ def parse_state_poll_interval_choices_s(raw) -> tuple[float, ...] | None:
     return tuple(result)
 
 
+def parse_state_poll_choice_jitter_frac(raw, *, have_choices: bool) -> float | None:
+    """Validate the optional `state_poll_choice_jitter_frac` top-level key, or None if absent.
+
+    Forwarded verbatim into every generated agent config. Checked here as well
+    as by the agent (finite, in [0, 1), only with choices) so a bad value fails
+    at generation, not after a full run.
+    """
+    if raw is None:
+        return None
+    if not have_choices:
+        raise ExperimentError("state_poll_choice_jitter_frac requires state_poll_interval_choices_s")
+    value = _require_number(raw, "state_poll_choice_jitter_frac")
+    if not math.isfinite(value) or not 0 <= value < 1:
+        raise ExperimentError("state_poll_choice_jitter_frac must be a finite number in [0, 1)")
+    return value
+
+
 def parse_experiment(raw: dict) -> ExperimentSpec:
     """Validate an experiment description dict and build the `ExperimentSpec` it describes.
 
@@ -571,6 +590,9 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
     stop_at_s = _parse_stop_at_s(raw.get("stop_at_s"))
     counters_snapshot_at_s = _parse_counters_snapshot_at_s(raw.get("counters_snapshot_at_s"))
     state_poll_interval_choices_s = parse_state_poll_interval_choices_s(raw.get("state_poll_interval_choices_s"))
+    state_poll_choice_jitter_frac = parse_state_poll_choice_jitter_frac(
+        raw.get("state_poll_choice_jitter_frac"), have_choices=state_poll_interval_choices_s is not None
+    )
 
     all_at_s = [entry.at_s for entries in schedule.values() for entry in entries]
     if all_at_s and min(all_at_s) < MIN_FIRST_RECORD_MARGIN_S:
@@ -597,6 +619,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         stop_at_s=stop_at_s,
         counters_snapshot_at_s=counters_snapshot_at_s,
         state_poll_interval_choices_s=state_poll_interval_choices_s,
+        state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
     )
 
 
@@ -716,6 +739,8 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
     if spec.state_poll_interval_choices_s is not None:
         config["seed"] = spec.seed
         config["state_poll_interval_choices_s"] = list(spec.state_poll_interval_choices_s)
+    if spec.state_poll_choice_jitter_frac is not None:
+        config["state_poll_choice_jitter_frac"] = spec.state_poll_choice_jitter_frac
 
     drop_rec = spec.fault.get(host, ())
     if drop_rec:

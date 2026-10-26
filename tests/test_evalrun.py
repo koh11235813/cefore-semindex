@@ -1075,6 +1075,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "stage",
         "k",
         "state_poll_interval_choices_s",
+        "state_poll_choice_jitter_frac",
         "semindex_git_commit",
         "semindex_git_dirty",
         "recefore_git_commit",
@@ -1090,6 +1091,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
     assert meta["stage"] == "s1"
     assert meta["k"] == 1
     assert meta["state_poll_interval_choices_s"] is None
+    assert meta["state_poll_choice_jitter_frac"] is None
     assert meta["recefore_exit_code"] == 0
     assert meta["validity"]["valid"] is True
     assert set(meta["host_python"]) == {"evalrun", "recefore_venv"}
@@ -1123,6 +1125,7 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
     meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     assert meta["k"] == 2
     assert meta["state_poll_interval_choices_s"] == [1.0, 2.0]
+    assert meta["state_poll_choice_jitter_frac"] == 0.1  # the default, made explicit
     # evalvalid matches record_created to the schedule by seq index, so 2 records
     # per generation time (60 per origin) is still a valid run.
     assert meta["validity"]["valid"] is True
@@ -1162,11 +1165,13 @@ def test_main_passes_k_and_interval_choices_to_run_all(tmp_path: Path, monkeypat
     staging_parent.mkdir()
     rc = evalrun.main(
         ["--stage", "s2", "--p", "0", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
-         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--k", "4", "--interval-choices", "1", "2"]
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--k", "4", "--interval-choices", "1", "2",
+         "--choice-jitter", "0"]
     )
     assert rc == 0
     assert seen["k"] == 4
     assert seen["state_poll_interval_choices_s"] == [1.0, 2.0]
+    assert seen["state_poll_choice_jitter_frac"] == 0.0
 
 
 def test_run_one_flags_an_invalid_run_but_still_completes(tmp_path: Path, monkeypatch):
