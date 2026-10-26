@@ -660,3 +660,59 @@ def test_irrational_choice_values_round_trip_through_the_written_files(tmp_path:
     h0 = json.loads((outdir / "s2_p000_seed1" / "h0.json").read_text(encoding="utf-8"))
     assert h0["state_poll_interval_choices_s"] == _E_CHOICES
     assert h0["state_poll_choice_jitter_frac"] == 0.05
+
+
+# -- per-neighbor in-flight cap (agent key max_in_flight_per_neighbor) --
+
+
+def test_no_max_in_flight_writes_nothing():
+    """Not given: no key in the experiment or any agent config, so the agents keep
+    their own default cap (8) and the files stay what they were before the key."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out")
+    assert "max_in_flight_per_neighbor" not in raw
+    for config in gen.generate(parse_experiment(raw), "/cfg").agent_configs.values():
+        assert "max_in_flight_per_neighbor" not in config
+
+
+def test_a_given_max_in_flight_reaches_every_agent_config():
+    """A given cap is written, as given, into every agent config (with or without choices)."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out", max_in_flight_per_neighbor=32)
+    assert raw["max_in_flight_per_neighbor"] == 32
+    configs = gen.generate(parse_experiment(raw), "/cfg").agent_configs
+    assert {c["max_in_flight_per_neighbor"] for c in configs.values()} == {32}
+
+
+@pytest.mark.parametrize("value", [True, False, 1.5, 8.0, 0, -1])
+def test_a_bad_max_in_flight_is_rejected_at_generation(value):
+    """Bool, float, 0 and negatives are refused with the exact diagnostic."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.build_experiment(0.2, 7, "s2", "/out", max_in_flight_per_neighbor=value)
+    assert str(excinfo.value) == "max_in_flight_per_neighbor must be an integer >= 1"
+
+
+def test_gen_rejects_a_bad_max_in_flight_in_an_experiment_description():
+    """semindex.gen checks the key itself too, for a description not made by evalgen."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out")
+    raw["max_in_flight_per_neighbor"] = 0
+    with pytest.raises(ExperimentError) as excinfo:
+        parse_experiment(raw)
+    assert str(excinfo.value) == "max_in_flight_per_neighbor must be an integer >= 1"
+
+
+def test_cli_max_in_flight_reaches_the_written_agent_configs(tmp_path: Path):
+    """--max-in-flight goes through the CLI into the experiment JSON and every agent config."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(outdir), "--max-in-flight", "32"])
+    assert rc == 0
+    raw = json.loads((outdir / "s2_p000_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert raw["max_in_flight_per_neighbor"] == 32
+    for host in evalgen.AGENTS:
+        config = json.loads((outdir / "s2_p000_seed1" / f"h{host}.json").read_text(encoding="utf-8"))
+        assert config["max_in_flight_per_neighbor"] == 32
+
+
+def test_cli_rejects_a_zero_max_in_flight(tmp_path: Path, capsys):
+    """--max-in-flight 0 exits 1 with the exact diagnostic."""
+    rc = evalgen.main(["--p", "0.2", "--seed", "7", "--stage", "s2", "--out", str(tmp_path / "run"), "--max-in-flight", "0"])
+    assert rc == 1
+    assert capsys.readouterr().err == "semindex.evalgen: max_in_flight_per_neighbor must be an integer >= 1\n"

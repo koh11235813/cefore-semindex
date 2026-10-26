@@ -284,32 +284,38 @@ def read_meta(run_dir: str) -> tuple[str, list[str]]:
     return "unknown", flags
 
 
-def read_meta_generation(run_dir: str) -> tuple[int | None, list[float] | None, float | None]:
+def read_meta_generation(
+    run_dir: str,
+) -> tuple[int | None, list[float] | None, float | None, int | None]:
     """This run's generator settings from `<run_dir>/meta.json`: (k, state-poll
-    interval choices, choices-mode jitter j).
+    interval choices, choices-mode jitter j, per-neighbor in-flight cap).
 
-    2026-10-26 (stage-2 map "生成器と集計"): semindex.evalrun records all three
+    2026-10-26 (stage-2 map "生成器と集計"): semindex.evalrun records all four
     from then on. k is None when meta.json does not record it (every stage-1 run, or no
     readable meta.json); the choices are None both then and for a run that
     used the default jittered policy -- `k` is what says whether this run
     recorded its settings at all. j is None without choices, and for a run
     recorded before the choices-mode jitter existed (which ran with none).
+    The in-flight cap is None when the run did not set it -- its agents then
+    used their own default of 8 -- and for a run recorded before it could be set.
     """
     path = os.path.join(run_dir, "meta.json")
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return None, None, None
+        return None, None, None, None
     if not isinstance(data, dict):
-        return None, None, None
+        return None, None, None, None
     k = data.get("k")
     choices = data.get("state_poll_interval_choices_s")
     jitter = data.get("state_poll_choice_jitter_frac")
+    max_in_flight = data.get("max_in_flight_per_neighbor")
     return (
         k if isinstance(k, int) else None,
         choices if isinstance(choices, list) else None,
         jitter if isinstance(jitter, (int, float)) and not isinstance(jitter, bool) else None,
+        max_in_flight if isinstance(max_in_flight, int) and not isinstance(max_in_flight, bool) else None,
     )
 
 
@@ -618,6 +624,7 @@ class RunAnalysis:
     k: int | None = None
     state_poll_interval_choices_s: list[float] | None = None
     state_poll_choice_jitter_frac: float | None = None
+    max_in_flight_per_neighbor: int | None = None
 
 
 def _split_lives(events: list[dict]) -> list[list[dict]]:
@@ -940,9 +947,12 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
         analysis = _analyze_run_metrics(p, seed, run_dir, status, flags)
     except CheckUsageError as exc:
         analysis = RunAnalysis(p=p, seed=seed, status=status, flags=flags, analysis_error=str(exc))
-    analysis.k, analysis.state_poll_interval_choices_s, analysis.state_poll_choice_jitter_frac = read_meta_generation(
-        run_dir
-    )
+    (
+        analysis.k,
+        analysis.state_poll_interval_choices_s,
+        analysis.state_poll_choice_jitter_frac,
+        analysis.max_in_flight_per_neighbor,
+    ) = read_meta_generation(run_dir)
     return analysis
 
 
@@ -1195,6 +1205,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                     "k": run.k,
                     "state_poll_interval_choices_s": _choices_cell(run.state_poll_interval_choices_s),
                     "state_poll_choice_jitter_frac": run.state_poll_choice_jitter_frac,
+                    "max_in_flight_per_neighbor": run.max_in_flight_per_neighbor,
                 }
             )
             continue
@@ -1249,6 +1260,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "k": run.k,
                 "state_poll_interval_choices_s": _choices_cell(run.state_poll_interval_choices_s),
                 "state_poll_choice_jitter_frac": run.state_poll_choice_jitter_frac,
+                "max_in_flight_per_neighbor": run.max_in_flight_per_neighbor,
             }
         )
     return rows
@@ -1292,6 +1304,7 @@ RUNS_FIELDS = [
     "k",
     "state_poll_interval_choices_s",
     "state_poll_choice_jitter_frac",
+    "max_in_flight_per_neighbor",
 ]
 
 
