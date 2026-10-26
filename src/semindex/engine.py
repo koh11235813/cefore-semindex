@@ -40,6 +40,14 @@ class SyncConfig:
     neighbors: tuple[str, ...]
     state_poll_interval_s: float = 2.0
     state_poll_jitter_frac: float = 0.2
+    # 2026-10-26 (stage-2 map "行動と確率"): when set, each state poll's next
+    # interval is drawn uniformly from these discrete values instead of
+    # state_poll_interval_s +/- state_poll_jitter_frac, and the decision line's
+    # action_prob is 1/len. Discrete, not continuous, so the recorded
+    # probability is a real probability an off-policy estimator can divide by,
+    # not a density. None (the default) keeps stage 1's jittered policy, its
+    # intervals and its action_prob 1.0 exactly as before.
+    state_poll_interval_choices_s: tuple[float, ...] | None = None
     interest_lifetime_ms: int = 2000
     # 2026-10-23: matches tracker.DEFAULT_BACKOFF_INITIAL_S -- see that
     # constant's comment for why 1s let the first retry land inside
@@ -73,6 +81,7 @@ class SyncEngine:
         transport: Transport,
         *,
         poll_jitter_rng: Callable[[], float] = lambda: 0.5,
+        poll_choice_rng: Callable[[], float] = lambda: 0.0,
         backoff_jitter: Callable[[], float] = lambda: 0.0,
     ) -> None:
         """`poll_jitter_rng` must return a float in [0, 1); it is mapped to
@@ -81,6 +90,13 @@ class SyncEngine:
         maps to zero offset, so engines are deterministic unless a real
         source of randomness is injected. `backoff_jitter` is passed
         straight through to the Tracker.
+
+        `poll_choice_rng` must also return a float in [0, 1); it picks the
+        index into config.state_poll_interval_choices_s and is drawn only
+        when that is set -- poll_jitter_rng is then never drawn, so the two
+        policies never share or perturb one stream. Its constant default
+        0.0 always picks the first choice, deterministic like the jitter
+        default.
 
         2026-10-22 fix: `config.group` and `config.node` already failed
         here with an exact diagnostic -- the registration_prefix call
@@ -98,6 +114,7 @@ class SyncEngine:
         self._store = store
         self._transport = transport
         self._poll_jitter_rng = poll_jitter_rng
+        self._poll_choice_rng = poll_choice_rng
         self._tracker = Tracker(
             backoff_initial_s=config.fetch_backoff_initial_s,
             backoff_multiplier=config.fetch_backoff_multiplier,
@@ -125,10 +142,12 @@ class SyncEngine:
         events, self._events = self._events, []
         return events
 
-    def _emit_decision(self, kind: str, state: dict, action: dict, now: float) -> None:
+    def _emit_decision(self, kind: str, state: dict, action: dict, now: float, action_prob: float = 1.0) -> None:
         """Queue one `decision` event (map.md "判断の記録"): the state visible at the
-        moment this engine actually chose `action`, plus action_prob -- 1.0 here,
-        since stage 1's policy always picks its one deterministic action.
+        moment this engine actually chose `action`, plus action_prob -- the
+        probability the policy gave `action`. 1.0 for every stage-1 policy (each
+        picks its one deterministic action); only a state poll drawing from
+        state_poll_interval_choices_s passes anything else.
 
         A no-op when config.log_decisions is False (test/analysis-only; every
         production config leaves it at its default True). Assumes a real decision
@@ -157,7 +176,7 @@ class SyncEngine:
                 "kind": kind,
                 "state": state,
                 "action": action,
-                "action_prob": 1.0,
+                "action_prob": action_prob,
             }
         )
 
@@ -218,21 +237,41 @@ class SyncEngine:
         epoch_ms = round(now * 1000)
         name = names.build_state_name(self._config.group, neighbor, self._config.node, epoch_ms)
         self._transport.send_interest(name, self._config.interest_lifetime_ms)
-        # Map the injected [0, 1) rng to +/- state_poll_jitter_frac around
-        # the configured interval, so "2s +/-20%" is reproducible in tests
-        # yet real under a real rng. Drawn exactly once, whether or not
-        # log_decisions is on: a `decision` event only reports this same
-        # value below, it never draws its own.
-        offset = self._config.state_poll_jitter_frac * (2 * self._poll_jitter_rng() - 1)
-        interval = self._config.state_poll_interval_s * (1 + offset)
+        interval, action_prob = self._choose_poll_interval()
         # map.md "判断の記録", kind 1: this *is* the decision -- which
         # neighbor, and the interval chosen for its next poll. Always made
-        # (a neighbor due for a poll is always polled in stage 1), so
-        # always logged when log_decisions is on.
+        # (a neighbor due for a poll is always polled), so always logged
+        # when log_decisions is on.
         self._emit_decision(
-            "state_poll", self._tracker.decision_state(neighbor), {"neighbor": neighbor, "interval_s": interval}, now
+            "state_poll",
+            self._tracker.decision_state(neighbor),
+            {"neighbor": neighbor, "interval_s": interval},
+            now,
+            action_prob,
         )
         self._next_state_poll[neighbor] = now + interval
+
+    def _choose_poll_interval(self) -> tuple[float, float]:
+        """Draw the interval until a neighbor's next state poll, and the probability
+        the policy gave it.
+
+        Each rng is drawn exactly once per poll, whether or not log_decisions is
+        on: the `decision` event only reports the value drawn here, it never draws
+        its own -- otherwise turning logging off would shift every later draw and
+        change which Interests go out when.
+        """
+        choices = self._config.state_poll_interval_choices_s
+        if choices is not None:
+            # A uniform u in [0, 1) gives every index the same 1/len share,
+            # which is exactly what action_prob claims.
+            index = int(self._poll_choice_rng() * len(choices))
+            return choices[index], 1.0 / len(choices)
+        # Map the injected [0, 1) rng to +/- state_poll_jitter_frac around the
+        # configured interval, so "2s +/-20%" is reproducible in tests yet real
+        # under a real rng. action_prob stays 1.0, as in stage 1's data (stage-1
+        # map's 2026-10-26 correction: those lines are not off-policy usable).
+        offset = self._config.state_poll_jitter_frac * (2 * self._poll_jitter_rng() - 1)
+        return self._config.state_poll_interval_s * (1 + offset), 1.0
 
     def _send_fetch_plan(self, neighbor: str, now: float) -> None:
         """Send a fetch Interest for every due, not-in-flight missing record on `neighbor`.

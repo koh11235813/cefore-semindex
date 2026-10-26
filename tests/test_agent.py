@@ -14,6 +14,7 @@ from semindex import evalagg, holder_state, names, schema
 from semindex.agent import (
     ConfigError,
     ScheduledProbe,
+    _poll_choice_rng,
     _poll_jitter_rng,
     build_agent,
     build_sync_config,
@@ -848,6 +849,99 @@ def test_build_agent_seeds_the_engine_s_poll_jitter_from_the_node_name(tmp_path:
     config = _config(tmp_path)
     agent = build_agent(config, handle, clock=_FakeClock(0.0))
     assert agent._engine._poll_jitter_rng() == random.Random(config.node).random()
+
+
+# -- state-poll interval choices (stage-2 map "行動と確率") ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"state_poll_interval_choices_s": []}, "state_poll_interval_choices_s must be a non-empty list"),
+        ({"state_poll_interval_choices_s": 2.0}, "state_poll_interval_choices_s must be a non-empty list"),
+        ({"state_poll_interval_choices_s": [1, 0]}, "state_poll_interval_choices_s[1] must be > 0"),
+        ({"state_poll_interval_choices_s": [1, True]}, "state_poll_interval_choices_s[1] must be a number"),
+        ({"state_poll_interval_choices_s": [1, 2, 1.0]}, "state_poll_interval_choices_s must not contain duplicates"),
+        (
+            {"state_poll_interval_choices_s": [1, 2], "state_poll_jitter_frac": 0.2},
+            "state_poll_interval_choices_s cannot be combined with state_poll_jitter_frac",
+        ),
+        ({"state_poll_interval_choices_s": [1, 2]}, "state_poll_interval_choices_s requires seed"),
+        ({"state_poll_interval_choices_s": [1, 2], "seed": "7"}, "seed must be an integer"),
+    ],
+)
+def test_validate_config_rejects_a_bad_state_poll_interval_choices_s(overrides: dict, message: str):
+    """Each malformed choices/seed combination fails with its own exact diagnostic.
+    Duplicates matter because the engine records action_prob = 1/len(choices), which
+    is only the true probability when every value appears once; a missing seed matters
+    because the choice sequence must be reproducible from the run's own seed."""
+    raw = _minimal_raw()
+    raw.update(overrides)
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == message
+
+
+def test_validate_config_carries_choices_as_floats_and_the_seed():
+    """Valid choices reach SyncConfig as a float tuple (so interval_s serializes as
+    e.g. 2.0, like stage 1's), and the seed reaches the AgentConfig."""
+    raw = _minimal_raw()
+    raw["state_poll_interval_choices_s"] = [1, 2, 4.5]
+    raw["seed"] = 7
+    config = validate_config(raw)
+    assert config.seed == 7
+    assert build_sync_config(config).state_poll_interval_choices_s == (1.0, 2.0, 4.5)
+
+
+def test_validate_config_leaves_choices_unset_and_seed_none_by_default():
+    """A stage-1 config (no choices, no seed) keeps the jittered policy."""
+    config = validate_config(_minimal_raw())
+    assert config.seed is None
+    assert build_sync_config(config).state_poll_interval_choices_s is None
+
+
+def test_poll_choice_rng_is_deterministic_per_seed_and_node():
+    """The same (seed, node) reproduces the same draws; changing either the seed or
+    the node draws a different sequence -- unlike _poll_jitter_rng, a seed sweep
+    really does vary the poll actions."""
+    first = [_poll_choice_rng(7, "h0")() for _ in range(5)]
+    assert first == [_poll_choice_rng(7, "h0")() for _ in range(5)]
+    assert first != [_poll_choice_rng(8, "h0")() for _ in range(5)]
+    assert first != [_poll_choice_rng(7, "h1")() for _ in range(5)]
+
+
+def _chosen_intervals(tmp_path: Path, seed: int, node: str = "h0") -> list[tuple[float, float]]:
+    """Build one agent with choices (1, 2, 4) and `seed`, tick its engine through 30
+    polls to h1, and return each state_poll decision's (interval_s, action_prob)."""
+    config = _config(
+        tmp_path / f"{node}-seed{seed}",
+        node=node,
+        neighbors=["h1"] if node != "h1" else ["h0"],
+        state_poll_interval_choices_s=[1, 2, 4],
+        seed=seed,
+    )
+    agent = build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))
+    engine = agent._engine
+    rows: list[tuple[float, float]] = []
+    now = 0.0
+    while len(rows) < 30:
+        engine.on_tick(now)
+        for event in engine.drain_events():
+            if event["event"] == "decision" and event["kind"] == "state_poll":
+                rows.append((event["action"]["interval_s"], event["action_prob"]))
+                now += event["action"]["interval_s"]
+    return rows
+
+
+def test_build_agent_draws_choices_from_the_run_seed_and_node(tmp_path: Path):
+    """End to end through build_agent: every chosen interval is one of the choices
+    with action_prob exactly 1/3; the same seed and node reproduce the sequence and a
+    different seed changes it."""
+    rows = _chosen_intervals(tmp_path, seed=7)
+    assert {interval for interval, _ in rows} <= {1.0, 2.0, 4.0}
+    assert {prob for _, prob in rows} == {1 / 3}
+    assert rows == _chosen_intervals(tmp_path / "again", seed=7)
+    assert rows != _chosen_intervals(tmp_path, seed=8)
 
 
 def test_two_agents_converge_their_stores_over_cross_wired_fake_handles(tmp_path: Path):

@@ -81,13 +81,16 @@ class AgentConfig:
     schedule: tuple[ScheduledRecord, ...]
     probes: tuple[ScheduledProbe, ...]
     fault_drop_rec: dict[tuple[str, int], int]
-    sync_overrides: dict[str, float | int]
+    sync_overrides: dict[str, float | int | tuple[float, ...]]
     receive_timeout_ms: int
     chunk_lifetime_ms: int
     # t0-relative seconds; None means never stop early (run until SIGTERM/SIGINT).
     stop_at_s: float | None
     # t0-relative seconds, strictly increasing; empty means no mid-run snapshots.
     counters_snapshot_at_s: tuple[float, ...]
+    # The run's seed, or None if the config gave none. Only the
+    # state_poll_interval_choices_s policy draws from it (see _poll_choice_rng).
+    seed: int | None
 
 
 # The SyncConfig fields an agent config may override; map.md's "時間・サ
@@ -129,7 +132,7 @@ _REQUIRED_KEYS = (
 )
 _ALLOWED_KEYS = (
     frozenset(_REQUIRED_KEYS)
-    | {"fault", "stop_at_s", "counters_snapshot_at_s"}
+    | {"fault", "stop_at_s", "counters_snapshot_at_s", "seed", "state_poll_interval_choices_s"}
     | set(_SYNC_OVERRIDE_KEYS)
     | set(_AGENT_NUMERIC_KEYS)
 )
@@ -300,6 +303,42 @@ def _validate_counters_snapshot_at_s(raw: dict) -> tuple[float, ...]:
     return tuple(result)
 
 
+def _validate_poll_interval_choices(raw) -> tuple[float, ...] | None:
+    """Validate the optional `state_poll_interval_choices_s` list (stage-2 map "行動と確率").
+
+    Duplicates are rejected, not collapsed: the engine records action_prob as
+    1/len(choices), which is only the true probability of the chosen value when
+    every value appears once. Combining it with state_poll_interval_s or
+    state_poll_jitter_frac is rejected because the choices policy ignores both,
+    and a config that sets them would silently not mean what it says.
+    """
+    if "state_poll_interval_choices_s" not in raw:
+        return None
+    raw_list = raw["state_poll_interval_choices_s"]
+    if not isinstance(raw_list, list) or not raw_list:
+        raise ConfigError("state_poll_interval_choices_s must be a non-empty list")
+    for idx, value in enumerate(raw_list):
+        _check_numeric(f"state_poll_interval_choices_s[{idx}]", value, float, positive=True)
+    if len(set(raw_list)) != len(raw_list):
+        raise ConfigError("state_poll_interval_choices_s must not contain duplicates")
+    for key in ("state_poll_interval_s", "state_poll_jitter_frac"):
+        if key in raw:
+            raise ConfigError(f"state_poll_interval_choices_s cannot be combined with {key}")
+    return tuple(float(value) for value in raw_list)
+
+
+def _validate_seed(raw, *, required: bool) -> int | None:
+    """Validate the optional run `seed`; `required` when a policy actually draws from it."""
+    if "seed" not in raw:
+        if required:
+            raise ConfigError("state_poll_interval_choices_s requires seed")
+        return None
+    value = raw["seed"]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ConfigError("seed must be an integer")
+    return value
+
+
 def validate_config(raw) -> AgentConfig:
     """Validate a merged config dict (JSON file plus any CLI overrides) and build the AgentConfig it describes.
 
@@ -373,6 +412,11 @@ def validate_config(raw) -> AgentConfig:
         if key in raw:
             _check_numeric(key, raw[key], kind, positive=key in _POSITIVE_NUMERIC_KEYS)
 
+    poll_interval_choices = _validate_poll_interval_choices(raw)
+    if poll_interval_choices is not None:
+        sync_overrides["state_poll_interval_choices_s"] = poll_interval_choices
+    seed = _validate_seed(raw, required=poll_interval_choices is not None)
+
     return AgentConfig(
         node=node,
         group=group,
@@ -388,6 +432,7 @@ def validate_config(raw) -> AgentConfig:
         chunk_lifetime_ms=raw.get("chunk_lifetime_ms", DEFAULT_CHUNK_LIFETIME_MS),
         stop_at_s=stop_at_s,
         counters_snapshot_at_s=counters_snapshot_at_s,
+        seed=seed,
     )
 
 
@@ -432,6 +477,22 @@ def _poll_jitter_rng(node: str) -> Callable[[], float]:
     sequence from one run to the next.
     """
     return random.Random(node).random
+
+
+def _poll_choice_rng(seed: int, node: str) -> Callable[[], float]:
+    """Build the [0, 1) source one node draws its state-poll interval choices from
+    (stage-2 map "行動と確率").
+
+    Seeded from the run seed *and* the node name, unlike _poll_jitter_rng's
+    node-only seed: stage 1's jitter repeated the exact same sequence in every
+    run, so seeds never varied the poll timing. Here a different seed draws a
+    different action sequence (more coverage of each choice across runs), while
+    the same (seed, node) still reproduces it exactly. The "state_poll_interval"
+    prefix keeps this stream apart from any other draw ever seeded from the same
+    pair; random.Random(str) hashes it with SHA-512, so it is stable across
+    processes and independent of PYTHONHASHSEED.
+    """
+    return random.Random(f"state_poll_interval:{seed}:{node}").random
 
 
 def build_sync_config(config: AgentConfig) -> SyncConfig:
@@ -903,8 +964,11 @@ def build_agent(config: AgentConfig, handle: CefpycoHandle, *, clock: Callable[[
     os.makedirs(config.state_dir, exist_ok=True)
     store = Store(os.path.join(config.state_dir, "index.db"))
     transport = CefpycoTransport(handle, clock=clock, receive_timeout_ms=config.receive_timeout_ms)
+    # validate_config guarantees a seed whenever choices are set; without
+    # choices the engine never draws poll_choice_rng, so its default stays.
+    choice_rng = {} if config.seed is None else {"poll_choice_rng": _poll_choice_rng(config.seed, config.node)}
     engine = SyncEngine(
-        build_sync_config(config), store, transport, poll_jitter_rng=_poll_jitter_rng(config.node)
+        build_sync_config(config), store, transport, poll_jitter_rng=_poll_jitter_rng(config.node), **choice_rng
     )
     transport.engine = engine
     events = EventWriter(os.path.join(config.state_dir, "events.jsonl"), clock=clock)
