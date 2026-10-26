@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from semindex import evalagg, holder_state, names, schema
+from semindex import evalagg, evalgen, gen, holder_state, names, schema
 from semindex.agent import (
     ConfigError,
     ScheduledProbe,
@@ -374,6 +374,33 @@ def test_a_scheduled_record_fires_only_once_its_at_s_has_come_due(tmp_path: Path
     # EventWriter.write from the agent's own injected clock (1005.0s here) --
     # not merely present, but the exact value that clock reads at this step.
     assert created[0]["ts_ms"] == 1_005_000
+
+
+def test_a_k_4_generated_schedule_becomes_4_records_at_each_generation_time(tmp_path: Path):
+    """stage-2 map "負荷": the generator lists k = 4 entries per at_s, and the agent turns
+    each due batch into 4 records in one step -- seqs 1-4 at the first time, 5-8 at the
+    next -- with no agent change."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out", k=4)
+    node_config = gen.generate(gen.parse_experiment(raw), "/cfg").agent_configs["h0"]
+    node_config.update(
+        cefore_conf_dir=str(tmp_path / "cefnetd"), state_dir=str(tmp_path / "state"), t0_ms=1_000_000
+    )
+    config = validate_config(node_config)
+    clock = _FakeClock(1000.0)
+    agent = build_agent(config, _FakeHandle(), clock=clock)
+    events_path = Path(config.state_dir) / "events.jsonl"
+
+    def _created_seqs() -> list[int]:
+        """Seqs of every own record created so far, in order."""
+        lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+        return [e["seq"] for e in lines if e["event"] == "record_created"]
+
+    clock.value = 1000.0 + evalgen.RECORD_START_S
+    agent.step()
+    assert _created_seqs() == [1, 2, 3, 4]
+    clock.value += evalgen.RECORD_INTERVAL_S
+    agent.step()
+    assert _created_seqs() == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_a_record_fetch_that_gets_no_reply_in_time_emits_fetch_timeout(tmp_path: Path):

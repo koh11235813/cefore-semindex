@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from semindex import evalgen, evalrun
+from semindex import evalagg, evalgen, evalrun
 from semindex.check import CheckUsageError
 from semindex.agent import ScheduledProbe, ScheduledRecord
 from semindex.evalagg import (
@@ -28,6 +28,7 @@ from semindex.evalagg import (
     aggregate,
     analyze_run,
     build_decisions_rows,
+    build_runs_rows,
     classify_probe,
     derive_t0_ms,
     discover_runs,
@@ -38,6 +39,7 @@ from semindex.evalagg import (
     median_q1_q3,
     oldest_match_age_s,
     read_meta,
+    read_meta_generation,
     run_has_done_marker,
     wilson_interval,
     _node_window_control_bytes,
@@ -248,6 +250,8 @@ def test_read_meta_reads_evalruns_own_meta_json_shape(tmp_path: Path):
         p=0.2,
         seed=1,
         stage="test",
+        k=1,
+        state_poll_interval_choices_s=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -257,6 +261,32 @@ def test_read_meta_reads_evalruns_own_meta_json_shape(tmp_path: Path):
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
     assert read_meta(str(tmp_path)) == ("flagged", ["agent_lives:h0"])
+
+
+def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tmp_path: Path):
+    """k and the interval choices come back from the meta.json evalrun itself writes."""
+    meta = evalrun._build_meta(
+        p=0.4,
+        seed=1,
+        stage="test",
+        k=4,
+        state_poll_interval_choices_s=[1.0, 2.0],
+        recefore="/fake/recefore",
+        recefore_rc=0,
+        start_s=0.0,
+        end_s=1.0,
+        verdict={"valid": True, "flags": []},
+        capture_subprocess=lambda argv, cwd=None: "",
+    )
+    evalrun._write_json(str(tmp_path / "meta.json"), meta)
+    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0])
+
+
+def test_read_meta_generation_is_none_for_a_stage_1_meta_json_or_none_at_all(tmp_path: Path):
+    """A stage-1 meta.json (no k key) and a missing meta.json both give (None, None)."""
+    assert read_meta_generation(str(tmp_path)) == (None, None)
+    (tmp_path / "meta.json").write_text(json.dumps({"p": 0.2, "validity": {"valid": True, "flags": []}}))
+    assert read_meta_generation(str(tmp_path)) == (None, None)
 
 
 # -- numeric helpers ------------------------------------------------------
@@ -1787,3 +1817,109 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
     assert summary[0]["n_unknown"] == "1"
     assert summary[0]["probe_issued_total"] == "12"
     assert summary[0]["probe_discovered_total"] == "11"
+
+
+# -- stage 2 (stage-2 map ticket 03): generator settings and poll-reply decision fields --
+
+
+def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():
+    """runs.csv gets k and the choices (compact JSON) as its last two columns; a run whose
+    meta.json does not record them gets empty cells, an analysis_error run included."""
+    recorded = RunAnalysis(p=0.4, seed=1, status="valid", flags=[], k=4, state_poll_interval_choices_s=[1.0, 2.0])
+    stage1 = RunAnalysis(p=0.4, seed=2, status="valid", flags=[])
+    broken = RunAnalysis(p=0.4, seed=3, status="valid", flags=[], analysis_error="no t0", k=1)
+    rows = build_runs_rows([recorded, stage1, broken])
+    assert [(r["k"], r["state_poll_interval_choices_s"]) for r in rows] == [(4, "[1.0,2.0]"), (None, None), (1, None)]
+    assert evalagg.RUNS_FIELDS[-2:] == ["k", "state_poll_interval_choices_s"]
+
+
+def _poll_decision(status, timeouts, action_prob):
+    """One analyze_run-shaped state_poll decision row from a stage-2 agent."""
+    return {
+        "kind": "state_poll",
+        "in_flight": 0,
+        "truncated": False,
+        "hi": [],
+        "missing": [],
+        "advertised_gap": [],
+        "advertised_hi": [],
+        "advertised_notified_max": [],
+        "last_timeout_age_s": None,
+        "wait_s": None,
+        "interval_s": 1.0,
+        "fetched_count": None,
+        "has_poll_reply_state": True,
+        "last_poll_status": status,
+        "consecutive_poll_timeouts": timeouts,
+        "action_prob": action_prob,
+    }
+
+
+def test_decisions_rows_report_poll_reply_status_timeouts_and_action_prob_for_stage_2():
+    """For stage-2 state_poll decisions, decisions.csv adds action_prob and
+    consecutive_poll_timeouts (median/Q1/Q3) and one frequency row per
+    last_poll_status value, in a fixed order, after the stage-1 rows."""
+    run = RunAnalysis(
+        p=0.4,
+        seed=1,
+        status="valid",
+        flags=[],
+        decision_rows=[
+            _poll_decision(None, 0, 1 / 3),
+            _poll_decision("answered", 0, 1 / 3),
+            _poll_decision("timed_out", 1, 1 / 3),
+            _poll_decision("timed_out", 2, 1 / 3),
+            _poll_decision("pending", 2, 1 / 3),
+        ],
+    )
+    rows = build_decisions_rows([run], include_unknown=False)
+    new_rows = [(r["field"], r["n"], r["median"], r["frequency"]) for r in rows][-6:]
+    assert new_rows == [
+        ("action_prob", 5, 1 / 3, None),
+        ("consecutive_poll_timeouts", 5, 1.0, None),
+        ("last_poll_status=null", 5, None, 0.2),
+        ("last_poll_status=answered", 5, None, 0.2),
+        ("last_poll_status=timed_out", 5, None, 0.4),
+        ("last_poll_status=pending", 5, None, 0.2),
+    ]
+    assert rows[-7]["field"] == "truncated"
+
+
+def test_decisions_rows_add_nothing_for_stage_1_decisions(synthetic_store: Path):
+    """A stage-1 decision line (no last_poll_status key) adds none of the stage-2 rows,
+    so a stage-1 store's decisions.csv keeps its bytes."""
+    run = analyze_run(0.0, 1, str(synthetic_store / "test" / "p0" / "1"))
+    state_poll = next(d for d in run.decision_rows if d["kind"] == "state_poll")
+    assert state_poll["has_poll_reply_state"] is False
+    fields = {r["field"] for r in build_decisions_rows([run], include_unknown=True)}
+    assert not fields & {"action_prob", "consecutive_poll_timeouts", "last_poll_status=null"}
+
+
+def test_analyze_run_reads_the_poll_reply_fields_off_a_stage_2_decision_line(tmp_path: Path):
+    """analyze_run carries a stage-2 state_poll line's last_poll_status,
+    consecutive_poll_timeouts and action_prob into its decision rows."""
+    t0 = 1_000_000_000_000.0
+    run_dir = tmp_path / "store" / "s2" / "p0" / "1"
+    decision = {
+        "event": "decision",
+        "ts_ms": t0 + 20_000,
+        "kind": "state_poll",
+        "state": {
+            "in_flight": 0,
+            "last_timeout_s": None,
+            "truncated": False,
+            "origins": {},
+            "last_poll_status": "timed_out",
+            "consecutive_poll_timeouts": 3,
+        },
+        "action": {"neighbor": "h1", "interval_s": 0.5},
+        "action_prob": 0.5,
+    }
+    _write_run(run_dir, {"h0": [{"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0}, decision]})
+    [row] = analyze_run(0.0, 1, str(run_dir)).decision_rows
+    assert (row["has_poll_reply_state"], row["last_poll_status"], row["consecutive_poll_timeouts"], row["action_prob"]) == (
+        True,
+        "timed_out",
+        3,
+        0.5,
+    )

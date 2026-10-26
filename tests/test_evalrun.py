@@ -1073,6 +1073,8 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "p",
         "seed",
         "stage",
+        "k",
+        "state_poll_interval_choices_s",
         "semindex_git_commit",
         "semindex_git_dirty",
         "recefore_git_commit",
@@ -1086,9 +1088,65 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
     assert meta["p"] == 0.1
     assert meta["seed"] == 3
     assert meta["stage"] == "s1"
+    assert meta["k"] == 1
+    assert meta["state_poll_interval_choices_s"] is None
     assert meta["recefore_exit_code"] == 0
     assert meta["validity"]["valid"] is True
     assert set(meta["host_python"]) == {"evalrun", "recefore_venv"}
+
+
+def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Path, monkeypatch):
+    """k and the interval choices reach the generated run (stored experiment and agent
+    configs) and meta.json; the store path stays <stage>/p<p>/<seed>."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.4,
+        3,
+        "s2",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        k=2,
+        state_poll_interval_choices_s=[1.0, 2.0],
+    )
+
+    run_dir = store / "s2" / "p0.4" / "3"
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["k"] == 2
+    assert meta["state_poll_interval_choices_s"] == [1.0, 2.0]
+    experiment = json.loads((run_dir / "s2_p040_seed3.experiment.json").read_text(encoding="utf-8"))
+    assert len(experiment["schedule"]["0"]) == 2 * evalgen.RECORD_COUNT
+    assert experiment["state_poll_interval_choices_s"] == [1.0, 2.0]
+
+
+def test_main_passes_k_and_interval_choices_to_run_all(tmp_path: Path, monkeypatch):
+    """--k and --interval-choices reach run_all as k / state_poll_interval_choices_s."""
+    seen: dict = {}
+
+    def _record_run_all(*args, **kwargs):
+        """Capture the keyword arguments main() passed."""
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(evalrun, "run_all", _record_run_all)
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s2", "--p", "0", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--k", "4", "--interval-choices", "1", "2"]
+    )
+    assert rc == 0
+    assert seen["k"] == 4
+    assert seen["state_poll_interval_choices_s"] == [1.0, 2.0]
 
 
 def test_run_one_flags_an_invalid_run_but_still_completes(tmp_path: Path, monkeypatch):
