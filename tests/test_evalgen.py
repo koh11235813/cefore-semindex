@@ -397,7 +397,7 @@ def test_generate_run_writes_nothing_for_a_stage_that_escapes_outdir(tmp_path: P
 def test_generate_run_writes_nothing_for_an_absolute_stage(tmp_path: Path):
     """An absolute-path stage must be rejected before any write is attempted.
 
-    Before the fix this reached `open("/abs_p020_seed7.experiment.json", "w")`
+    Before the fix this reached `open("/abs_p0.2_seed7.experiment.json", "w")`
     (os.path.join discards its first argument once the second is absolute) --
     a PermissionError in this sandbox, but a write to an attacker/typo
     -controlled absolute path anywhere writable. The fix must raise
