@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 type: task
 claimed-by: orchestrator
 blocked-by: []
@@ -17,3 +17,10 @@ blocked-by: []
 ## Acceptance
 
 選択肢を与えた設定で、選ばれた間隔がいつも選択肢のどれかで、`action_prob` が 1 / 選択肢の数であることを試験で確かめる。同じ seed とノードで選んだ列が一致し、seed を変えると変わることも確かめる。選択肢を与えない設定では、段 1 と同じ間隔の列と `decision` 行が出ることを試験で確かめる。
+
+## Resolution (2026-10-26)
+
+- `feat/semindex-stage2` で実装した（`189810f`）。設定のキーは `state_poll_interval_choices_s`、乱数の seed はエージェント設定の `seed`。欄の形は map の「判断の記録の欄」に書いた。
+- 選ばれた間隔がいつも選択肢のどれかで `action_prob` がちょうど 1/3 になること、同じ seed とノードで列が一致し、seed かノードを変えると変わることを試験で確かめた。選択肢が 1 つなら `action_prob` は 1。
+- 選択肢を与えない設定では、段 1 と同じ間隔の列（2 秒 ± 20%）と `action_prob` 1 が出て、選択肢の乱数を引かないことを試験で確かめた。記録を止めた場合と比べて、Interest の列、`decision` 以外のイベントの列、乱数を引く回数が一致することも、選択肢を与えた場合について試験にした。
+- 重複した選択肢と、`state_poll_interval_s`・`state_poll_jitter_frac` との併用は、設定の誤りとして受け付けない。

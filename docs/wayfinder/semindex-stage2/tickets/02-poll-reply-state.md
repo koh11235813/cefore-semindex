@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 type: task
 claimed-by: orchestrator
 blocked-by: []
@@ -17,3 +17,10 @@ blocked-by: []
 ## Acceptance
 
 返事が来た場合、lifetime が過ぎた場合、まだ待っている場合、続けて来なかったあとに 1 回来た場合のそれぞれで、次の `state_poll` 行の状態の値を完全一致で確かめる。記録を止めた場合と比べて、送る Interest の列が一致することも確かめる。
+
+## Resolution (2026-10-26)
+
+- `feat/semindex-stage2` で実装した（`9e5533d`、返事の対応づけの修正 `a7637c9`）。欄は `last_poll_status`（`answered`・`timed_out`・`pending`、最初は `null`）と `consecutive_poll_timeouts`。決め方は map の「判断の記録の欄」に書いた。
+- lifetime が過ぎたかは、エンジンが判断の時点で時計から決める（transport と同じ期限の式）。返事は名前の epoch_ms でどの状態確認への返事かを決める。最初の版は返事をいちばん新しい状態確認に結びつけていて、間隔が lifetime より短いと遅れた返事で状態を取り違えたので直した。
+- 返事が来た、lifetime が過ぎた、まだ待っている、続けて来なかったあとに来た、古い状態確認への返事が新しい状態確認のあとに届いた、0.5 秒間隔で返事待ちが重なった、の各場合で、次の `state_poll` 行の値を完全一致で確かめた。記録を止めた場合と比べて Interest の列が一致することも試験にした。
+- 返事が来なかったことは、イベントとしては残さない。期限は送った時刻 + lifetime で決まり、次の `state_poll` 行に結果が載るため。
