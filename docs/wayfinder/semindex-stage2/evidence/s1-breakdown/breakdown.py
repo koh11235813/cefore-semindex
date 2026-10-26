@@ -18,10 +18,12 @@ WS, WE = 10_000.0, 130_000.0
 
 
 def iso_ms(s):
+    """Epoch milliseconds of an ISO-8601 results.json timestamp."""
     return datetime.datetime.fromisoformat(s).timestamp() * 1000.0
 
 
 def load_events(run_dir):
+    """{node: [event dict, ...]} from every node's events.jsonl of one run."""
     nodes = {}
     for d in sorted(glob.glob(f"{run_dir}/debug/node_dirs/h*")):
         n = os.path.basename(d)
@@ -54,6 +56,7 @@ def link_intervals(results):
 
 
 def overlap(ivs, a, b):
+    """Milliseconds of [a, b] covered by the down intervals `ivs`."""
     if b <= a:
         return 0.0
     return sum(max(0.0, min(b, e) - max(a, s)) for s, e in ivs)
@@ -66,10 +69,12 @@ def last_up_in(ivs, a, b):
 
 
 def is_down(ivs, t):
+    """Whether instant t falls inside one of the down intervals `ivs`."""
     return any(s <= t < e for s, e in ivs)
 
 
 def analyze(p, seed, run_dir, del_rows, byte_rows, anomalies):
+    """Append one run's per-delivery delay rows and per-node byte rows; count oddities in `anomalies`."""
     meta = json.load(open(f"{run_dir}/meta.json"))
     if not meta["validity"]["valid"]:
         anomalies["invalid_runs"] += 1
@@ -144,13 +149,25 @@ def analyze(p, seed, run_dir, del_rows, byte_rows, anomalies):
         b = max(t_up, t_poll)
         down_pre = overlap(ivs, a, b)
         lu = last_up_in(ivs, a, b)
+        # 2026-10-26 fix: results.json stamps link_up a few ms after the handler,
+        # so a link can still read as down at t_poll with its up-transition just
+        # past b. Taking b - lu or b - a whole then counted that down time twice
+        # (once in down_pre) and left pre_other negative (43 deliveries, down to
+        # -14.8 s). Every wait component now counts only up-time.
         if lu is not None:
-            poll_wait_after_up = b - lu
+            poll_wait_after_up = (b - lu) - overlap(ivs, lu, b)
             poll_wait_noflap = 0.0
-        else:
+        elif down_pre == 0.0:
             poll_wait_after_up = 0.0
-            poll_wait_noflap = b - a  # no flap in [t_up, t_poll]: plain poll-phase wait
+            poll_wait_noflap = b - a  # link up throughout [t_up, t_poll]: plain poll-phase wait
+        else:
+            # down at t_poll with no up-transition inside: the up-time before
+            # that outage is neither a post-flap nor a plain wait.
+            poll_wait_after_up = 0.0
+            poll_wait_noflap = 0.0
         pre_other = (b - a) - down_pre - poll_wait_after_up - poll_wait_noflap
+        if min(down_pre, poll_wait_after_up, poll_wait_noflap, pre_other) < -1e-6:
+            anomalies["negative_component"] += 1
         poll_rtt = max(0.0, known - b)
         post = t_down - max(known, b)
         down_post = overlap(ivs, max(known, b), t_down)
@@ -182,6 +199,7 @@ def analyze(p, seed, run_dir, del_rows, byte_rows, anomalies):
         v.sort()
 
     def holder_payload_len(h, t):
+        """Encoded state-reply payload length holder h would have served at time t."""
         held = defaultdict(set)
         for ts, o, s in held_tl[h]:
             if ts > t:
@@ -248,6 +266,7 @@ def analyze(p, seed, run_dir, del_rows, byte_rows, anomalies):
 
 
 def main():
+    """Walk every s1 run, write deliveries.csv and bytes.csv next to this script, print per-p summaries."""
     del_rows, byte_rows = [], []
     anomalies = defaultdict(int)
     anomalies["link_ts_lag_ms"] = []
