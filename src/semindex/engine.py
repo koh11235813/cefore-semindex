@@ -71,6 +71,60 @@ class SyncConfig:
     log_decisions: bool = True
 
 
+@dataclass
+class _PollReplies:
+    """Whether one neighbor has been answering this node's state polls (stage-2 map
+    "判断の状態に足すもの") -- read-only bookkeeping for the `state_poll` decision state,
+    never consulted by any scheduling decision.
+
+    A poll times out when its Interest lifetime has passed with no reply: the same
+    deadline CefpycoTransport tracks (send time + interest_lifetime_ms, expired once
+    `deadline <= now`). It is judged here from the clock, at the next decision,
+    rather than from the transport's own timeout callback, because Agent.step()
+    runs that callback in poll() against a `now` read *before* on_tick's: a deadline
+    falling between the two reads would still look pending to a callback-driven
+    status even though its lifetime had passed when the decision was made. Judging
+    it here also means FakeNetwork (which reports timeouts at pump time, not after
+    the lifetime) gives the same answer as the real transport.
+
+    A reply is attributed to the latest poll, since on_state receives only the
+    holder, not the poll's name: every poll still unanswered at that point is taken
+    as superseded, so an earlier poll's lifetime passing afterwards never counts as
+    a timeout or overwrites "answered". A late reply (after the latest poll already
+    timed out) still counts as an answer -- the neighbor did reply.
+    """
+
+    # Status of the most recent poll: "answered", "timed_out", "pending" (lifetime
+    # not yet passed, no reply yet), or None before the first poll.
+    last_status: str | None = None
+    last_sent_at: float | None = None
+    # Send times of polls neither answered nor yet past their lifetime, oldest first.
+    unanswered: list[float] = field(default_factory=list)
+    # Polls whose lifetime passed unanswered since the last reply.
+    consecutive_timeouts: int = 0
+
+    def expire(self, now: float, lifetime_s: float) -> None:
+        """Count every unanswered poll whose lifetime has passed by `now` as timed out."""
+        while self.unanswered and self.unanswered[0] + lifetime_s <= now:
+            sent_at = self.unanswered.pop(0)
+            self.consecutive_timeouts += 1
+            if sent_at == self.last_sent_at:
+                self.last_status = "timed_out"
+
+    def sent(self, now: float) -> None:
+        """Record a new poll sent at `now`; it is pending until answered or expired."""
+        self.last_status = "pending"
+        self.last_sent_at = now
+        self.unanswered.append(now)
+
+    def answered(self) -> None:
+        """Record a state reply from this neighbor (attributed to the latest poll)."""
+        if self.last_status is not None:
+            self.last_status = "answered"
+        self.unanswered.clear()
+        self.consecutive_timeouts = 0
+
+
 class SyncEngine:
     """The per-node Sync agent core: requester toward its neighbors, holder for itself."""
 
@@ -124,6 +178,7 @@ class SyncEngine:
             jitter=backoff_jitter,
         )
         self._next_state_poll: dict[str, float] = {}
+        self._poll_replies: dict[str, _PollReplies] = {}
         self._events: list[dict] = []
         self._transport.register(names.registration_prefix(config.group, config.node))
         # Seed the tracker with whatever this node already holds (e.g.
@@ -238,17 +293,22 @@ class SyncEngine:
         name = names.build_state_name(self._config.group, neighbor, self._config.node, epoch_ms)
         self._transport.send_interest(name, self._config.interest_lifetime_ms)
         interval, action_prob = self._choose_poll_interval()
+        # The reply status is snapshotted before this poll itself is recorded as
+        # sent, so the decision shows how the *previous* poll to this neighbor
+        # fared, not the trivially-pending poll being sent right now.
+        replies = self._poll_replies.setdefault(neighbor, _PollReplies())
+        replies.expire(now, self._config.interest_lifetime_ms / 1000.0)
+        state = {
+            **self._tracker.decision_state(neighbor),
+            "last_poll_status": replies.last_status,
+            "consecutive_poll_timeouts": replies.consecutive_timeouts,
+        }
         # map.md "判断の記録", kind 1: this *is* the decision -- which
         # neighbor, and the interval chosen for its next poll. Always made
         # (a neighbor due for a poll is always polled), so always logged
         # when log_decisions is on.
-        self._emit_decision(
-            "state_poll",
-            self._tracker.decision_state(neighbor),
-            {"neighbor": neighbor, "interval_s": interval},
-            now,
-            action_prob,
-        )
+        self._emit_decision("state_poll", state, {"neighbor": neighbor, "interval_s": interval}, now, action_prob)
+        replies.sent(now)
         self._next_state_poll[neighbor] = now + interval
 
     def _choose_poll_interval(self) -> tuple[float, float]:
@@ -318,6 +378,11 @@ class SyncEngine:
         # _emit_decision's own comment on why a queued event's processing
         # time, not its later flush time, is what belongs in ts_ms.
         ts_ms = round(now * 1000)
+        # Any reply, even one that fails to decode, shows the neighbor is
+        # answering -- what the poll-reply status is there to tell the policy.
+        replies = self._poll_replies.get(neighbor)
+        if replies is not None:
+            replies.answered()
         try:
             decoded = holder_state.decode(payload)
         except holder_state.HolderStateError:
@@ -420,6 +485,9 @@ class SyncEngine:
         except names.MalformedNameError:
             return
         if not isinstance(parsed, names.RecordName):
+            # CefpycoTransport also reports state-poll deadlines here. They are
+            # left alone on purpose: _PollReplies judges state-poll timeouts from
+            # the clock at decision time (see its docstring for why).
             return
         neighbor = parsed.holder
         # 2026-10-23 fix: ts_ms from `now`, same reasoning as on_record above.
