@@ -71,6 +71,13 @@ class SyncConfig:
     log_decisions: bool = True
 
 
+# How long past its Interest lifetime a state poll can still be answered:
+# Cefore v0.12 keeps a PIT entry for interest_lifetime + CefC_Pit_CleaningTime
+# (1 s; see tracker.DEFAULT_BACKOFF_INITIAL_S's comment), so Data for an older
+# poll has nowhere to go. _PollReplies drops unanswered polls past this.
+POLL_REPLY_GRACE_S = 1.0
+
+
 @dataclass
 class _Poll:
     """One state poll sent to a neighbor: its name's epoch_ms, when it was sent, and
@@ -92,7 +99,7 @@ class _PollReplies:
     once, and a late reply to poll N must not mark poll N+1 answered.
 
     A poll's status is judged at decision time: "answered" once its reply has
-    arrived (even late), else "timed_out" once send time + interest_lifetime_ms <=
+    arrived (even late, as long as the poll is still held -- see `_expire`), else "timed_out" once send time + interest_lifetime_ms <=
     now -- CefpycoTransport's own deadline rule -- else "pending". It is judged here
     from the clock rather than from the transport's timeout callback because
     Agent.step() runs that callback in poll() against a `now` read *before*
@@ -102,21 +109,52 @@ class _PollReplies:
     after the lifetime) agree with the real transport.
     """
 
-    # Send order. Polls older than the newest answered one are pruned: neither the
-    # previous poll's status nor the timeout count below ever looks past it.
+    # Send order, holding only what the two reported values still depend on:
+    # polls sent after the newest answered one, minus those folded into
+    # `expired_timeouts` below. An answered poll survives only while it is the
+    # newest poll (its status is then last_poll_status).
     polls: list[_Poll] = field(default_factory=list)
+    # Polls sent after the newest answered one that passed lifetime +
+    # POLL_REPLY_GRACE_S unanswered and were dropped from `polls`. They count as
+    # timed out for good, which keeps `polls` bounded by how many polls fit in
+    # lifetime + grace, however long a neighbor stays silent.
+    expired_timeouts: int = 0
 
     def sent(self, epoch_ms: int, now: float) -> None:
         """Record a new poll sent at `now`; it is pending until answered or expired."""
         self.polls.append(_Poll(epoch_ms, now))
 
     def replied(self, epoch_ms: int) -> None:
-        """Mark the poll whose name carried `epoch_ms` answered; a reply to an
-        already-pruned (or never-sent) poll changes nothing."""
+        """Mark the poll whose name carried `epoch_ms` answered and drop everything older.
+
+        A reply to a poll no longer held (dropped as expired, or older than an
+        answered one) changes nothing. Every expired poll is older than any poll
+        still held, so a reply to a held poll also clears `expired_timeouts`.
+        """
         for index, poll in enumerate(self.polls):
             if poll.epoch_ms == epoch_ms:
                 poll.replied = True
                 del self.polls[:index]
+                self.expired_timeouts = 0
+                return
+
+    def _expire(self, now: float, lifetime_s: float) -> None:
+        """Drop polls the reported values no longer need, oldest first; the newest
+        poll is always kept, since last_poll_status is its status.
+
+        An answered poll at the front is no longer needed once a newer poll exists.
+        An unanswered one older than lifetime + POLL_REPLY_GRACE_S can no longer be
+        answered in practice (Cefore has dropped its PIT entry), so it is folded
+        into `expired_timeouts`.
+        """
+        while len(self.polls) > 1:
+            oldest = self.polls[0]
+            if oldest.replied:
+                self.polls.pop(0)
+            elif oldest.sent_at + lifetime_s + POLL_REPLY_GRACE_S <= now:
+                self.polls.pop(0)
+                self.expired_timeouts += 1
+            else:
                 return
 
     def snapshot(self, now: float, lifetime_s: float) -> tuple[str | None, int]:
@@ -128,15 +166,11 @@ class _PollReplies:
         A reply to an older poll therefore does not reset the count when newer
         polls have already timed out. None before the first poll.
         """
+        self._expire(now, lifetime_s)
         if not self.polls:
             return None, 0
         statuses = [self._status(poll, now, lifetime_s) for poll in self.polls]
-        count = 0
-        for status in reversed(statuses):
-            if status == "answered":
-                break
-            if status == "timed_out":
-                count += 1
+        count = self.expired_timeouts + sum(1 for status in statuses if status == "timed_out")
         return statuses[-1], count
 
     @staticmethod

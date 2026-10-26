@@ -1001,6 +1001,28 @@ def test_a_late_reply_after_the_lifetime_still_counts_as_answered(tmp_path: Path
     ]
 
 
+def test_a_long_silent_outage_keeps_the_poll_history_bounded(tmp_path: Path):
+    """2000 s of 0.5 s polls with no reply: the count keeps growing (every poll sent at
+    least 2 s before the decision has timed out), but only the polls still within
+    lifetime + 1 s grace are held -- 5 of them, plus the poll just sent."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    rows = _poll_reply_states(engine, [("tick", i * 0.5) for i in range(4001)])
+    assert rows[-1] == (2_000_000, "pending", 3997)
+    assert len(engine._poll_replies["h1"].polls) == 6
+
+
+def test_a_reply_later_than_lifetime_plus_grace_to_an_older_poll_is_ignored(tmp_path: Path):
+    """Cefore drops a PIT entry about 1 s after its lifetime, so a poll unanswered for
+    lifetime + 1 s (and no longer the newest) is counted as timed out for good: a
+    reply to it after that changes neither the status nor the count."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    steps = [("tick", i * 0.5) for i in range(8)] + [("reply", 3.6, 0), ("tick", 4.0)]
+    assert _poll_reply_states(engine, steps)[-2:] == [
+        (3500, "pending", 4),
+        (4000, "pending", 5),
+    ]
+
+
 def test_a_reply_that_fails_to_decode_still_counts_as_answered(tmp_path: Path):
     """A reply whose payload cannot be decoded still shows the neighbor is answering."""
     engine, _, _ = _engine(tmp_path)
