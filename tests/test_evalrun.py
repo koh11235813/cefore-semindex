@@ -1096,8 +1096,8 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
 
 
 def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Path, monkeypatch):
-    """k and the interval choices reach the generated run (stored experiment and agent
-    configs) and meta.json; the store path stays <stage>/p<p>/<seed>."""
+    """k and the interval choices reach the generated run (stored experiment) and
+    meta.json, the run still validates, and the store path stays <stage>/p<p>/<seed>."""
     monkeypatch.delenv("SUDO_UID", raising=False)
     monkeypatch.delenv("SUDO_GID", raising=False)
     store = tmp_path / "store"
@@ -1123,6 +1123,10 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
     meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     assert meta["k"] == 2
     assert meta["state_poll_interval_choices_s"] == [1.0, 2.0]
+    # evalvalid matches record_created to the schedule by seq index, so 2 records
+    # per generation time (60 per origin) is still a valid run.
+    assert meta["validity"]["valid"] is True
+    assert meta["validity"]["flags"] == []
     experiment = json.loads((run_dir / "s2_p040_seed3.experiment.json").read_text(encoding="utf-8"))
     assert len(experiment["schedule"]["0"]) == 2 * evalgen.RECORD_COUNT
     assert experiment["state_poll_interval_choices_s"] == [1.0, 2.0]
