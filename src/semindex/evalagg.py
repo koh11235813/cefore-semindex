@@ -288,8 +288,8 @@ def read_meta_generation(run_dir: str) -> tuple[int | None, list[float] | None, 
     """This run's generator settings from `<run_dir>/meta.json`: (k, state-poll
     interval choices, choices-mode jitter j).
 
-    2026-10-26 (stage-2 map "生成器と集計"): semindex.evalrun records both from then
-    on. k is None when meta.json does not record it (every stage-1 run, or no
+    2026-10-26 (stage-2 map "生成器と集計"): semindex.evalrun records all three
+    from then on. k is None when meta.json does not record it (every stage-1 run, or no
     readable meta.json); the choices are None both then and for a run that
     used the default jittered policy -- `k` is what says whether this run
     recorded its settings at all. j is None without choices, and for a run

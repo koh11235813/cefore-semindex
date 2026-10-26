@@ -286,7 +286,7 @@ def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tm
 
 
 def test_read_meta_generation_is_none_for_a_stage_1_meta_json_or_none_at_all(tmp_path: Path):
-    """A stage-1 meta.json (no k key) and a missing meta.json both give (None, None)."""
+    """A stage-1 meta.json (no k key) and a missing meta.json both give (None, None, None)."""
     assert read_meta_generation(str(tmp_path)) == (None, None, None)
     (tmp_path / "meta.json").write_text(json.dumps({"p": 0.2, "validity": {"valid": True, "flags": []}}))
     assert read_meta_generation(str(tmp_path)) == (None, None, None)
