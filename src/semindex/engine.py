@@ -72,57 +72,81 @@ class SyncConfig:
 
 
 @dataclass
+class _Poll:
+    """One state poll sent to a neighbor: its name's epoch_ms, when it was sent, and
+    whether its own reply has arrived."""
+
+    epoch_ms: int
+    sent_at: float
+    replied: bool = False
+
+
+@dataclass
 class _PollReplies:
     """Whether one neighbor has been answering this node's state polls (stage-2 map
     "判断の状態に足すもの") -- read-only bookkeeping for the `state_poll` decision state,
     never consulted by any scheduling decision.
 
-    A poll times out when its Interest lifetime has passed with no reply: the same
-    deadline CefpycoTransport tracks (send time + interest_lifetime_ms, expired once
-    `deadline <= now`). It is judged here from the clock, at the next decision,
-    rather than from the transport's own timeout callback, because Agent.step()
-    runs that callback in poll() against a `now` read *before* on_tick's: a deadline
-    falling between the two reads would still look pending to a callback-driven
-    status even though its lifetime had passed when the decision was made. Judging
-    it here also means FakeNetwork (which reports timeouts at pump time, not after
-    the lifetime) gives the same answer as the real transport.
+    Each reply is matched to its own poll by the epoch_ms in the reply's name: with
+    an interval shorter than the Interest lifetime several polls are outstanding at
+    once, and a late reply to poll N must not mark poll N+1 answered.
 
-    A reply is attributed to the latest poll, since on_state receives only the
-    holder, not the poll's name: every poll still unanswered at that point is taken
-    as superseded, so an earlier poll's lifetime passing afterwards never counts as
-    a timeout or overwrites "answered". A late reply (after the latest poll already
-    timed out) still counts as an answer -- the neighbor did reply.
+    A poll's status is judged at decision time: "answered" once its reply has
+    arrived (even late), else "timed_out" once send time + interest_lifetime_ms <=
+    now -- CefpycoTransport's own deadline rule -- else "pending". It is judged here
+    from the clock rather than from the transport's timeout callback because
+    Agent.step() runs that callback in poll() against a `now` read *before*
+    on_tick's: a deadline falling between the two reads would still look pending
+    to a callback-driven status although its lifetime had passed when the decision
+    was made. This also makes FakeNetwork (which reports timeouts at pump time, not
+    after the lifetime) agree with the real transport.
     """
 
-    # Status of the most recent poll: "answered", "timed_out", "pending" (lifetime
-    # not yet passed, no reply yet), or None before the first poll.
-    last_status: str | None = None
-    last_sent_at: float | None = None
-    # Send times of polls neither answered nor yet past their lifetime, oldest first.
-    unanswered: list[float] = field(default_factory=list)
-    # Polls whose lifetime passed unanswered since the last reply.
-    consecutive_timeouts: int = 0
+    # Send order. Polls older than the newest answered one are pruned: neither the
+    # previous poll's status nor the timeout count below ever looks past it.
+    polls: list[_Poll] = field(default_factory=list)
 
-    def expire(self, now: float, lifetime_s: float) -> None:
-        """Count every unanswered poll whose lifetime has passed by `now` as timed out."""
-        while self.unanswered and self.unanswered[0] + lifetime_s <= now:
-            sent_at = self.unanswered.pop(0)
-            self.consecutive_timeouts += 1
-            if sent_at == self.last_sent_at:
-                self.last_status = "timed_out"
-
-    def sent(self, now: float) -> None:
+    def sent(self, epoch_ms: int, now: float) -> None:
         """Record a new poll sent at `now`; it is pending until answered or expired."""
-        self.last_status = "pending"
-        self.last_sent_at = now
-        self.unanswered.append(now)
+        self.polls.append(_Poll(epoch_ms, now))
 
-    def answered(self) -> None:
-        """Record a state reply from this neighbor (attributed to the latest poll)."""
-        if self.last_status is not None:
-            self.last_status = "answered"
-        self.unanswered.clear()
-        self.consecutive_timeouts = 0
+    def replied(self, epoch_ms: int) -> None:
+        """Mark the poll whose name carried `epoch_ms` answered; a reply to an
+        already-pruned (or never-sent) poll changes nothing."""
+        for index, poll in enumerate(self.polls):
+            if poll.epoch_ms == epoch_ms:
+                poll.replied = True
+                del self.polls[:index]
+                return
+
+    def snapshot(self, now: float, lifetime_s: float) -> tuple[str | None, int]:
+        """(status of the most recent poll, consecutive timed-out polls) as of `now`.
+
+        The count is the number of timed-out polls since the newest answered one,
+        not counting still-pending polls: those can only be the newest ones (every
+        poll shares one lifetime), so they are skipped rather than ending the run.
+        A reply to an older poll therefore does not reset the count when newer
+        polls have already timed out. None before the first poll.
+        """
+        if not self.polls:
+            return None, 0
+        statuses = [self._status(poll, now, lifetime_s) for poll in self.polls]
+        count = 0
+        for status in reversed(statuses):
+            if status == "answered":
+                break
+            if status == "timed_out":
+                count += 1
+        return statuses[-1], count
+
+    @staticmethod
+    def _status(poll: _Poll, now: float, lifetime_s: float) -> str:
+        """One poll's status at `now` (see the class docstring)."""
+        if poll.replied:
+            return "answered"
+        if poll.sent_at + lifetime_s <= now:
+            return "timed_out"
+        return "pending"
 
 
 class SyncEngine:
@@ -297,18 +321,18 @@ class SyncEngine:
         # sent, so the decision shows how the *previous* poll to this neighbor
         # fared, not the trivially-pending poll being sent right now.
         replies = self._poll_replies.setdefault(neighbor, _PollReplies())
-        replies.expire(now, self._config.interest_lifetime_ms / 1000.0)
+        last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, self._config.interest_lifetime_ms / 1000.0)
         state = {
             **self._tracker.decision_state(neighbor),
-            "last_poll_status": replies.last_status,
-            "consecutive_poll_timeouts": replies.consecutive_timeouts,
+            "last_poll_status": last_poll_status,
+            "consecutive_poll_timeouts": consecutive_poll_timeouts,
         }
         # map.md "判断の記録", kind 1: this *is* the decision -- which
         # neighbor, and the interval chosen for its next poll. Always made
         # (a neighbor due for a poll is always polled), so always logged
         # when log_decisions is on.
         self._emit_decision("state_poll", state, {"neighbor": neighbor, "interval_s": interval}, now, action_prob)
-        replies.sent(now)
+        replies.sent(epoch_ms, now)
         self._next_state_poll[neighbor] = now + interval
 
     def _choose_poll_interval(self) -> tuple[float, float]:
@@ -357,8 +381,11 @@ class SyncEngine:
 
     # -- requester-side reply handling -----------------------------------------------
 
-    def on_state(self, neighbor: str, payload: bytes, now: float) -> None:
+    def on_state(self, neighbor: str, payload: bytes, now: float, *, poll_epoch_ms: int) -> None:
         """A neighbor's reply to a state-request Interest arrived.
+
+        `poll_epoch_ms` is the epoch_ms segment of the reply's own name, i.e. which
+        of this node's polls it answers -- the transport has already parsed it.
 
         Decodes it, folds every origin's advertised (hi, extra) into the
         tracker, and immediately plans any newly-due fetches from that
@@ -382,7 +409,7 @@ class SyncEngine:
         # answering -- what the poll-reply status is there to tell the policy.
         replies = self._poll_replies.get(neighbor)
         if replies is not None:
-            replies.answered()
+            replies.replied(poll_epoch_ms)
         try:
             decoded = holder_state.decode(payload)
         except holder_state.HolderStateError:

@@ -379,7 +379,7 @@ class CefpycoTransport:
         # never misclassified as control traffic either.
         self.control_bytes_received += len(name.encode("utf-8")) + len(payload)
         if isinstance(parsed, names.StateName):
-            self._engine.on_state(parsed.holder, payload, now)
+            self._engine.on_state(parsed.holder, payload, now, poll_epoch_ms=parsed.epoch_ms)
         else:
             self._engine.on_record(name, payload, now)
 

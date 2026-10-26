@@ -92,7 +92,7 @@ class FakeNetwork:
             self._timeout(requester_engine, parsed, item.name, now)
             return
         if isinstance(parsed, names.StateName):
-            requester_engine.on_state(holder, response.payload, now)
+            requester_engine.on_state(holder, response.payload, now, poll_epoch_ms=parsed.epoch_ms)
         else:
             requester_engine.on_record(item.name, response.payload, now)
 
