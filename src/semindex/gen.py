@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass
@@ -143,6 +144,7 @@ class ExperimentSpec:
     events: tuple[EventSpec, ...]
     stop_at_s: float | None
     counters_snapshot_at_s: tuple[float, ...]
+    state_poll_interval_choices_s: tuple[float, ...] | None
 
 
 _TOP_LEVEL_REQUIRED = (
@@ -157,7 +159,15 @@ _TOP_LEVEL_REQUIRED = (
     "agents",
     "publisher",
 )
-_TOP_LEVEL_OPTIONAL = ("schedule", "probes", "fault", "events", "stop_at_s", "counters_snapshot_at_s")
+_TOP_LEVEL_OPTIONAL = (
+    "schedule",
+    "probes",
+    "fault",
+    "events",
+    "stop_at_s",
+    "counters_snapshot_at_s",
+    "state_poll_interval_choices_s",
+)
 _TOP_LEVEL_ALLOWED = frozenset(_TOP_LEVEL_REQUIRED) | frozenset(_TOP_LEVEL_OPTIONAL)
 
 _PUBLISHER_REQUIRED = ("host", "uri", "file", "expiry", "cache_time")
@@ -478,6 +488,30 @@ def _parse_counters_snapshot_at_s(raw) -> tuple[float, ...]:
     return tuple(_require_number(v, f"counters_snapshot_at_s[{idx}]") for idx, v in enumerate(raw))
 
 
+def parse_state_poll_interval_choices_s(raw) -> tuple[float, ...] | None:
+    """Validate the optional `state_poll_interval_choices_s` top-level key, or None if absent.
+
+    Forwarded verbatim into every generated agent config, the same as
+    stop_at_s. 2026-10-26 fix: each value must be a finite number > 0 -- NaN
+    and infinity used to pass -- checked here, not only by the agent, because a non-finite interval stops that agent's
+    polling for good and would otherwise surface only after a full run;
+    agent.validate_config still owns the rest of the policy's rules
+    (non-empty, no duplicates).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ExperimentError("state_poll_interval_choices_s must be a list of numbers")
+    result = []
+    for idx, v in enumerate(raw):
+        label = f"state_poll_interval_choices_s[{idx}]"
+        value = _require_number(v, label)
+        if not math.isfinite(value) or value <= 0:
+            raise ExperimentError(f"{label} must be a finite number > 0")
+        result.append(value)
+    return tuple(result)
+
+
 def parse_experiment(raw: dict) -> ExperimentSpec:
     """Validate an experiment description dict and build the `ExperimentSpec` it describes.
 
@@ -536,6 +570,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
     events = _parse_events(raw.get("events"), hosts)
     stop_at_s = _parse_stop_at_s(raw.get("stop_at_s"))
     counters_snapshot_at_s = _parse_counters_snapshot_at_s(raw.get("counters_snapshot_at_s"))
+    state_poll_interval_choices_s = parse_state_poll_interval_choices_s(raw.get("state_poll_interval_choices_s"))
 
     all_at_s = [entry.at_s for entries in schedule.values() for entry in entries]
     if all_at_s and min(all_at_s) < MIN_FIRST_RECORD_MARGIN_S:
@@ -561,6 +596,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         events=events,
         stop_at_s=stop_at_s,
         counters_snapshot_at_s=counters_snapshot_at_s,
+        state_poll_interval_choices_s=state_poll_interval_choices_s,
     )
 
 
@@ -675,6 +711,11 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
         config["stop_at_s"] = spec.stop_at_s
     if spec.counters_snapshot_at_s:
         config["counters_snapshot_at_s"] = list(spec.counters_snapshot_at_s)
+    # Only with choices: the agent's choice rng is seeded from (seed, node), and
+    # leaving both out otherwise keeps a stage-1 agent config byte for byte.
+    if spec.state_poll_interval_choices_s is not None:
+        config["seed"] = spec.seed
+        config["state_poll_interval_choices_s"] = list(spec.state_poll_interval_choices_s)
 
     drop_rec = spec.fault.get(host, ())
     if drop_rec:

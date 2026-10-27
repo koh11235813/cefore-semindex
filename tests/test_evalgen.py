@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -10,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from semindex import evalgen, schema
+from semindex import evalgen, gen, schema
 from semindex.gen import ExperimentError, parse_experiment
 
 
@@ -350,7 +351,7 @@ def test_generate_run_writes_the_experiment_description_and_gens_own_files(tmp_p
     outdir = tmp_path / "run"
     written = evalgen.generate_run(0.2, 7, "s1", str(outdir))
 
-    name = "s1_p0.2_seed7"
+    name = "s1_p020_seed7"
     experiment_path = outdir / f"{name}.experiment.json"
     yaml_path = outdir / f"{name}.yaml"
     h0_path = outdir / name / "h0.json"
@@ -383,11 +384,11 @@ def test_generate_run_writes_nothing_for_a_stage_that_escapes_outdir(tmp_path: P
     substring asserts let mutants through).
     """
     outdir = tmp_path / "run"
-    escaped_path = tmp_path / "escaped_p0.2_seed7.experiment.json"
+    escaped_path = tmp_path / "escaped_p020_seed7.experiment.json"
 
     with pytest.raises(ExperimentError) as excinfo:
         evalgen.generate_run(0.2, 7, "../escaped", str(outdir))
-    assert str(excinfo.value) == "name must not be a path: '../escaped_p0.2_seed7'"
+    assert str(excinfo.value) == "name must not be a path: '../escaped_p020_seed7'"
 
     assert not escaped_path.exists()
     assert not outdir.exists()
@@ -406,7 +407,7 @@ def test_generate_run_writes_nothing_for_an_absolute_stage(tmp_path: Path):
 
     with pytest.raises(ExperimentError) as excinfo:
         evalgen.generate_run(0.2, 7, "/abs", str(outdir))
-    assert str(excinfo.value) == "name must not be a path: '/abs_p0.2_seed7'"
+    assert str(excinfo.value) == "name must not be a path: '/abs_p020_seed7'"
 
     assert not outdir.exists()
 
@@ -421,7 +422,7 @@ def test_main_exits_0_and_prints_every_written_path(tmp_path: Path, capsys):
     assert rc == 0
     captured = capsys.readouterr()
     lines = captured.out.splitlines()
-    assert str(outdir / "s1_p0.2_seed7.yaml") in lines
+    assert str(outdir / "s1_p020_seed7.yaml") in lines
 
 
 def test_main_exits_1_and_prints_the_error_on_a_stage_that_escapes_the_outdir(tmp_path: Path, capsys):
@@ -432,7 +433,7 @@ def test_main_exits_1_and_prints_the_error_on_a_stage_that_escapes_the_outdir(tm
     rc = evalgen.main(["--p", "0.2", "--seed", "7", "--stage", "../escaped", "--out", str(tmp_path / "run")])
     assert rc == 1
     captured = capsys.readouterr()
-    assert captured.err == "semindex.evalgen: name must not be a path: '../escaped_p0.2_seed7'\n"
+    assert captured.err == "semindex.evalgen: name must not be a path: '../escaped_p020_seed7'\n"
 
 
 # -- ReCefore validator: the generated YAML must pass ReCefore's own config validator ---
@@ -471,3 +472,128 @@ def test_generated_yaml_passes_recefore_config_validator(tmp_path: Path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "[]"
+
+
+# -- stage 2 (stage-2 map "生成器と集計"): k records per time, choices, fixed-width names --
+
+
+def _normalized_digest(raw: dict) -> str:
+    """SHA-256 of everything a run's generation produces -- the experiment description,
+    the ReCefore config and every agent config -- with the run name/group and this
+    checkout's own src path replaced by placeholders, so only the content is compared."""
+    files = gen.generate(parse_experiment(raw), "/cfg")
+    blob = json.dumps(
+        {"experiment": raw, "recefore": files.recefore_config, "agents": files.agent_configs}, sort_keys=True
+    )
+    return hashlib.sha256(blob.replace(raw["name"], "NAME").replace(gen.SEMINDEX_SRC_DIR, "SRC").encode()).hexdigest()
+
+
+# Computed with stage 1's evalgen/gen (commit 8616a8f, before k/choices/the
+# fixed-width name existed) by the same normalization as _normalized_digest.
+_STAGE1_DIGESTS = {
+    0.0: "de1b1195fc46adc3ac13e96af7e73dd1d59621ecdc302e66c361334b2d72a4a2",
+    0.2: "25505067381c026d80e353fa4f1b9e572dab083a6fe6c0cc6ba2c5c9e6edb95f",
+    0.4: "36cbf3f382a83df7f30052abd380608269822fa24d739efee6b39a27fd641525",
+}
+
+
+@pytest.mark.parametrize("p", sorted(_STAGE1_DIGESTS))
+def test_k_1_without_choices_reproduces_stage_1_apart_from_the_name(p: float):
+    """k = 1 and no choices give stage 1's schedule, probes, events, ReCefore config and
+    agent configs byte for byte, except the run name/group."""
+    assert _normalized_digest(evalgen.build_experiment(p, 7, "s1", "/out")) == _STAGE1_DIGESTS[p]
+
+
+def test_name_and_group_have_the_same_length_for_every_p():
+    """The five evaluated p values give names of one length (stage 1's p = 0 name was
+    two characters shorter, which showed up in its control bytes)."""
+    names = [evalgen.build_experiment(p, 7, "s2", "/out")["group"] for p in (0.0, 0.1, 0.2, 0.3, 0.4)]
+    assert names == ["s2_p000_seed7", "s2_p010_seed7", "s2_p020_seed7", "s2_p030_seed7", "s2_p040_seed7"]
+    assert len({len(n) for n in names}) == 1
+
+
+def test_a_p_that_is_not_a_whole_percent_is_rejected():
+    """Two p values must never share a run label, so a p finer than 0.01 is refused."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.build_experiment(0.125, 7, "s2", "/out")
+    assert str(excinfo.value) == "p must be a whole percent (a multiple of 0.01), got 0.125"
+
+
+@pytest.mark.parametrize("bad_k", [0, -1, 1.5, True])
+def test_a_k_below_1_or_not_an_int_is_rejected(bad_k):
+    """k counts records per generation time: an integer >= 1."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.build_experiment(0.2, 7, "s2", "/out", k=bad_k)
+    assert str(excinfo.value) == f"k must be an integer >= 1, got {bad_k!r}"
+
+
+def test_k_4_puts_4_records_at_each_of_the_30_generation_times():
+    """Each origin gets RECORD_COUNT generation times with 4 entries each, in time order,
+    attrs drawn per record; the schedule does not depend on p."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out", k=4)
+    for host in evalgen.RECORD_ORIGIN_HOSTS:
+        entries = raw["schedule"][str(host)]
+        at_s = [e["at_s"] for e in entries]
+        expected_times = [evalgen.RECORD_START_S + i * evalgen.RECORD_INTERVAL_S for i in range(evalgen.RECORD_COUNT)]
+        assert at_s == [t for t in expected_times for _ in range(4)]
+    assert raw["schedule"] == evalgen.build_experiment(0.4, 7, "s2", "/out", k=4)["schedule"]
+    # Per-record draws, not one draw copied 4 times: some batch has differing attrs.
+    h0 = raw["schedule"]["0"]
+    batches = [h0[i : i + 4] for i in range(0, len(h0), 4)]
+    assert any(len({(e["zone"], e["disaster"], e["media"]) for e in batch}) > 1 for batch in batches)
+
+
+def test_choices_reach_every_agent_config_with_the_run_seed():
+    """Given choices, every agent config carries them and the run seed (the agents'
+    choice rng needs both); without them neither key is written."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out", state_poll_interval_choices_s=[1.0, 2.0, 4.0])
+    configs = gen.generate(parse_experiment(raw), "/cfg").agent_configs
+    assert sorted(configs) == ["h0", "h1", "h2", "h3", "h4"]
+    for config in configs.values():
+        assert config["seed"] == 7
+        assert config["state_poll_interval_choices_s"] == [1.0, 2.0, 4.0]
+    plain = gen.generate(parse_experiment(evalgen.build_experiment(0.2, 7, "s2", "/out")), "/cfg").agent_configs
+    for config in plain.values():
+        assert "seed" not in config
+        assert "state_poll_interval_choices_s" not in config
+
+
+def test_cli_passes_k_and_interval_choices_through(tmp_path: Path):
+    """--k and --interval-choices reach the written experiment and agent configs."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0.4", "--seed", "3", "--stage", "s2", "--out", str(outdir), "--k", "2", "--interval-choices", "0.5"]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s2_p040_seed3.experiment.json").read_text(encoding="utf-8"))
+    assert len(raw["schedule"]["0"]) == 2 * evalgen.RECORD_COUNT
+    h2 = json.loads((outdir / "s2_p040_seed3" / "h2.json").read_text(encoding="utf-8"))
+    assert h2["seed"] == 3
+    assert h2["state_poll_interval_choices_s"] == [0.5]
+
+
+def test_gen_rejects_non_list_choices():
+    """semindex.gen only checks the shape; the agent owns the policy's own rules."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out")
+    raw["state_poll_interval_choices_s"] = 2.0
+    with pytest.raises(ExperimentError) as excinfo:
+        parse_experiment(raw)
+    assert str(excinfo.value) == "state_poll_interval_choices_s must be a list of numbers"
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), 0.0, -1.0])
+def test_a_non_finite_or_non_positive_choice_is_rejected_before_anything_is_written(tmp_path: Path, bad: float):
+    """A NaN/infinite interval would stop an agent's polling for good, so generation
+    refuses it (and a zero or negative one) before writing any file."""
+    outdir = tmp_path / "run"
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.generate_run(0.2, 7, "s2", str(outdir), state_poll_interval_choices_s=[1.0, bad])
+    assert str(excinfo.value) == "state_poll_interval_choices_s[1] must be a finite number > 0"
+    assert not outdir.exists()
+
+
+def test_cli_rejects_a_nan_interval_choice(tmp_path: Path, capsys):
+    """--interval-choices nan fails with exit 1 and the exact diagnostic."""
+    rc = evalgen.main(["--p", "0.2", "--seed", "7", "--stage", "s2", "--out", str(tmp_path / "run"), "--interval-choices", "nan"])
+    assert rc == 1
+    assert capsys.readouterr().err == "semindex.evalgen: state_poll_interval_choices_s[0] must be a finite number > 0\n"

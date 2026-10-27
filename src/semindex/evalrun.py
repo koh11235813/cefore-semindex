@@ -18,7 +18,13 @@ Run as:
 
     python -m semindex.evalrun --stage s1 --p 0 0.1 0.2 0.3 0.4 \\
         --seeds 1-100 --store /home/lab_shared/semindex-eval \\
-        --recefore /home/lab_shared/cefore-emu-sslab
+        --recefore /home/lab_shared/cefore-emu-sslab \\
+        [--k 4] [--interval-choices 1 2 4]
+
+`--k` and `--interval-choices` (stage-2 map "生成器と集計") go straight to
+semindex.evalgen and are recorded in each run's meta.json. They are not
+part of the store path, so a sweep with different values needs its own
+`--stage` label.
 """
 
 from __future__ import annotations
@@ -559,6 +565,8 @@ def _build_meta(
     p: float,
     seed: int,
     stage: str,
+    k: int,
+    state_poll_interval_choices_s: list[float] | None,
     recefore: str,
     recefore_rc: int,
     start_s: float,
@@ -566,12 +574,20 @@ def _build_meta(
     verdict: dict,
     capture_subprocess: Callable[..., str],
 ) -> dict:
-    """Build one run's meta.json dict."""
+    """Build one run's meta.json dict.
+
+    `k` and `state_poll_interval_choices_s` (None = the default jittered
+    policy) are the generator settings this run was made with, so the
+    aggregate can tell runs apart by them (runs.csv) without re-reading the
+    generated schedule.
+    """
     recefore_python = os.path.join(recefore, ".venv", "bin", "python3")
     return {
         "p": p,
         "seed": seed,
         "stage": stage,
+        "k": k,
+        "state_poll_interval_choices_s": state_poll_interval_choices_s,
         "semindex_git_commit": _git_commit(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "semindex_git_dirty": _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "recefore_git_commit": _git_commit(recefore, capture_subprocess),
@@ -613,6 +629,8 @@ def run_one(
     chown_tree: Callable[[str], None] = default_chown_tree,
     chown_dir: Callable[[str], None] = default_chown_dir,
     clock: Callable[[], float] = time.time,
+    k: int = 1,
+    state_poll_interval_choices_s: list[float] | None = None,
 ) -> RunOutcome:
     """Generate, run, store and validate one (p, seed) run; or skip it if already DONE.
 
@@ -646,7 +664,9 @@ def run_one(
         prefix=f"{stage}_p{evalgen._format_p(p)}_seed{seed}_", dir=staging_root
     )
     try:
-        generated_paths = evalgen.generate_run(p, seed, stage, staging_run_dir)
+        generated_paths = evalgen.generate_run(
+            p, seed, stage, staging_run_dir, k=k, state_poll_interval_choices_s=state_poll_interval_choices_s
+        )
         yaml_path = next(path for path in generated_paths if path.endswith(".yaml"))
 
         run_subprocess(["mn", "-c"])
@@ -716,6 +736,8 @@ def run_one(
             p=p,
             seed=seed,
             stage=stage,
+            k=k,
+            state_poll_interval_choices_s=state_poll_interval_choices_s,
             recefore=recefore,
             recefore_rc=recefore_rc,
             start_s=start_s,
@@ -791,6 +813,8 @@ def run_all(
     clock: Callable[[], float] = time.time,
     allow_dirty: bool = False,
     out=None,
+    k: int = 1,
+    state_poll_interval_choices_s: list[float] | None = None,
 ) -> list[RunOutcome]:
     """Run every (p, seed) pair in `build_run_order`'s order, logging one line per run to `out`.
 
@@ -822,6 +846,10 @@ def run_all(
     # own per-pair try/except (below) logging the identical failure once
     # per (p, seed) pair and still reporting the sweep as "ran".
     _validate_stage(stage)
+    # 2026-10-26 fix: bad k / interval choices used to surface only inside the
+    # loop, failing every pair identically under its own try/except (same
+    # reasoning as the stage check above), so they are refused here once.
+    evalgen.validate_settings(k, state_poll_interval_choices_s)
     if not allow_dirty:
         dirty = _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess)
         if dirty is not False:
@@ -866,6 +894,8 @@ def run_all(
                 chown_tree=chown_tree,
                 chown_dir=chown_dir,
                 clock=clock,
+                k=k,
+                state_poll_interval_choices_s=state_poll_interval_choices_s,
             )
         except Exception as exc:  # noqa: BLE001 -- see docstring: one run's crash must not stop the sweep
             print(f"p={p} seed={seed} status=error error={exc!r}", file=out)
@@ -889,6 +919,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="start the sweep even if the semindex tree is not confirmed clean (see DirtySemindexError)",
     )
+    parser.add_argument("--k", type=int, default=1, help="records each origin creates per generation time (default 1)")
+    parser.add_argument(
+        "--interval-choices",
+        type=float,
+        nargs="+",
+        default=None,
+        dest="interval_choices",
+        help="state-poll interval choices (s); omit for the default 2 s +/- 20%% policy",
+    )
     return parser.parse_args(argv)
 
 
@@ -898,8 +937,18 @@ def main(argv: list[str] | None = None) -> int:
     seeds = parse_seeds(args.seeds)
     staging_root = tempfile.mkdtemp(prefix="semindex-evalrun-", dir=args.staging)
     try:
-        run_all(args.p, seeds, args.stage, args.store, args.recefore, staging_root, allow_dirty=args.allow_dirty)
-    except DirtySemindexError as exc:
+        run_all(
+            args.p,
+            seeds,
+            args.stage,
+            args.store,
+            args.recefore,
+            staging_root,
+            allow_dirty=args.allow_dirty,
+            k=args.k,
+            state_poll_interval_choices_s=args.interval_choices,
+        )
+    except (DirtySemindexError, gen.ExperimentError) as exc:
         print(f"semindex.evalrun: {exc}", file=sys.stderr)
         return 2
     finally:

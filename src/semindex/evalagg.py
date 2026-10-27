@@ -284,6 +284,29 @@ def read_meta(run_dir: str) -> tuple[str, list[str]]:
     return "unknown", flags
 
 
+def read_meta_generation(run_dir: str) -> tuple[int | None, list[float] | None]:
+    """This run's generator settings from `<run_dir>/meta.json`: (k, state-poll
+    interval choices).
+
+    2026-10-26 (stage-2 map "生成器と集計"): semindex.evalrun records both from then
+    on. k is None when meta.json does not record it (every stage-1 run, or no
+    readable meta.json); the choices are None both then and for a run that
+    used the default jittered policy -- `k` is what says whether this run
+    recorded its settings at all.
+    """
+    path = os.path.join(run_dir, "meta.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    k = data.get("k")
+    choices = data.get("state_poll_interval_choices_s")
+    return (k if isinstance(k, int) else None), (choices if isinstance(choices, list) else None)
+
+
 # -- t0 derivation ---------------------------------------------------------
 
 
@@ -584,6 +607,10 @@ class RunAnalysis:
     probe_established: int | None = None
     probe_established_discovered: int | None = None
     decision_rows: list[dict] = field(default_factory=list)  # kind, in_flight, missing (list), wait_s
+    # Generator settings from meta.json (see `read_meta_generation`); None when
+    # this run's meta.json does not record them (every stage-1 run).
+    k: int | None = None
+    state_poll_interval_choices_s: list[float] | None = None
 
 
 def _split_lives(events: list[dict]) -> list[list[dict]]:
@@ -903,9 +930,11 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
     """
     status, flags = read_meta(run_dir)
     try:
-        return _analyze_run_metrics(p, seed, run_dir, status, flags)
+        analysis = _analyze_run_metrics(p, seed, run_dir, status, flags)
     except CheckUsageError as exc:
-        return RunAnalysis(p=p, seed=seed, status=status, flags=flags, analysis_error=str(exc))
+        analysis = RunAnalysis(p=p, seed=seed, status=status, flags=flags, analysis_error=str(exc))
+    analysis.k, analysis.state_poll_interval_choices_s = read_meta_generation(run_dir)
+    return analysis
 
 
 def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: list[str]) -> RunAnalysis:
@@ -1066,6 +1095,14 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
                     "wait_s": action.get("wait_s") if kind == "fetch_backoff" else None,
                     "interval_s": action.get("interval_s") if kind == "state_poll" else None,
                     "fetched_count": len(action["fetched"]) if kind == "fetch_plan" and "fetched" in action else None,
+                    # 2026-10-26 (stage-2 map "判断の記録の欄"): a stage-2 agent's
+                    # state_poll state carries the previous poll's reply status;
+                    # `has_poll_reply_state` keeps a stage-1 line (which has no such
+                    # key) from being read as a null status.
+                    "has_poll_reply_state": "last_poll_status" in state,
+                    "last_poll_status": state.get("last_poll_status"),
+                    "consecutive_poll_timeouts": state.get("consecutive_poll_timeouts"),
+                    "action_prob": event.get("action_prob"),
                 }
             )
 
@@ -1146,6 +1183,8 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                     "valid": run.status,
                     "flags": ";".join(run.flags),
                     "analysis_error": run.analysis_error,
+                    "k": run.k,
+                    "state_poll_interval_choices_s": _choices_cell(run.state_poll_interval_choices_s),
                 }
             )
             continue
@@ -1197,9 +1236,16 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "t0_source": run.t0_source,
                 "t0_agent_start_disagreement": run.t0_agent_start_disagreement,
                 "t0_consistency_ms": run.t0_consistency_ms,
+                "k": run.k,
+                "state_poll_interval_choices_s": _choices_cell(run.state_poll_interval_choices_s),
             }
         )
     return rows
+
+
+def _choices_cell(choices: list[float] | None) -> str | None:
+    """The interval choices as a compact JSON list cell (e.g. "[1.0,2.0]"), or None (empty)."""
+    return None if choices is None else json.dumps(choices, separators=(",", ":"))
 
 
 RUNS_FIELDS = [
@@ -1230,6 +1276,10 @@ RUNS_FIELDS = [
     "t0_source",
     "t0_agent_start_disagreement",
     "t0_consistency_ms",
+    # 2026-10-26 (stage-2 map "生成器と集計"): last, so every earlier column keeps its
+    # position; empty for a run whose meta.json does not record them.
+    "k",
+    "state_poll_interval_choices_s",
 ]
 
 
@@ -1655,10 +1705,40 @@ def build_decisions_rows(analyses: list[RunAnalysis], include_unknown: bool) -> 
                 "frequency": frequency,
             }
         )
+
+        # 2026-10-26 (stage-2 map "判断の記録の欄"): only decisions a stage-2 agent
+        # wrote get these rows, so a stage-1 store's decisions.csv stays byte for
+        # byte what it was. action_prob is reported here too, not for every kind:
+        # only a stage-2 state_poll can differ from 1.0.
+        polled = [d for d in decisions if d.get("has_poll_reply_state")]
+        if polled:
+            values = [d["action_prob"] for d in polled if d.get("action_prob") is not None]
+            rows.append(_field_row(p, kind, decision_count, "action_prob", values))
+            values = [d["consecutive_poll_timeouts"] for d in polled if d.get("consecutive_poll_timeouts") is not None]
+            rows.append(_field_row(p, kind, decision_count, "consecutive_poll_timeouts", values))
+            for status in _POLL_STATUS_VALUES:
+                label = "null" if status is None else status
+                rows.append(
+                    {
+                        "p": p,
+                        "kind": kind,
+                        "decision_count": decision_count,
+                        "field": f"last_poll_status={label}",
+                        "n": len(polled),
+                        "median": None,
+                        "q1": None,
+                        "q3": None,
+                        "frequency": sum(1 for d in polled if d["last_poll_status"] == status) / len(polled),
+                    }
+                )
     return rows
 
 
 DECISIONS_FIELDS = ["p", "kind", "decision_count", "field", "n", "median", "q1", "q3", "frequency"]
+
+# Every value a stage-2 state_poll line's last_poll_status can take, in a fixed
+# order so decisions.csv always has the same rows for it (null: first poll).
+_POLL_STATUS_VALUES = (None, "answered", "timed_out", "pending")
 
 
 # -- CLI --------------------------------------------------------------------

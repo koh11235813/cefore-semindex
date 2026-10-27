@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from semindex import holder_state, names, schema
-from semindex.engine import SyncConfig, SyncEngine
+from semindex.engine import SyncConfig, SyncEngine, _PollReplies
 from semindex.store import OriginProgress, Store
 
 
@@ -287,7 +287,7 @@ def test_on_state_decodes_and_feeds_the_tracker_then_plans_fetches(tmp_path: Pat
     """A decoded state reply feeds the tracker and immediately queues fetch Interests for what it reveals as missing."""
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     payload = holder_state.encode({"origin-x": OriginProgress(hi=2, extra=())})
-    engine.on_state("h1", payload, now=0.0)
+    engine.on_state("h1", payload, now=0.0, poll_epoch_ms=0)
     events = engine.drain_events()
     assert events[0] == {"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {"origin-x": 2}}
     sent_names = [n for n, _ in transport.sent]
@@ -300,7 +300,7 @@ def test_on_state_decodes_and_feeds_the_tracker_then_plans_fetches(tmp_path: Pat
 def test_on_state_drops_malformed_payload_silently(tmp_path: Path):
     """A malformed state reply is dropped after the state_rx event, with no fetches planned from it."""
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
-    engine.on_state("h1", b"not json", now=0.0)
+    engine.on_state("h1", b"not json", now=0.0, poll_epoch_ms=0)
     events = engine.drain_events()
     assert events == [{"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
@@ -316,7 +316,7 @@ def test_on_state_drops_payload_with_a_malformed_origin_without_crashing(tmp_pat
     # malformed reply.
     engine, transport, _ = _engine(tmp_path, neighbors=("h1",))
     payload = b'{"bad/origin":{"extra":[],"hi":1,"truncated":false}}'
-    engine.on_state("h1", payload, now=0.0)  # must not raise
+    engine.on_state("h1", payload, now=0.0, poll_epoch_ms=0)  # must not raise
     assert engine.drain_events() == [{"event": "state_rx", "ts_ms": 0, "neighbor": "h1", "hi": {}}]
     assert transport.sent == []
 
@@ -391,7 +391,7 @@ def test_on_tick_emits_a_state_poll_decision_per_due_neighbor(tmp_path: Path):
     """on_tick's state-poll send logs a `decision` event naming the polled neighbor and
     the jittered interval chosen for its next poll (action_prob 1.0: stage 1's policy
     is deterministic). With no tracker state at all, decision_state's `origins` is
-    empty for both neighbors."""
+    empty for both neighbors, and with no earlier poll last_poll_status is null."""
     engine, _, _ = _engine(tmp_path, neighbors=("h1", "h2"))  # default interval 2.0s, no jitter offset
     engine.on_tick(now=0.0)
     assert engine.drain_events() == [
@@ -399,7 +399,14 @@ def test_on_tick_emits_a_state_poll_decision_per_due_neighbor(tmp_path: Path):
             "event": "decision",
             "ts_ms": 0,
             "kind": "state_poll",
-            "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
+            "state": {
+                "in_flight": 0,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {},
+                "last_poll_status": None,
+                "consecutive_poll_timeouts": 0,
+            },
             "action": {"neighbor": "h1", "interval_s": 2.0},
             "action_prob": 1.0,
         },
@@ -407,7 +414,14 @@ def test_on_tick_emits_a_state_poll_decision_per_due_neighbor(tmp_path: Path):
             "event": "decision",
             "ts_ms": 0,
             "kind": "state_poll",
-            "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
+            "state": {
+                "in_flight": 0,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {},
+                "last_poll_status": None,
+                "consecutive_poll_timeouts": 0,
+            },
             "action": {"neighbor": "h2", "interval_s": 2.0},
             "action_prob": 1.0,
         },
@@ -700,4 +714,403 @@ def test_decision_logging_leaves_interests_and_other_events_unchanged(tmp_path: 
     non_decision_off = [e for e in events_off if e["event"] != "decision"]
     assert non_decision_on == non_decision_off
     assert any(e["event"] == "decision" for e in events_on)
+    assert not any(e["event"] == "decision" for e in events_off)
+
+
+# -- state-poll interval choices (stage-2 map "行動と確率") ---------------------------
+
+
+class _Cycle:
+    """A [0, 1) rng stand-in that returns `values` in order, cycling, and counts its draws.
+
+    Distinct values (not a constant) so a hidden extra draw shifts every later
+    value and shows up in the chosen intervals, not just in the draw count.
+    """
+
+    def __init__(self, *values: float) -> None:
+        """Remember the values to cycle through; no draw has happened yet."""
+        self._values = values
+        self.calls = 0
+
+    def __call__(self) -> float:
+        """Return the next value and count the draw."""
+        value = self._values[self.calls % len(self._values)]
+        self.calls += 1
+        return value
+
+
+def _poll_decisions(engine: SyncEngine, ticks: list[float]) -> list[tuple[float, dict, float]]:
+    """Tick `engine` at each time in `ticks` and return (ts, action, action_prob) of
+    every state_poll decision -- not the whole line, so these tests pin only the
+    policy's own output and not the decision state's shape."""
+    rows = []
+    for now in ticks:
+        engine.on_tick(now)
+        for event in engine.drain_events():
+            if event["event"] == "decision" and event["kind"] == "state_poll":
+                rows.append((event["ts_ms"], event["action"], event["action_prob"]))
+    return rows
+
+
+def test_unset_choices_keeps_stage_1_jittered_intervals_and_action_prob_1(tmp_path: Path):
+    """With no state_poll_interval_choices_s, the interval is still 2 s +/- 20% from
+    poll_jitter_rng (0.2 -> 1.76 s, 0.8 -> 2.24 s), action_prob is still 1.0, and the
+    choice rng is never drawn -- stage 1's policy, intervals, action and rng draws are
+    unchanged. The decision line's state does gain the two poll-reply fields (pinned in
+    test_on_tick_emits_a_state_poll_decision_per_due_neighbor), so this compares only
+    ts_ms, action and action_prob."""
+    store = Store(tmp_path / "h0.db")
+    jitter = _Cycle(0.2, 0.8)
+    choice = _Cycle(0.5)
+    engine = SyncEngine(
+        SyncConfig(group="g", node="h0", neighbors=("h1",)),
+        store,
+        RecordingTransport(),
+        poll_jitter_rng=jitter,
+        poll_choice_rng=choice,
+    )
+    assert _poll_decisions(engine, [0.0, 1.76, 4.0]) == [
+        (0, {"neighbor": "h1", "interval_s": 1.76}, 1.0),
+        (1760, {"neighbor": "h1", "interval_s": 2.24}, 1.0),
+        (4000, {"neighbor": "h1", "interval_s": 1.76}, 1.0),
+    ]
+    assert jitter.calls == 3
+    assert choice.calls == 0
+
+
+def test_choices_draw_one_value_per_poll_with_action_prob_one_over_len(tmp_path: Path):
+    """With choices (1, 2, 4), each poll's interval is the choice its rng draw indexes
+    (u in [0,1/3) -> 1, [1/3,2/3) -> 2, [2/3,1) -> 4), the next poll is scheduled that
+    far ahead, action_prob is exactly 1/3, and the jitter rng is never drawn."""
+    store = Store(tmp_path / "h0.db")
+    transport = RecordingTransport()
+    jitter = _Cycle(0.2)
+    choice = _Cycle(0.9, 0.0, 0.5)
+    engine = SyncEngine(
+        SyncConfig(group="g", node="h0", neighbors=("h1",), state_poll_interval_choices_s=(1.0, 2.0, 4.0)),
+        store,
+        transport,
+        poll_jitter_rng=jitter,
+        poll_choice_rng=choice,
+    )
+    # 3.9 and 4.9 are strictly before the 4 s and then 1 s intervals elapse, so
+    # neither tick polls; 4.0 and 5.0 are exactly when each comes due.
+    assert _poll_decisions(engine, [0.0, 3.9, 4.0, 4.9, 5.0]) == [
+        (0, {"neighbor": "h1", "interval_s": 4.0}, 1 / 3),
+        (4000, {"neighbor": "h1", "interval_s": 1.0}, 1 / 3),
+        (5000, {"neighbor": "h1", "interval_s": 2.0}, 1 / 3),
+    ]
+    assert [n for n, _ in transport.sent] == [
+        names.build_state_name("g", "h1", "h0", 0),
+        names.build_state_name("g", "h1", "h0", 4000),
+        names.build_state_name("g", "h1", "h0", 5000),
+    ]
+    assert choice.calls == 3
+    assert jitter.calls == 0
+
+
+def test_a_single_choice_is_a_fixed_interval_policy_with_action_prob_1(tmp_path: Path):
+    """One choice is a deterministic fixed-interval policy: every interval is that
+    value and action_prob is 1.0."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    assert _poll_decisions(engine, [0.0, 0.5, 1.0]) == [
+        (0, {"neighbor": "h1", "interval_s": 0.5}, 1.0),
+        (500, {"neighbor": "h1", "interval_s": 0.5}, 1.0),
+        (1000, {"neighbor": "h1", "interval_s": 0.5}, 1.0),
+    ]
+
+
+def test_decision_logging_leaves_interests_and_other_events_unchanged_under_choices(tmp_path: Path):
+    """Stage 1's "logging adds no behavior" property, for the choices policy: with
+    log_decisions True vs False, the same Interests go out at the same times, the
+    non-`decision` events match, and the choice rng is drawn the same number of
+    times (once per poll) while the jitter rng is never drawn at all."""
+
+    def _run(label: str, log_decisions: bool):
+        """Drive one engine through polls, a reply and a fetch timeout; return what it sent,
+        emitted, and how many times each rng was drawn."""
+        store = Store(tmp_path / f"{label}.db")
+        transport = RecordingTransport()
+        jitter = _Cycle(0.2)
+        choice = _Cycle(0.1, 0.7, 0.4)
+        config = SyncConfig(
+            group="g",
+            node="h0",
+            neighbors=("h1", "h2"),
+            state_poll_interval_choices_s=(0.5, 1.0, 2.0),
+            log_decisions=log_decisions,
+        )
+        engine = SyncEngine(store=store, transport=transport, config=config, poll_jitter_rng=jitter, poll_choice_rng=choice)
+        events: list[dict] = []
+        engine.on_tick(0.0)
+        engine.on_state("h1", holder_state.encode({"origin-x": OriginProgress(hi=1, extra=())}), 0.1, poll_epoch_ms=0)
+        events += engine.drain_events()
+        engine.on_fetch_timeout(names.build_record_name("g", "h1", "origin-x", 1), 0.3)
+        for now in (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0):
+            engine.on_tick(now)
+            events += engine.drain_events()
+        return transport.sent, events, choice.calls, jitter.calls
+
+    sent_on, events_on, choice_on, jitter_on = _run("on", True)
+    sent_off, events_off, choice_off, jitter_off = _run("off", False)
+    assert sent_on == sent_off
+    assert [e for e in events_on if e["event"] != "decision"] == [e for e in events_off if e["event"] != "decision"]
+    polls = sum(1 for n, _ in sent_on if isinstance(names.parse(n), names.StateName))
+    assert choice_on == polls
+    assert choice_off == polls
+    assert jitter_on == 0
+    assert jitter_off == 0
+    assert any(e["event"] == "decision" for e in events_on)
+    assert not any(e["event"] == "decision" for e in events_off)
+
+
+# -- poll-reply status in the state_poll decision state (stage-2 map "判断の状態に足すもの") --
+
+
+_EMPTY_STATE_PAYLOAD = holder_state.encode({})
+
+
+def _poll_reply_states(engine: SyncEngine, steps: list[tuple]) -> list[tuple[int, str | None, int]]:
+    """Run `steps` -- ("tick", now), or ("reply", now, epoch_ms) for h1's reply to the
+    poll sent at epoch_ms -- and return each state_poll decision's
+    (ts_ms, last_poll_status, consecutive_poll_timeouts)."""
+    rows = []
+    for step in steps:
+        if step[0] == "tick":
+            engine.on_tick(step[1])
+        else:
+            engine.on_state("h1", _EMPTY_STATE_PAYLOAD, step[1], poll_epoch_ms=step[2])
+        for event in engine.drain_events():
+            if event["event"] == "decision" and event["kind"] == "state_poll":
+                rows.append(
+                    (event["ts_ms"], event["state"]["last_poll_status"], event["state"]["consecutive_poll_timeouts"])
+                )
+    return rows
+
+
+def test_poll_reply_status_answered(tmp_path: Path):
+    """A reply to the previous poll shows as "answered" with no timeouts in a row."""
+    engine, _, _ = _engine(tmp_path)  # interval exactly 2.0 s, lifetime 2000 ms
+    assert _poll_reply_states(engine, [("tick", 0.0), ("reply", 0.1, 0), ("tick", 2.0)]) == [
+        (0, None, 0),
+        (2000, "answered", 0),
+    ]
+
+
+def test_poll_reply_status_timed_out_once_the_lifetime_has_passed(tmp_path: Path):
+    """With no reply, the previous poll is "timed_out" as soon as its 2 s lifetime has
+    passed (deadline <= now, the transport's own rule), and each further unanswered
+    poll adds one to the count."""
+    engine, _, _ = _engine(tmp_path)
+    assert _poll_reply_states(engine, [("tick", 0.0), ("tick", 2.0), ("tick", 4.0)]) == [
+        (0, None, 0),
+        (2000, "timed_out", 1),
+        (4000, "timed_out", 2),
+    ]
+
+
+def test_poll_reply_status_pending_while_the_lifetime_has_not_passed(tmp_path: Path):
+    """With a 1 s interval and a 2 s lifetime, the previous poll is still "pending" at
+    the next decision. At 2.0 the first poll's lifetime has passed (counted), while
+    the one sent at 1.0 is the previous poll and still pending."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(1.0,))
+    assert _poll_reply_states(engine, [("tick", 0.0), ("tick", 1.0), ("tick", 2.0), ("tick", 3.0)]) == [
+        (0, None, 0),
+        (1000, "pending", 0),
+        (2000, "pending", 1),
+        (3000, "pending", 2),
+    ]
+
+
+def test_poll_reply_status_answered_after_consecutive_timeouts_resets_the_count(tmp_path: Path):
+    """Two polls time out in a row, then the next one is answered: the decision after
+    it shows "answered" and the count back at 0."""
+    engine, _, _ = _engine(tmp_path)
+    steps = [("tick", 0.0), ("tick", 2.0), ("tick", 4.0), ("reply", 4.1, 4000), ("tick", 6.0)]
+    assert _poll_reply_states(engine, steps) == [
+        (0, None, 0),
+        (2000, "timed_out", 1),
+        (4000, "timed_out", 2),
+        (6000, "answered", 0),
+    ]
+
+
+def test_a_reply_to_an_older_poll_does_not_mark_the_newer_one_answered(tmp_path: Path):
+    """With a 1 s interval, the reply to the poll sent at 0 arrives after the poll at
+    1.0 went out: it marks only the poll at 0 answered, so the decision at 2.0 still
+    sees its previous poll (sent at 1.0) as pending. Once that poll times out
+    unanswered, the count is 1 -- the older answer does not hide it."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(1.0,))
+    steps = [("tick", 0.0), ("tick", 1.0), ("reply", 1.05, 0), ("tick", 2.0), ("tick", 3.0)]
+    assert _poll_reply_states(engine, steps) == [
+        (0, None, 0),
+        (1000, "pending", 0),
+        (2000, "pending", 0),
+        (3000, "pending", 1),
+    ]
+
+
+def test_interleaved_half_second_polls_track_each_reply_by_its_own_poll(tmp_path: Path):
+    """0.5 s polls with a 2 s lifetime keep four polls outstanding at once.
+
+    - The reply to the poll at 500 (arriving at 1.1) answers that poll only.
+    - The polls at 1000 and 1500 then time out unanswered (at 3.0 and 3.5).
+    - A late reply to the poll at 1000 (at 3.6) does not reset the count, because the
+      newer poll at 1500 has already timed out, and by 4.0 so has the one at 2000:
+      two timeouts since the newest answered poll.
+    - The reply to the poll at 3500 then brings the count back to 0; the decision at
+      4.5 shows its previous poll (sent at 4.0) as pending, not answered.
+    """
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    steps = [
+        ("tick", 0.0),
+        ("tick", 0.5),
+        ("tick", 1.0),
+        ("reply", 1.1, 500),
+        ("tick", 1.5),
+        ("tick", 2.0),
+        ("tick", 2.5),
+        ("tick", 3.0),
+        ("tick", 3.5),
+        ("reply", 3.6, 1000),
+        ("tick", 4.0),
+        ("reply", 4.1, 3500),
+        ("tick", 4.5),
+    ]
+    assert _poll_reply_states(engine, steps) == [
+        (0, None, 0),
+        (500, "pending", 0),
+        (1000, "pending", 0),
+        (1500, "pending", 0),
+        (2000, "pending", 0),
+        (2500, "pending", 0),
+        (3000, "pending", 1),
+        (3500, "pending", 2),
+        (4000, "pending", 2),
+        (4500, "pending", 0),
+    ]
+
+
+def test_a_late_reply_after_the_lifetime_still_counts_as_answered(tmp_path: Path):
+    """A reply that arrives after its poll's lifetime has passed is still that poll's
+    reply: the neighbor is answering, so the status is "answered" and the count 0."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(4.0,))
+    assert _poll_reply_states(engine, [("tick", 0.0), ("reply", 3.0, 0), ("tick", 4.0)]) == [
+        (0, None, 0),
+        (4000, "answered", 0),
+    ]
+
+
+def test_a_long_silent_outage_keeps_the_poll_history_bounded(tmp_path: Path):
+    """2000 s of 0.5 s polls with no reply: the count keeps growing (every poll sent at
+    least 2 s before the decision has timed out), but only the polls still within
+    lifetime + 1 s grace are held -- the 6 sent in [T - 3, T - 0.5] (a reply exactly at
+    send + 3 s is still accepted), plus the poll just sent."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    rows = _poll_reply_states(engine, [("tick", i * 0.5) for i in range(4001)])
+    assert rows[-1] == (2_000_000, "pending", 3997)
+    assert len(engine._poll_replies["h1"].polls) == 7
+
+
+def test_a_reply_later_than_lifetime_plus_grace_to_an_older_poll_is_ignored(tmp_path: Path):
+    """Cefore drops a PIT entry about 1 s after its lifetime, so a poll unanswered for
+    lifetime + 1 s (and no longer the newest) is counted as timed out for good: a
+    reply to it after that changes neither the status nor the count."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    steps = [("tick", i * 0.5) for i in range(8)] + [("reply", 3.6, 0), ("tick", 4.0)]
+    assert _poll_reply_states(engine, steps)[-2:] == [
+        (3500, "pending", 4),
+        (4000, "pending", 5),
+    ]
+
+
+def test_a_reply_after_grace_to_a_poll_no_longer_newest_is_ignored_even_before_expiry(tmp_path: Path):
+    """Lifetime 2 s, 4 s interval: polls at 0 and 4. The reply to poll 0 arrives at 4.1,
+    when poll 0 is no longer the newest and 4.1 > 0 + 2 + 1, so it is ignored even
+    though no decision has dropped poll 0 yet: at 8 both polls count as timed out."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(4.0,))
+    steps = [("tick", 0.0), ("tick", 4.0), ("reply", 4.1, 0), ("tick", 8.0)]
+    assert _poll_reply_states(engine, steps) == [
+        (0, None, 0),
+        (4000, "timed_out", 1),
+        (8000, "timed_out", 2),
+    ]
+
+
+def test_a_reply_exactly_at_lifetime_plus_grace_is_accepted(tmp_path: Path):
+    """0.5 s polls: the reply to poll 0 at exactly 0 + 2 + 1 = 3.0 s is accepted, so
+    only the polls after it (0.5, 1.0, 1.5) count as timed out at 3.5."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    steps = [("tick", i * 0.5) for i in range(7)] + [("reply", 3.0, 0), ("tick", 3.5)]
+    assert _poll_reply_states(engine, steps)[-1] == (3500, "pending", 3)
+
+
+def test_a_reply_just_after_lifetime_plus_grace_is_ignored(tmp_path: Path):
+    """The same reply at 3.01 s is past the grace, so poll 0 stays timed out: 4 at 3.5."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    steps = [("tick", i * 0.5) for i in range(7)] + [("reply", 3.01, 0), ("tick", 3.5)]
+    assert _poll_reply_states(engine, steps)[-1] == (3500, "pending", 4)
+
+
+def test_a_reply_to_the_newest_poll_is_accepted_however_late(tmp_path: Path):
+    """While a poll is still the newest one sent, its reply is accepted even past
+    lifetime + grace (3.9 s here); the same poll stops being so once the next is sent."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(4.0,))
+    steps = [("tick", 0.0), ("reply", 3.9, 0), ("tick", 4.0)]
+    assert _poll_reply_states(engine, steps) == [
+        (0, None, 0),
+        (4000, "answered", 0),
+    ]
+
+
+def test_bulk_expiry_drops_the_whole_stale_prefix_at_once(tmp_path: Path):
+    """After 1000 polls 0.5 s apart with no reply, one decision 100 s later drops every
+    stale poll in one go, keeping only the newest, and counts all 1000 as timed out."""
+    engine, _, _ = _engine(tmp_path, state_poll_interval_choices_s=(0.5,))
+    replies = engine._poll_replies.setdefault("h1", _PollReplies())
+    for i in range(1000):
+        replies.sent(i * 500, i * 0.5)
+    assert replies.snapshot(600.0, 2.0) == ("timed_out", 1000)
+    assert len(replies.polls) == 1
+
+
+def test_a_reply_that_fails_to_decode_still_counts_as_answered(tmp_path: Path):
+    """A reply whose payload cannot be decoded still shows the neighbor is answering."""
+    engine, _, _ = _engine(tmp_path)
+    engine.on_tick(0.0)
+    engine.on_state("h1", b"not json", 0.1, poll_epoch_ms=0)
+    engine.drain_events()
+    engine.on_tick(2.0)
+    [decision] = [e for e in engine.drain_events() if e["event"] == "decision"]
+    assert (decision["state"]["last_poll_status"], decision["state"]["consecutive_poll_timeouts"]) == ("answered", 0)
+
+
+def test_poll_reply_status_leaves_interests_and_other_events_unchanged(tmp_path: Path):
+    """The poll-reply bookkeeping only feeds the decision state: with log_decisions
+    True vs False, the same scenario of interleaved 0.5 s polls, timeouts and replies
+    (including one to an older poll) sends the same Interests at the same times and
+    emits the same non-`decision` events."""
+
+    def _run(label: str, log_decisions: bool):
+        """Drive one engine through the scenario; return what it sent and emitted."""
+        engine, transport, _ = _engine(
+            tmp_path / label, state_poll_interval_choices_s=(0.5,), log_decisions=log_decisions
+        )
+        payload = holder_state.encode({"origin-x": OriginProgress(hi=1, extra=())})
+        events: list[dict] = []
+        steps = [("tick", 0.0), ("tick", 0.5), ("reply", 0.6, 0), ("tick", 1.0), ("tick", 2.5), ("reply", 2.6, 1000)]
+        for step in steps + [("tick", 3.0), ("tick", 3.5)]:
+            if step[0] == "tick":
+                engine.on_tick(step[1])
+            else:
+                engine.on_state("h1", payload, step[1], poll_epoch_ms=step[2])
+            events += engine.drain_events()
+        return transport.sent, events
+
+    for label in ("on", "off"):
+        (tmp_path / label).mkdir()
+    sent_on, events_on = _run("on", True)
+    sent_off, events_off = _run("off", False)
+    assert sent_on == sent_off
+    assert [e for e in events_on if e["event"] != "decision"] == [e for e in events_off if e["event"] != "decision"]
     assert not any(e["event"] == "decision" for e in events_off)

@@ -196,8 +196,49 @@ def _format_p(p: float) -> str:
     return text if text else "0"
 
 
-def _record_schedule(host: int, seed: int) -> list[dict]:
-    """Build one origin host's 30-record schedule, attrs drawn uniformly from the seed.
+def _format_p_fixed(p: float) -> str:
+    """Render `p` as a fixed-width, three-digit percentage for the run name and group
+    (0 -> "000", 0.1 -> "010", 1 -> "100"), so every p gives the same name length.
+
+    2026-10-26 (stage-2 map "生成器と集計"): stage 1 named runs with `_format_p`, so
+    p = 0 gave `s1_p0_seedN`, two characters shorter than every other p; the
+    group is part of every Interest name, and that alone made p = 0's control
+    traffic about 47 B/record lower (evidence/s1-breakdown/). Three digits is
+    also exactly as long as stage 1's "0.1".."0.4", so stage-2 names cost what
+    stage 1's p > 0 names did. Store directory names keep `_format_p` (p0/,
+    p0.1/, ...) so stage-1 paths do not move.
+
+    A p that is not a whole percent is rejected rather than rounded: two
+    different p values would otherwise share a label, the same silent
+    mislabeling `_validate_p` exists to prevent.
+    """
+    percent = round(p * 100)
+    if abs(p * 100 - percent) > 1e-9:
+        raise gen.ExperimentError(f"p must be a whole percent (a multiple of 0.01), got {p!r}")
+    return f"{percent:03d}"
+
+
+def validate_settings(k: int, state_poll_interval_choices_s: list[float] | None) -> None:
+    """Reject a records-per-generation count that is not an integer >= 1, or interval
+    choices semindex.gen would refuse (see gen.parse_state_poll_interval_choices_s).
+
+    Public so a sweep can refuse bad settings once, up front, instead of failing
+    every (p, seed) run of it the same way.
+    """
+    if not isinstance(k, int) or isinstance(k, bool) or k < 1:
+        raise gen.ExperimentError(f"k must be an integer >= 1, got {k!r}")
+    gen.parse_state_poll_interval_choices_s(state_poll_interval_choices_s)
+
+
+def _record_schedule(host: int, seed: int, k: int = 1) -> list[dict]:
+    """Build one origin host's schedule: RECORD_COUNT generation times, k records at each,
+    attrs drawn uniformly from the seed record by record.
+
+    k records share one `at_s` (stage-2 map "負荷"): the agent turns every due
+    entry into a record in one step (agent.py's _drain_schedule), so a batch
+    needs no agent change. Each record draws its own attrs from the same
+    per-host stream, in schedule order, so k = 1 draws exactly stage 1's
+    sequence and gives stage 1's schedule.
 
     `zone`/`disaster`/`media` are drawn from `sorted(schema.<VOCAB>)`, not
     the frozenset itself or a plain `list()` of it: frozenset iteration
@@ -212,14 +253,15 @@ def _record_schedule(host: int, seed: int) -> list[dict]:
     media = sorted(schema.MEDIA)
     entries = []
     for i in range(RECORD_COUNT):
-        entries.append(
-            {
-                "at_s": RECORD_START_S + i * RECORD_INTERVAL_S,
-                "zone": rng.choice(zones),
-                "disaster": rng.choice(disasters),
-                "media": rng.choice(media),
-            }
-        )
+        for _ in range(k):
+            entries.append(
+                {
+                    "at_s": RECORD_START_S + i * RECORD_INTERVAL_S,
+                    "zone": rng.choice(zones),
+                    "disaster": rng.choice(disasters),
+                    "media": rng.choice(media),
+                }
+            )
     return entries
 
 
@@ -285,7 +327,15 @@ def _link_events(seed: int, p: float) -> list[dict]:
     return events
 
 
-def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
+def build_experiment(
+    p: float,
+    seed: int,
+    stage: str,
+    outdir: str,
+    *,
+    k: int = 1,
+    state_poll_interval_choices_s: list[float] | None = None,
+) -> dict:
     """Build the one `semindex.gen` experiment description this (p, seed, stage) run needs.
 
     `stage` and `outdir` only ever affect bookkeeping fields (`name`,
@@ -299,11 +349,18 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
     (baked into the generated YAML) from `outdir`, so those bytes do
     change. Byte-identical generated files require all four of (p, seed,
     stage, outdir) to match, not just (p, seed).
+
+    `k` (stage-2 map "負荷") is how many records each origin creates at each
+    of its RECORD_COUNT generation times; `state_poll_interval_choices_s`, when
+    given, is passed through to every agent config (with the run seed, which
+    the agents' choice rng needs -- see semindex.gen). The defaults give stage
+    1's schedule and agent configs.
     """
     _validate_p(p)
-    name = f"{stage}_p{_format_p(p)}_seed{seed}"
-    schedule = {str(host): _record_schedule(host, seed) for host in RECORD_ORIGIN_HOSTS}
-    return {
+    validate_settings(k, state_poll_interval_choices_s)
+    name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
+    schedule = {str(host): _record_schedule(host, seed, k) for host in RECORD_ORIGIN_HOSTS}
+    raw = {
         "name": name,
         "num": RECEFORE_NUM,
         "seed": seed,
@@ -330,9 +387,20 @@ def build_experiment(p: float, seed: int, stage: str, outdir: str) -> dict:
         "stop_at_s": AGENT_STOP_AT_S,
         "counters_snapshot_at_s": list(AGENT_COUNTERS_SNAPSHOT_AT_S),
     }
+    if state_poll_interval_choices_s is not None:
+        raw["state_poll_interval_choices_s"] = list(state_poll_interval_choices_s)
+    return raw
 
 
-def generate_run(p: float, seed: int, stage: str, outdir: str) -> list[str]:
+def generate_run(
+    p: float,
+    seed: int,
+    stage: str,
+    outdir: str,
+    *,
+    k: int = 1,
+    state_poll_interval_choices_s: list[float] | None = None,
+) -> list[str]:
     """Build and write one run's experiment description, ReCefore YAML and agent configs.
 
     The experiment description itself is written first, as
@@ -353,9 +421,12 @@ def generate_run(p: float, seed: int, stage: str, outdir: str) -> list[str]:
     rejected, but only after that escaping write had already landed on
     disk, or outside it.
 
+    `k` and `state_poll_interval_choices_s` are passed straight to
+    `build_experiment`.
+
     Returns every path written, experiment description first.
     """
-    raw = build_experiment(p, seed, stage, outdir)
+    raw = build_experiment(p, seed, stage, outdir, k=k, state_poll_interval_choices_s=state_poll_interval_choices_s)
     gen.parse_experiment(raw)  # raises gen.ExperimentError before any filesystem write
 
     outdir_abspath = os.path.abspath(outdir)
@@ -377,6 +448,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, required=True, help="seed for every random draw in this run")
     parser.add_argument("--stage", type=str, required=True, help="stage label, used only in the run's name/group")
     parser.add_argument("--out", type=str, required=True, dest="outdir", help="directory to write the run into")
+    parser.add_argument("--k", type=int, default=1, help="records each origin creates per generation time (default 1)")
+    parser.add_argument(
+        "--interval-choices",
+        type=float,
+        nargs="+",
+        default=None,
+        dest="interval_choices",
+        help="state-poll interval choices (s) for every agent; omit for the default 2 s +/- 20%% policy",
+    )
     return parser.parse_args(argv)
 
 
@@ -384,7 +464,9 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point: generate one (p, seed, stage) run into --out."""
     args = parse_args(argv)
     try:
-        written = generate_run(args.p, args.seed, args.stage, args.outdir)
+        written = generate_run(
+            args.p, args.seed, args.stage, args.outdir, k=args.k, state_poll_interval_choices_s=args.interval_choices
+        )
     except gen.ExperimentError as exc:
         print(f"semindex.evalgen: {exc}", file=sys.stderr)
         return 1

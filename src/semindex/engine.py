@@ -40,6 +40,14 @@ class SyncConfig:
     neighbors: tuple[str, ...]
     state_poll_interval_s: float = 2.0
     state_poll_jitter_frac: float = 0.2
+    # 2026-10-26 (stage-2 map "行動と確率"): when set, each state poll's next
+    # interval is drawn uniformly from these discrete values instead of
+    # state_poll_interval_s +/- state_poll_jitter_frac, and the decision line's
+    # action_prob is 1/len. Discrete, not continuous, so the recorded
+    # probability is a real probability an off-policy estimator can divide by,
+    # not a density. None (the default) keeps stage 1's jittered policy, its
+    # intervals and its action_prob 1.0 exactly as before.
+    state_poll_interval_choices_s: tuple[float, ...] | None = None
     interest_lifetime_ms: int = 2000
     # 2026-10-23: matches tracker.DEFAULT_BACKOFF_INITIAL_S -- see that
     # constant's comment for why 1s let the first retry land inside
@@ -63,6 +71,137 @@ class SyncConfig:
     log_decisions: bool = True
 
 
+# 2026-10-26 fix: the poll-reply history grew by one entry per poll for a silent
+# neighbor. How long past its Interest lifetime a state poll can still be
+# answered: Cefore v0.12 keeps a PIT entry for interest_lifetime +
+# CefC_Pit_CleaningTime (1 s; see tracker.DEFAULT_BACKOFF_INITIAL_S's comment),
+# so Data for an older poll has nowhere to go. _PollReplies ignores replies to,
+# and drops, unanswered polls past this unless they are still the newest poll.
+POLL_REPLY_GRACE_S = 1.0
+
+
+@dataclass
+class _Poll:
+    """One state poll sent to a neighbor: its name's epoch_ms, when it was sent, and
+    whether its own reply has arrived."""
+
+    epoch_ms: int
+    sent_at: float
+    replied: bool = False
+
+
+@dataclass
+class _PollReplies:
+    """Whether one neighbor has been answering this node's state polls (stage-2 map
+    "判断の状態に足すもの") -- read-only bookkeeping for the `state_poll` decision state,
+    never consulted by any scheduling decision.
+
+    2026-10-26 fix: replies used to be attributed to the latest poll. Each reply
+    is now matched to its own poll by the epoch_ms in the reply's name: with
+    an interval shorter than the Interest lifetime several polls are outstanding at
+    once, and a late reply to poll N must not mark poll N+1 answered.
+
+    A reply to a poll is accepted iff, at reply time, that poll is still the
+    newest poll sent or the reply time is <= its send time + lifetime +
+    POLL_REPLY_GRACE_S; otherwise it is ignored (the poll stays timed out). A
+    poll's status is judged at decision time: "answered" once an accepted reply
+    has arrived (even after its lifetime), else "timed_out" once send time +
+    interest_lifetime_ms <= now -- CefpycoTransport's own deadline rule -- else
+    "pending". It is judged here from the clock rather than from the transport's timeout callback because
+    Agent.step() runs that callback in poll() against a `now` read *before*
+    on_tick's: a deadline falling between the two reads would still look pending
+    to a callback-driven status although its lifetime had passed when the decision
+    was made. This also makes FakeNetwork (which reports timeouts at pump time, not
+    after the lifetime) agree with the real transport.
+    """
+
+    # Send order, holding only what the two reported values still depend on:
+    # polls sent after the newest answered one, minus those folded into
+    # `expired_timeouts` below. An answered poll survives only while it is the
+    # newest poll (its status is then last_poll_status).
+    polls: list[_Poll] = field(default_factory=list)
+    # Polls sent after the newest answered one that went past lifetime +
+    # POLL_REPLY_GRACE_S unanswered while not the newest, and were dropped from `polls`. They count as
+    # timed out for good, which keeps `polls` bounded by how many polls fit in
+    # lifetime + grace, however long a neighbor stays silent.
+    expired_timeouts: int = 0
+
+    def sent(self, epoch_ms: int, now: float) -> None:
+        """Record a new poll sent at `now`; it is pending until answered or expired."""
+        self.polls.append(_Poll(epoch_ms, now))
+
+    def replied(self, epoch_ms: int, now: float, lifetime_s: float) -> None:
+        """Apply a reply that arrived at `now` to the poll whose name carried `epoch_ms`.
+
+        2026-10-26 fix: acceptance used to depend on whether `_expire` had
+        happened to run since the poll went stale; it is now decided from the
+        time alone, by the rule in the class docstring. An accepted reply marks
+        the poll answered and drops everything older. Every expired poll is
+        older than any poll still held, so it also clears `expired_timeouts`. A
+        reply to a poll no longer held (older than an answered one, or dropped
+        as expired -- which the time rule would reject anyway) changes nothing.
+        """
+        for index, poll in enumerate(self.polls):
+            if poll.epoch_ms != epoch_ms:
+                continue
+            newest = index == len(self.polls) - 1
+            if newest or now <= poll.sent_at + lifetime_s + POLL_REPLY_GRACE_S:
+                poll.replied = True
+                del self.polls[:index]
+                self.expired_timeouts = 0
+            return
+
+    def _expire(self, now: float, lifetime_s: float) -> None:
+        """Drop the oldest polls the reported values no longer need, in one slice
+        deletion; the newest poll is always kept, since last_poll_status is its status.
+
+        An answered poll at the front is no longer needed once a newer poll exists.
+        An unanswered one whose reply would now be rejected (now > send time +
+        lifetime + POLL_REPLY_GRACE_S) is folded into `expired_timeouts`. Strictly
+        greater, matching `replied`: a reply exactly at that boundary is accepted.
+
+        2026-10-26 fix: dropping with pop(0) per poll moved every remaining entry
+        each time, quadratic when many polls expire at once (a long tick delay, or
+        a long interval chosen after short ones).
+        """
+        cut = 0
+        while cut < len(self.polls) - 1:
+            poll = self.polls[cut]
+            if poll.replied:
+                cut += 1
+            elif poll.sent_at + lifetime_s + POLL_REPLY_GRACE_S < now:
+                cut += 1
+                self.expired_timeouts += 1
+            else:
+                break
+        del self.polls[:cut]
+
+    def snapshot(self, now: float, lifetime_s: float) -> tuple[str | None, int]:
+        """(status of the most recent poll, consecutive timed-out polls) as of `now`.
+
+        The count is the number of timed-out polls since the newest answered one,
+        not counting still-pending polls: those can only be the newest ones (every
+        poll shares one lifetime), so they are skipped rather than ending the run.
+        A reply to an older poll therefore does not reset the count when newer
+        polls have already timed out. None before the first poll.
+        """
+        self._expire(now, lifetime_s)
+        if not self.polls:
+            return None, 0
+        statuses = [self._status(poll, now, lifetime_s) for poll in self.polls]
+        count = self.expired_timeouts + sum(1 for status in statuses if status == "timed_out")
+        return statuses[-1], count
+
+    @staticmethod
+    def _status(poll: _Poll, now: float, lifetime_s: float) -> str:
+        """One poll's status at `now` (see the class docstring)."""
+        if poll.replied:
+            return "answered"
+        if poll.sent_at + lifetime_s <= now:
+            return "timed_out"
+        return "pending"
+
+
 class SyncEngine:
     """The per-node Sync agent core: requester toward its neighbors, holder for itself."""
 
@@ -73,6 +212,7 @@ class SyncEngine:
         transport: Transport,
         *,
         poll_jitter_rng: Callable[[], float] = lambda: 0.5,
+        poll_choice_rng: Callable[[], float] = lambda: 0.0,
         backoff_jitter: Callable[[], float] = lambda: 0.0,
     ) -> None:
         """`poll_jitter_rng` must return a float in [0, 1); it is mapped to
@@ -81,6 +221,13 @@ class SyncEngine:
         maps to zero offset, so engines are deterministic unless a real
         source of randomness is injected. `backoff_jitter` is passed
         straight through to the Tracker.
+
+        `poll_choice_rng` must also return a float in [0, 1); it picks the
+        index into config.state_poll_interval_choices_s and is drawn only
+        when that is set -- poll_jitter_rng is then never drawn, so the two
+        policies never share or perturb one stream. Its constant default
+        0.0 always picks the first choice, deterministic like the jitter
+        default.
 
         2026-10-22 fix: `config.group` and `config.node` already failed
         here with an exact diagnostic -- the registration_prefix call
@@ -98,6 +245,7 @@ class SyncEngine:
         self._store = store
         self._transport = transport
         self._poll_jitter_rng = poll_jitter_rng
+        self._poll_choice_rng = poll_choice_rng
         self._tracker = Tracker(
             backoff_initial_s=config.fetch_backoff_initial_s,
             backoff_multiplier=config.fetch_backoff_multiplier,
@@ -107,6 +255,7 @@ class SyncEngine:
             jitter=backoff_jitter,
         )
         self._next_state_poll: dict[str, float] = {}
+        self._poll_replies: dict[str, _PollReplies] = {}
         self._events: list[dict] = []
         self._transport.register(names.registration_prefix(config.group, config.node))
         # Seed the tracker with whatever this node already holds (e.g.
@@ -125,10 +274,12 @@ class SyncEngine:
         events, self._events = self._events, []
         return events
 
-    def _emit_decision(self, kind: str, state: dict, action: dict, now: float) -> None:
+    def _emit_decision(self, kind: str, state: dict, action: dict, now: float, action_prob: float = 1.0) -> None:
         """Queue one `decision` event (map.md "判断の記録"): the state visible at the
-        moment this engine actually chose `action`, plus action_prob -- 1.0 here,
-        since stage 1's policy always picks its one deterministic action.
+        moment this engine actually chose `action`, plus action_prob -- the
+        probability the policy gave `action`. 1.0 for every stage-1 policy (each
+        picks its one deterministic action); only a state poll drawing from
+        state_poll_interval_choices_s passes anything else.
 
         A no-op when config.log_decisions is False (test/analysis-only; every
         production config leaves it at its default True). Assumes a real decision
@@ -157,7 +308,7 @@ class SyncEngine:
                 "kind": kind,
                 "state": state,
                 "action": action,
-                "action_prob": 1.0,
+                "action_prob": action_prob,
             }
         )
 
@@ -218,21 +369,46 @@ class SyncEngine:
         epoch_ms = round(now * 1000)
         name = names.build_state_name(self._config.group, neighbor, self._config.node, epoch_ms)
         self._transport.send_interest(name, self._config.interest_lifetime_ms)
-        # Map the injected [0, 1) rng to +/- state_poll_jitter_frac around
-        # the configured interval, so "2s +/-20%" is reproducible in tests
-        # yet real under a real rng. Drawn exactly once, whether or not
-        # log_decisions is on: a `decision` event only reports this same
-        # value below, it never draws its own.
-        offset = self._config.state_poll_jitter_frac * (2 * self._poll_jitter_rng() - 1)
-        interval = self._config.state_poll_interval_s * (1 + offset)
+        interval, action_prob = self._choose_poll_interval()
+        # The reply status is snapshotted before this poll itself is recorded as
+        # sent, so the decision shows how the *previous* poll to this neighbor
+        # fared, not the trivially-pending poll being sent right now.
+        replies = self._poll_replies.setdefault(neighbor, _PollReplies())
+        last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, self._config.interest_lifetime_ms / 1000.0)
+        state = {
+            **self._tracker.decision_state(neighbor),
+            "last_poll_status": last_poll_status,
+            "consecutive_poll_timeouts": consecutive_poll_timeouts,
+        }
         # map.md "判断の記録", kind 1: this *is* the decision -- which
         # neighbor, and the interval chosen for its next poll. Always made
-        # (a neighbor due for a poll is always polled in stage 1), so
-        # always logged when log_decisions is on.
-        self._emit_decision(
-            "state_poll", self._tracker.decision_state(neighbor), {"neighbor": neighbor, "interval_s": interval}, now
-        )
+        # (a neighbor due for a poll is always polled), so always logged
+        # when log_decisions is on.
+        self._emit_decision("state_poll", state, {"neighbor": neighbor, "interval_s": interval}, now, action_prob)
+        replies.sent(epoch_ms, now)
         self._next_state_poll[neighbor] = now + interval
+
+    def _choose_poll_interval(self) -> tuple[float, float]:
+        """Draw the interval until a neighbor's next state poll, and the probability
+        the policy gave it.
+
+        Each rng is drawn exactly once per poll, whether or not log_decisions is
+        on: the `decision` event only reports the value drawn here, it never draws
+        its own -- otherwise turning logging off would shift every later draw and
+        change which Interests go out when.
+        """
+        choices = self._config.state_poll_interval_choices_s
+        if choices is not None:
+            # A uniform u in [0, 1) gives every index the same 1/len share,
+            # which is exactly what action_prob claims.
+            index = int(self._poll_choice_rng() * len(choices))
+            return choices[index], 1.0 / len(choices)
+        # Map the injected [0, 1) rng to +/- state_poll_jitter_frac around the
+        # configured interval, so "2s +/-20%" is reproducible in tests yet real
+        # under a real rng. action_prob stays 1.0, as in stage 1's data (stage-1
+        # map's 2026-10-26 correction: those lines are not off-policy usable).
+        offset = self._config.state_poll_jitter_frac * (2 * self._poll_jitter_rng() - 1)
+        return self._config.state_poll_interval_s * (1 + offset), 1.0
 
     def _send_fetch_plan(self, neighbor: str, now: float) -> None:
         """Send a fetch Interest for every due, not-in-flight missing record on `neighbor`.
@@ -258,8 +434,11 @@ class SyncEngine:
 
     # -- requester-side reply handling -----------------------------------------------
 
-    def on_state(self, neighbor: str, payload: bytes, now: float) -> None:
+    def on_state(self, neighbor: str, payload: bytes, now: float, *, poll_epoch_ms: int) -> None:
         """A neighbor's reply to a state-request Interest arrived.
+
+        `poll_epoch_ms` is the epoch_ms segment of the reply's own name, i.e. which
+        of this node's polls it answers -- the transport has already parsed it.
 
         Decodes it, folds every origin's advertised (hi, extra) into the
         tracker, and immediately plans any newly-due fetches from that
@@ -279,6 +458,11 @@ class SyncEngine:
         # _emit_decision's own comment on why a queued event's processing
         # time, not its later flush time, is what belongs in ts_ms.
         ts_ms = round(now * 1000)
+        # Any reply, even one that fails to decode, shows the neighbor is
+        # answering -- what the poll-reply status is there to tell the policy.
+        replies = self._poll_replies.get(neighbor)
+        if replies is not None:
+            replies.replied(poll_epoch_ms, now, self._config.interest_lifetime_ms / 1000.0)
         try:
             decoded = holder_state.decode(payload)
         except holder_state.HolderStateError:
@@ -381,6 +565,9 @@ class SyncEngine:
         except names.MalformedNameError:
             return
         if not isinstance(parsed, names.RecordName):
+            # CefpycoTransport also reports state-poll deadlines here. They are
+            # left alone on purpose: _PollReplies judges state-poll timeouts from
+            # the clock at decision time (see its docstring for why).
             return
         neighbor = parsed.holder
         # 2026-10-23 fix: ts_ms from `now`, same reasoning as on_record above.

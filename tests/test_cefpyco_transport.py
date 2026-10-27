@@ -97,7 +97,7 @@ class _StubEngine:
     def __init__(self) -> None:
         self.handle_interest_calls: list[str] = []
         self.handle_interest_result = None
-        self.on_state_calls: list[tuple[str, bytes, float]] = []
+        self.on_state_calls: list[tuple[str, bytes, float, int]] = []
         self.on_record_calls: list[tuple[str, bytes, float]] = []
         self.on_fetch_timeout_calls: list[tuple[str, float]] = []
 
@@ -108,9 +108,9 @@ class _StubEngine:
             raise self.handle_interest_result
         return self.handle_interest_result
 
-    def on_state(self, neighbor: str, payload: bytes, now: float) -> None:
+    def on_state(self, neighbor: str, payload: bytes, now: float, *, poll_epoch_ms: int) -> None:
         """Record the call."""
-        self.on_state_calls.append((neighbor, payload, now))
+        self.on_state_calls.append((neighbor, payload, now, poll_epoch_ms))
 
     def on_record(self, name: str, payload: bytes, now: float) -> None:
         """Record the call."""
@@ -257,14 +257,15 @@ def test_poll_sends_a_state_response_payload_between_the_record_and_state_limits
 
 
 def test_poll_routes_state_data_to_on_state_with_the_holder_from_the_name():
-    """A Data reply for a state name is routed to on_state with the holder segment as the neighbor."""
+    """A Data reply for a state name is routed to on_state with the holder segment as the
+    neighbor and the name's epoch_ms as the poll it answers."""
     name = "ccnx:/semidx/g/h1/sv/h0/1000"
     payload = holder_state.encode({})
     handle = _FakeHandle([_FakePacket(is_data=True, name=name, payload=payload)])
     engine = _StubEngine()
     transport = CefpycoTransport(handle, engine, clock=_FakeClock(5.0))
     transport.poll()
-    assert engine.on_state_calls == [("h1", payload, 5.0)]
+    assert engine.on_state_calls == [("h1", payload, 5.0, 1000)]
     assert transport.bytes_received == len(name.encode("utf-8")) + len(payload)
     assert transport.control_bytes_received == transport.bytes_received
 

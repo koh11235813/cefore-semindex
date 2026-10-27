@@ -155,7 +155,7 @@ def test_validate_raises_when_run_dir_is_not_a_directory(tmp_path: Path):
 def test_validate_raises_when_experiment_json_is_missing(tmp_path: Path):
     """Validate raises when experiment.json is missing."""
     run_dir, _raw = _build_happy_run(tmp_path)
-    (run_dir / "s1_p0.2_seed7.experiment.json").unlink()
+    (run_dir / "s1_p020_seed7.experiment.json").unlink()
     with pytest.raises(ValidityUsageError):
         validate(str(run_dir))
 
@@ -163,7 +163,7 @@ def test_validate_raises_when_experiment_json_is_missing(tmp_path: Path):
 def test_validate_raises_when_experiment_json_is_unparsable(tmp_path: Path):
     """Validate raises when experiment.json is unparsable."""
     run_dir, _raw = _build_happy_run(tmp_path)
-    (run_dir / "s1_p0.2_seed7.experiment.json").write_text("{not json", encoding="utf-8")
+    (run_dir / "s1_p020_seed7.experiment.json").write_text("{not json", encoding="utf-8")
     with pytest.raises(ValidityUsageError):
         validate(str(run_dir))
 
