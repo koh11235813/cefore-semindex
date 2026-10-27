@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stage-2 trial (ticket 04). One --stage per setting: k and choices are not in the store path.
+# Stage-2 trial: fixed interval choices, k, and a mixed policy. One --stage per setting: k and choices are not in the store path.
 W=/home/lab_shared/wt/semindex-s2tickets
 run() { env PYTHONPATH=$W/src /home/lab_shared/cefore-semindex/.venv/bin/python3 -m semindex.evalrun \
   --store /home/lab_shared/semindex-eval --recefore /home/lab_shared/cefore-emu-sslab "$@"; echo "== exit $? : $*"; }

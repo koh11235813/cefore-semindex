@@ -1,4 +1,4 @@
-"""Stage-2 ticket 04 trial analysis: interval table, k table, poll-synchronization
+"""Stage-2 trial analysis (interval choices and k): interval table, k table, poll-synchronization
 check and mixed-policy sanity, over whatever trial stages exist in the store.
 
 Read-only over the store. Per stage it (1) runs `python -m semindex.evalagg`
@@ -203,6 +203,7 @@ def build_s1_substore(store, out, seeds, ps):
 
 
 def main():
+    """Aggregate the given (or all trial) stages and write the per-stage CSVs and summary.md into --out."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--store", default="/home/lab_shared/semindex-eval")
     ap.add_argument("--out", required=True)

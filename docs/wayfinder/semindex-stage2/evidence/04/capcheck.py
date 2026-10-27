@@ -104,6 +104,7 @@ def check_stage(store, stage, p_dir="p0.4"):
 
 
 def main():
+    """Print a Markdown table with one row per stage of the measures check_stage returns."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--store", default="/home/lab_shared/semindex-eval")
     ap.add_argument("stages", nargs="*", default=["t2k4", "t2c32k4", "t2k8", "t2c32k8"])
