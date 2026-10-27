@@ -145,6 +145,8 @@ class ExperimentSpec:
     stop_at_s: float | None
     counters_snapshot_at_s: tuple[float, ...]
     state_poll_interval_choices_s: tuple[float, ...] | None
+    state_poll_choice_jitter_frac: float | None
+    max_in_flight_per_neighbor: int | None
 
 
 _TOP_LEVEL_REQUIRED = (
@@ -167,6 +169,8 @@ _TOP_LEVEL_OPTIONAL = (
     "stop_at_s",
     "counters_snapshot_at_s",
     "state_poll_interval_choices_s",
+    "state_poll_choice_jitter_frac",
+    "max_in_flight_per_neighbor",
 )
 _TOP_LEVEL_ALLOWED = frozenset(_TOP_LEVEL_REQUIRED) | frozenset(_TOP_LEVEL_OPTIONAL)
 
@@ -512,6 +516,40 @@ def parse_state_poll_interval_choices_s(raw) -> tuple[float, ...] | None:
     return tuple(result)
 
 
+def parse_state_poll_choice_jitter_frac(raw, *, have_choices: bool) -> float | None:
+    """Validate the optional `state_poll_choice_jitter_frac` top-level key, or None if absent.
+
+    Forwarded verbatim into every generated agent config. Checked here as well
+    as by the agent (finite, in [0, 1), only with choices) so a bad value fails
+    at generation, not after a full run.
+    """
+    if raw is None:
+        return None
+    if not have_choices:
+        raise ExperimentError("state_poll_choice_jitter_frac requires state_poll_interval_choices_s")
+    value = _require_number(raw, "state_poll_choice_jitter_frac")
+    if not math.isfinite(value) or not 0 <= value < 1:
+        raise ExperimentError("state_poll_choice_jitter_frac must be a finite number in [0, 1)")
+    return value
+
+
+def parse_max_in_flight_per_neighbor(raw) -> int | None:
+    """Validate the optional `max_in_flight_per_neighbor` top-level key, or None if absent.
+
+    Forwarded verbatim into every generated agent config, where it caps the
+    fetch Interests an agent keeps outstanding toward any one neighbor. The
+    agent itself accepts 0, but 0 would leave no fetch slot at all, so no
+    record ever propagates and the run measures nothing; that is refused here,
+    at generation, rather than discovered after a full run. A bool is refused
+    too, since Python would otherwise take True as 1.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
+        raise ExperimentError("max_in_flight_per_neighbor must be an integer >= 1")
+    return raw
+
+
 def parse_experiment(raw: dict) -> ExperimentSpec:
     """Validate an experiment description dict and build the `ExperimentSpec` it describes.
 
@@ -571,6 +609,10 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
     stop_at_s = _parse_stop_at_s(raw.get("stop_at_s"))
     counters_snapshot_at_s = _parse_counters_snapshot_at_s(raw.get("counters_snapshot_at_s"))
     state_poll_interval_choices_s = parse_state_poll_interval_choices_s(raw.get("state_poll_interval_choices_s"))
+    state_poll_choice_jitter_frac = parse_state_poll_choice_jitter_frac(
+        raw.get("state_poll_choice_jitter_frac"), have_choices=state_poll_interval_choices_s is not None
+    )
+    max_in_flight_per_neighbor = parse_max_in_flight_per_neighbor(raw.get("max_in_flight_per_neighbor"))
 
     all_at_s = [entry.at_s for entries in schedule.values() for entry in entries]
     if all_at_s and min(all_at_s) < MIN_FIRST_RECORD_MARGIN_S:
@@ -597,6 +639,8 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         stop_at_s=stop_at_s,
         counters_snapshot_at_s=counters_snapshot_at_s,
         state_poll_interval_choices_s=state_poll_interval_choices_s,
+        state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
+        max_in_flight_per_neighbor=max_in_flight_per_neighbor,
     )
 
 
@@ -716,6 +760,12 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
     if spec.state_poll_interval_choices_s is not None:
         config["seed"] = spec.seed
         config["state_poll_interval_choices_s"] = list(spec.state_poll_interval_choices_s)
+    if spec.state_poll_choice_jitter_frac is not None:
+        config["state_poll_choice_jitter_frac"] = spec.state_poll_choice_jitter_frac
+    # Only when given: left out, the agent keeps SyncConfig's default cap and
+    # the config stays byte for byte what it was before this key existed.
+    if spec.max_in_flight_per_neighbor is not None:
+        config["max_in_flight_per_neighbor"] = spec.max_in_flight_per_neighbor
 
     drop_rec = spec.fault.get(host, ())
     if drop_rec:

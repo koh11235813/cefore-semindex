@@ -48,6 +48,14 @@ class SyncConfig:
     # not a density. None (the default) keeps stage 1's jittered policy, its
     # intervals and its action_prob 1.0 exactly as before.
     state_poll_interval_choices_s: tuple[float, ...] | None = None
+    # 2026-10-26 (stage-2 map "選択肢の間隔のゆらぎ"): with choices, the interval
+    # actually applied is the chosen value times a uniform factor in [1 - j, 1 + j].
+    # A trial with one fixed 0.5 s choice showed every agent's polls in lock-step:
+    # agents start within ~17 ms of each other, and an identical period with no
+    # jitter never lets their phases drift apart. Ignored without choices (stage
+    # 1's policy has its own state_poll_jitter_frac); 0 reproduces jitter-free
+    # choices exactly.
+    state_poll_choice_jitter_frac: float = 0.1
     interest_lifetime_ms: int = 2000
     # 2026-10-23: matches tracker.DEFAULT_BACKOFF_INITIAL_S -- see that
     # constant's comment for why 1s let the first retry land inside
@@ -213,6 +221,7 @@ class SyncEngine:
         *,
         poll_jitter_rng: Callable[[], float] = lambda: 0.5,
         poll_choice_rng: Callable[[], float] = lambda: 0.0,
+        poll_choice_jitter_rng: Callable[[], float] = lambda: 0.5,
         backoff_jitter: Callable[[], float] = lambda: 0.0,
     ) -> None:
         """`poll_jitter_rng` must return a float in [0, 1); it is mapped to
@@ -227,7 +236,9 @@ class SyncEngine:
         when that is set -- poll_jitter_rng is then never drawn, so the two
         policies never share or perturb one stream. Its constant default
         0.0 always picks the first choice, deterministic like the jitter
-        default.
+        default. `poll_choice_jitter_rng` (also [0, 1)) is the separate stream
+        for config.state_poll_choice_jitter_frac, drawn once per poll in
+        choices mode only; its default 0.5 maps to a factor of exactly 1.
 
         2026-10-22 fix: `config.group` and `config.node` already failed
         here with an exact diagnostic -- the registration_prefix call
@@ -246,6 +257,7 @@ class SyncEngine:
         self._transport = transport
         self._poll_jitter_rng = poll_jitter_rng
         self._poll_choice_rng = poll_choice_rng
+        self._poll_choice_jitter_rng = poll_choice_jitter_rng
         self._tracker = Tracker(
             backoff_initial_s=config.fetch_backoff_initial_s,
             backoff_multiplier=config.fetch_backoff_multiplier,
@@ -369,7 +381,7 @@ class SyncEngine:
         epoch_ms = round(now * 1000)
         name = names.build_state_name(self._config.group, neighbor, self._config.node, epoch_ms)
         self._transport.send_interest(name, self._config.interest_lifetime_ms)
-        interval, action_prob = self._choose_poll_interval()
+        action, applied_interval, action_prob = self._choose_poll_interval(neighbor)
         # The reply status is snapshotted before this poll itself is recorded as
         # sent, so the decision shows how the *previous* poll to this neighbor
         # fared, not the trivially-pending poll being sent right now.
@@ -384,13 +396,22 @@ class SyncEngine:
         # neighbor, and the interval chosen for its next poll. Always made
         # (a neighbor due for a poll is always polled), so always logged
         # when log_decisions is on.
-        self._emit_decision("state_poll", state, {"neighbor": neighbor, "interval_s": interval}, now, action_prob)
+        self._emit_decision("state_poll", state, action, now, action_prob)
         replies.sent(epoch_ms, now)
-        self._next_state_poll[neighbor] = now + interval
+        # The jittered interval runs from this poll's own send time, so jitter
+        # accumulates poll after poll instead of being pulled back to a grid --
+        # the point is that two agents' phases drift apart.
+        self._next_state_poll[neighbor] = now + applied_interval
 
-    def _choose_poll_interval(self) -> tuple[float, float]:
-        """Draw the interval until a neighbor's next state poll, and the probability
-        the policy gave it.
+    def _choose_poll_interval(self, neighbor: str) -> tuple[dict, float, float]:
+        """Draw the interval until `neighbor`'s next state poll: the decision's
+        `action`, the interval actually applied, and the probability the policy gave
+        the action.
+
+        In choices mode the action is the chosen value (`interval_s`, the thing
+        action_prob is the probability of) and the jitter only perturbs how it is
+        applied, recorded as `applied_interval_s`; the jitter is not part of the
+        action, so it does not change action_prob.
 
         Each rng is drawn exactly once per poll, whether or not log_decisions is
         on: the `decision` event only reports the value drawn here, it never draws
@@ -402,13 +423,17 @@ class SyncEngine:
             # A uniform u in [0, 1) gives every index the same 1/len share,
             # which is exactly what action_prob claims.
             index = int(self._poll_choice_rng() * len(choices))
-            return choices[index], 1.0 / len(choices)
+            chosen = choices[index]
+            factor = 1 + self._config.state_poll_choice_jitter_frac * (2 * self._poll_choice_jitter_rng() - 1)
+            applied = chosen * factor
+            return {"neighbor": neighbor, "interval_s": chosen, "applied_interval_s": applied}, applied, 1.0 / len(choices)
         # Map the injected [0, 1) rng to +/- state_poll_jitter_frac around the
         # configured interval, so "2s +/-20%" is reproducible in tests yet real
         # under a real rng. action_prob stays 1.0, as in stage 1's data (stage-1
         # map's 2026-10-26 correction: those lines are not off-policy usable).
         offset = self._config.state_poll_jitter_frac * (2 * self._poll_jitter_rng() - 1)
-        return self._config.state_poll_interval_s * (1 + offset), 1.0
+        interval = self._config.state_poll_interval_s * (1 + offset)
+        return {"neighbor": neighbor, "interval_s": interval}, interval, 1.0
 
     def _send_fetch_plan(self, neighbor: str, now: float) -> None:
         """Send a fetch Interest for every due, not-in-flight missing record on `neighbor`.

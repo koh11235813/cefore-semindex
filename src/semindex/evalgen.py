@@ -218,9 +218,33 @@ def _format_p_fixed(p: float) -> str:
     return f"{percent:03d}"
 
 
-def validate_settings(k: int, state_poll_interval_choices_s: list[float] | None) -> None:
+# 2026-10-26 (stage-2 map "選択肢の間隔のゆらぎ"): the choices-mode jitter j a
+# run gets when it gives choices but no j -- the same value as SyncConfig's own
+# default, written into every agent config explicitly so a stored run says
+# which j it ran with.
+DEFAULT_CHOICE_JITTER_FRAC = 0.1
+
+
+def resolve_choice_jitter_frac(
+    state_poll_interval_choices_s: list[float] | None, state_poll_choice_jitter_frac: float | None
+) -> float | None:
+    """The j a run actually uses: the given one, else DEFAULT_CHOICE_JITTER_FRAC when
+    choices are given; None without choices (stage 1's policy has no j)."""
+    if state_poll_interval_choices_s is None:
+        return None
+    return DEFAULT_CHOICE_JITTER_FRAC if state_poll_choice_jitter_frac is None else state_poll_choice_jitter_frac
+
+
+def validate_settings(
+    k: int,
+    state_poll_interval_choices_s: list[float] | None,
+    state_poll_choice_jitter_frac: float | None = None,
+    max_in_flight_per_neighbor: int | None = None,
+) -> None:
     """Reject a records-per-generation count that is not an integer >= 1, or interval
-    choices semindex.gen would refuse (see gen.parse_state_poll_interval_choices_s).
+    choices / a choice jitter / a per-neighbor in-flight cap semindex.gen would
+    refuse (see gen.parse_state_poll_interval_choices_s,
+    gen.parse_state_poll_choice_jitter_frac and gen.parse_max_in_flight_per_neighbor).
 
     Public so a sweep can refuse bad settings once, up front, instead of failing
     every (p, seed) run of it the same way.
@@ -228,6 +252,10 @@ def validate_settings(k: int, state_poll_interval_choices_s: list[float] | None)
     if not isinstance(k, int) or isinstance(k, bool) or k < 1:
         raise gen.ExperimentError(f"k must be an integer >= 1, got {k!r}")
     gen.parse_state_poll_interval_choices_s(state_poll_interval_choices_s)
+    gen.parse_state_poll_choice_jitter_frac(
+        state_poll_choice_jitter_frac, have_choices=state_poll_interval_choices_s is not None
+    )
+    gen.parse_max_in_flight_per_neighbor(max_in_flight_per_neighbor)
 
 
 def _record_schedule(host: int, seed: int, k: int = 1) -> list[dict]:
@@ -335,6 +363,8 @@ def build_experiment(
     *,
     k: int = 1,
     state_poll_interval_choices_s: list[float] | None = None,
+    state_poll_choice_jitter_frac: float | None = None,
+    max_in_flight_per_neighbor: int | None = None,
 ) -> dict:
     """Build the one `semindex.gen` experiment description this (p, seed, stage) run needs.
 
@@ -353,11 +383,13 @@ def build_experiment(
     `k` (stage-2 map "負荷") is how many records each origin creates at each
     of its RECORD_COUNT generation times; `state_poll_interval_choices_s`, when
     given, is passed through to every agent config (with the run seed, which
-    the agents' choice rng needs -- see semindex.gen). The defaults give stage
-    1's schedule and agent configs.
+    the agents' choice rng needs -- see semindex.gen). `max_in_flight_per_neighbor`,
+    when given, is passed through to every agent config as its cap on outstanding
+    fetch Interests per neighbor; None writes nothing, so the agents keep their
+    own default (8). The defaults give stage 1's schedule and agent configs.
     """
     _validate_p(p)
-    validate_settings(k, state_poll_interval_choices_s)
+    validate_settings(k, state_poll_interval_choices_s, state_poll_choice_jitter_frac, max_in_flight_per_neighbor)
     name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
     schedule = {str(host): _record_schedule(host, seed, k) for host in RECORD_ORIGIN_HOSTS}
     raw = {
@@ -389,6 +421,14 @@ def build_experiment(
     }
     if state_poll_interval_choices_s is not None:
         raw["state_poll_interval_choices_s"] = list(state_poll_interval_choices_s)
+        raw["state_poll_choice_jitter_frac"] = resolve_choice_jitter_frac(
+            state_poll_interval_choices_s, state_poll_choice_jitter_frac
+        )
+    # No default is made explicit here, unlike j: leaving the key out keeps
+    # every generated file byte-identical to the ones made before the cap
+    # could be set, and the agent's default is then the one that applies.
+    if max_in_flight_per_neighbor is not None:
+        raw["max_in_flight_per_neighbor"] = max_in_flight_per_neighbor
     return raw
 
 
@@ -400,6 +440,8 @@ def generate_run(
     *,
     k: int = 1,
     state_poll_interval_choices_s: list[float] | None = None,
+    state_poll_choice_jitter_frac: float | None = None,
+    max_in_flight_per_neighbor: int | None = None,
 ) -> list[str]:
     """Build and write one run's experiment description, ReCefore YAML and agent configs.
 
@@ -421,12 +463,21 @@ def generate_run(
     rejected, but only after that escaping write had already landed on
     disk, or outside it.
 
-    `k` and `state_poll_interval_choices_s` are passed straight to
-    `build_experiment`.
+    `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac` and
+    `max_in_flight_per_neighbor` are passed straight to `build_experiment`.
 
     Returns every path written, experiment description first.
     """
-    raw = build_experiment(p, seed, stage, outdir, k=k, state_poll_interval_choices_s=state_poll_interval_choices_s)
+    raw = build_experiment(
+        p,
+        seed,
+        stage,
+        outdir,
+        k=k,
+        state_poll_interval_choices_s=state_poll_interval_choices_s,
+        state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
+        max_in_flight_per_neighbor=max_in_flight_per_neighbor,
+    )
     gen.parse_experiment(raw)  # raises gen.ExperimentError before any filesystem write
 
     outdir_abspath = os.path.abspath(outdir)
@@ -457,6 +508,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="interval_choices",
         help="state-poll interval choices (s) for every agent; omit for the default 2 s +/- 20%% policy",
     )
+    parser.add_argument(
+        "--choice-jitter",
+        type=float,
+        default=None,
+        dest="choice_jitter",
+        help=f"jitter fraction j applied to each chosen interval (default {DEFAULT_CHOICE_JITTER_FRAC} with choices)",
+    )
+    parser.add_argument(
+        "--max-in-flight",
+        type=int,
+        default=None,
+        dest="max_in_flight",
+        help="cap on outstanding fetch Interests per neighbor for every agent; omit for the agent default (8)",
+    )
     return parser.parse_args(argv)
 
 
@@ -465,7 +530,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         written = generate_run(
-            args.p, args.seed, args.stage, args.outdir, k=args.k, state_poll_interval_choices_s=args.interval_choices
+            args.p,
+            args.seed,
+            args.stage,
+            args.outdir,
+            k=args.k,
+            state_poll_interval_choices_s=args.interval_choices,
+            state_poll_choice_jitter_frac=args.choice_jitter,
+            max_in_flight_per_neighbor=args.max_in_flight,
         )
     except gen.ExperimentError as exc:
         print(f"semindex.evalgen: {exc}", file=sys.stderr)

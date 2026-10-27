@@ -19,11 +19,13 @@ Run as:
     python -m semindex.evalrun --stage s1 --p 0 0.1 0.2 0.3 0.4 \\
         --seeds 1-100 --store /home/lab_shared/semindex-eval \\
         --recefore /home/lab_shared/cefore-emu-sslab \\
-        [--k 4] [--interval-choices 1 2 4]
+        [--k 4] [--interval-choices 1 2 4] [--choice-jitter 0.1] \
+        [--max-in-flight 32]
 
-`--k` and `--interval-choices` (stage-2 map "生成器と集計") go straight to
-semindex.evalgen and are recorded in each run's meta.json. They are not
-part of the store path, so a sweep with different values needs its own
+`--k`, `--interval-choices`, `--choice-jitter` and `--max-in-flight` (stage-2
+map "生成器と集計") go straight to semindex.evalgen and are recorded in each
+run's meta.json. They are not part of the store path, so a sweep with
+different values -- a different `--max-in-flight` included -- needs its own
 `--stage` label.
 """
 
@@ -567,6 +569,8 @@ def _build_meta(
     stage: str,
     k: int,
     state_poll_interval_choices_s: list[float] | None,
+    state_poll_choice_jitter_frac: float | None,
+    max_in_flight_per_neighbor: int | None,
     recefore: str,
     recefore_rc: int,
     start_s: float,
@@ -576,10 +580,12 @@ def _build_meta(
 ) -> dict:
     """Build one run's meta.json dict.
 
-    `k` and `state_poll_interval_choices_s` (None = the default jittered
-    policy) are the generator settings this run was made with, so the
-    aggregate can tell runs apart by them (runs.csv) without re-reading the
-    generated schedule.
+    `k`, `state_poll_interval_choices_s` (None = the default jittered policy)
+    and `state_poll_choice_jitter_frac` (the j actually applied with choices,
+    None without) and `max_in_flight_per_neighbor` (None = not set, so the
+    agents ran with their own default cap of 8) are the generator settings
+    this run was made with, so the aggregate can tell runs apart by them
+    (runs.csv) without re-reading the generated schedule.
     """
     recefore_python = os.path.join(recefore, ".venv", "bin", "python3")
     return {
@@ -588,6 +594,12 @@ def _build_meta(
         "stage": stage,
         "k": k,
         "state_poll_interval_choices_s": state_poll_interval_choices_s,
+        "state_poll_choice_jitter_frac": evalgen.resolve_choice_jitter_frac(
+            state_poll_interval_choices_s, state_poll_choice_jitter_frac
+        ),
+        # Recorded as given, null included: unlike j, no default is written
+        # into the agent configs, so null is the faithful record of "not set".
+        "max_in_flight_per_neighbor": max_in_flight_per_neighbor,
         "semindex_git_commit": _git_commit(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "semindex_git_dirty": _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "recefore_git_commit": _git_commit(recefore, capture_subprocess),
@@ -631,6 +643,8 @@ def run_one(
     clock: Callable[[], float] = time.time,
     k: int = 1,
     state_poll_interval_choices_s: list[float] | None = None,
+    state_poll_choice_jitter_frac: float | None = None,
+    max_in_flight_per_neighbor: int | None = None,
 ) -> RunOutcome:
     """Generate, run, store and validate one (p, seed) run; or skip it if already DONE.
 
@@ -665,7 +679,14 @@ def run_one(
     )
     try:
         generated_paths = evalgen.generate_run(
-            p, seed, stage, staging_run_dir, k=k, state_poll_interval_choices_s=state_poll_interval_choices_s
+            p,
+            seed,
+            stage,
+            staging_run_dir,
+            k=k,
+            state_poll_interval_choices_s=state_poll_interval_choices_s,
+            state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
+            max_in_flight_per_neighbor=max_in_flight_per_neighbor,
         )
         yaml_path = next(path for path in generated_paths if path.endswith(".yaml"))
 
@@ -738,6 +759,8 @@ def run_one(
             stage=stage,
             k=k,
             state_poll_interval_choices_s=state_poll_interval_choices_s,
+            state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
+            max_in_flight_per_neighbor=max_in_flight_per_neighbor,
             recefore=recefore,
             recefore_rc=recefore_rc,
             start_s=start_s,
@@ -815,6 +838,8 @@ def run_all(
     out=None,
     k: int = 1,
     state_poll_interval_choices_s: list[float] | None = None,
+    state_poll_choice_jitter_frac: float | None = None,
+    max_in_flight_per_neighbor: int | None = None,
 ) -> list[RunOutcome]:
     """Run every (p, seed) pair in `build_run_order`'s order, logging one line per run to `out`.
 
@@ -849,7 +874,9 @@ def run_all(
     # 2026-10-26 fix: bad k / interval choices used to surface only inside the
     # loop, failing every pair identically under its own try/except (same
     # reasoning as the stage check above), so they are refused here once.
-    evalgen.validate_settings(k, state_poll_interval_choices_s)
+    evalgen.validate_settings(
+        k, state_poll_interval_choices_s, state_poll_choice_jitter_frac, max_in_flight_per_neighbor
+    )
     if not allow_dirty:
         dirty = _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess)
         if dirty is not False:
@@ -896,6 +923,8 @@ def run_all(
                 clock=clock,
                 k=k,
                 state_poll_interval_choices_s=state_poll_interval_choices_s,
+                state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
+                max_in_flight_per_neighbor=max_in_flight_per_neighbor,
             )
         except Exception as exc:  # noqa: BLE001 -- see docstring: one run's crash must not stop the sweep
             print(f"p={p} seed={seed} status=error error={exc!r}", file=out)
@@ -928,6 +957,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="interval_choices",
         help="state-poll interval choices (s); omit for the default 2 s +/- 20%% policy",
     )
+    parser.add_argument(
+        "--choice-jitter",
+        type=float,
+        default=None,
+        dest="choice_jitter",
+        help=f"jitter fraction j applied to each chosen interval (default {evalgen.DEFAULT_CHOICE_JITTER_FRAC} with choices)",
+    )
+    parser.add_argument(
+        "--max-in-flight",
+        type=int,
+        default=None,
+        dest="max_in_flight",
+        help="cap on outstanding fetch Interests per neighbor; omit for the agent default (8)",
+    )
     return parser.parse_args(argv)
 
 
@@ -947,6 +990,8 @@ def main(argv: list[str] | None = None) -> int:
             allow_dirty=args.allow_dirty,
             k=args.k,
             state_poll_interval_choices_s=args.interval_choices,
+            state_poll_choice_jitter_frac=args.choice_jitter,
+            max_in_flight_per_neighbor=args.max_in_flight,
         )
     except (DirtySemindexError, gen.ExperimentError) as exc:
         print(f"semindex.evalrun: {exc}", file=sys.stderr)

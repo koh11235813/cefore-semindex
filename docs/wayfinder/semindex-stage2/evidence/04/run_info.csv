@@ -1,0 +1,91 @@
+stage,p,seed,k,choices,run_dir,du_disk_bytes,apparent_bytes,events_jsonl_bytes,n_state_poll_window,n_fetch_plan_window
+t2c32k4,0.4,1,4,null,/home/lab_shared/semindex-eval/t2c32k4/p0.4/1,716800,660914,566816,457,163
+t2c32k4,0.4,2,4,null,/home/lab_shared/semindex-eval/t2c32k4/p0.4/2,630784,576421,479626,459,109
+t2c32k4,0.4,3,4,null,/home/lab_shared/semindex-eval/t2c32k4/p0.4/3,724992,676920,577539,457,332
+t2c32k8,0.4,1,8,null,/home/lab_shared/semindex-eval/t2c32k8/p0.4/1,1515520,1458483,1298451,454,644
+t2c32k8,0.4,2,8,null,/home/lab_shared/semindex-eval/t2c32k8/p0.4/2,1679360,1624107,1461391,453,664
+t2c32k8,0.4,3,8,null,/home/lab_shared/semindex-eval/t2c32k8/p0.4/3,1867776,1816207,1650939,458,748
+t2i0p5,0.0,1,1,[0.5],/home/lab_shared/semindex-eval/t2i0p5/p0/1,1413120,1355692,1331187,1896,240
+t2i0p5,0.0,2,1,[0.5],/home/lab_shared/semindex-eval/t2i0p5/p0/2,1413120,1355889,1331320,1898,240
+t2i0p5,0.0,3,1,[0.5],/home/lab_shared/semindex-eval/t2i0p5/p0/3,1404928,1344438,1319855,1878,240
+t2i0p5,0.4,1,1,[0.5],/home/lab_shared/semindex-eval/t2i0p5/p0.4/1,1290240,1229051,1184346,1849,135
+t2i0p5,0.4,2,1,[0.5],/home/lab_shared/semindex-eval/t2i0p5/p0.4/2,1249280,1195016,1147650,1835,122
+t2i0p5,0.4,3,1,[0.5],/home/lab_shared/semindex-eval/t2i0p5/p0.4/3,1241088,1186433,1136463,1824,129
+t2i1,0.0,1,1,[1.0],/home/lab_shared/semindex-eval/t2i1/p0/1,819200,762492,738031,950,237
+t2i1,0.0,2,1,[1.0],/home/lab_shared/semindex-eval/t2i1/p0/2,819200,763776,739251,952,240
+t2i1,0.0,3,1,[1.0],/home/lab_shared/semindex-eval/t2i1/p0/3,815104,758419,733880,945,236
+t2i1,0.4,1,1,[1.0],/home/lab_shared/semindex-eval/t2i1/p0.4/1,749568,687345,642681,929,132
+t2i1,0.4,2,1,[1.0],/home/lab_shared/semindex-eval/t2i1/p0.4/2,716800,657912,610588,921,115
+t2i1,0.4,3,1,[1.0],/home/lab_shared/semindex-eval/t2i1/p0.4/3,724992,669736,619813,916,133
+t2i2,0.0,1,1,[2.0],/home/lab_shared/semindex-eval/t2i2/p0/1,520192,457207,432746,480,219
+t2i2,0.0,2,1,[2.0],/home/lab_shared/semindex-eval/t2i2/p0/2,520192,456808,432283,480,221
+t2i2,0.0,3,1,[2.0],/home/lab_shared/semindex-eval/t2i2/p0/3,520192,456640,432101,478,221
+t2i2,0.4,1,1,[2.0],/home/lab_shared/semindex-eval/t2i2/p0.4/1,466944,409184,364521,466,124
+t2i2,0.4,2,1,[2.0],/home/lab_shared/semindex-eval/t2i2/p0.4/2,446464,392480,345160,460,108
+t2i2,0.4,3,1,[2.0],/home/lab_shared/semindex-eval/t2i2/p0.4/3,454656,400452,350528,464,130
+t2i4,0.0,1,1,[4.0],/home/lab_shared/semindex-eval/t2i4/p0/1,323584,262873,238412,240,117
+t2i4,0.0,2,1,[4.0],/home/lab_shared/semindex-eval/t2i4/p0/2,311296,260338,235813,240,114
+t2i4,0.0,3,1,[4.0],/home/lab_shared/semindex-eval/t2i4/p0/3,311296,258200,233661,238,110
+t2i4,0.4,1,1,[4.0],/home/lab_shared/semindex-eval/t2i4/p0.4/1,315392,256842,212179,236,89
+t2i4,0.4,2,1,[4.0],/home/lab_shared/semindex-eval/t2i4/p0.4/2,299008,246996,199671,233,68
+t2i4,0.4,3,1,[4.0],/home/lab_shared/semindex-eval/t2i4/p0.4/3,319488,262364,212440,234,112
+t2i8,0.0,1,1,[8.0],/home/lab_shared/semindex-eval/t2i8/p0/1,221184,164944,140483,120,64
+t2i8,0.0,2,1,[8.0],/home/lab_shared/semindex-eval/t2i8/p0/2,221184,164244,139719,120,64
+t2i8,0.0,3,1,[8.0],/home/lab_shared/semindex-eval/t2i8/p0/3,225280,165116,140577,120,64
+t2i8,0.4,1,1,[8.0],/home/lab_shared/semindex-eval/t2i8/p0.4/1,233472,174501,129838,118,57
+t2i8,0.4,2,1,[8.0],/home/lab_shared/semindex-eval/t2i8/p0.4/2,245760,189649,142326,118,89
+t2i8,0.4,3,1,[8.0],/home/lab_shared/semindex-eval/t2i8/p0.4/3,253952,198510,148590,118,115
+t2j0p5,0.0,1,1,[0.5],/home/lab_shared/semindex-eval/t2j0p5/p0/1,1400832,1342080,1317296,1744,240
+t2j0p5,0.0,2,1,[0.5],/home/lab_shared/semindex-eval/t2j0p5/p0/2,1400832,1340432,1315584,1744,240
+t2j0p5,0.0,3,1,[0.5],/home/lab_shared/semindex-eval/t2j0p5/p0/3,1392640,1330183,1305321,1730,237
+t2j0p5,0.4,1,1,[0.5],/home/lab_shared/semindex-eval/t2j0p5/p0.4/1,1282048,1221130,1176145,1700,139
+t2j0p5,0.4,2,1,[0.5],/home/lab_shared/semindex-eval/t2j0p5/p0.4/2,1245184,1186122,1138475,1685,122
+t2j0p5,0.4,3,1,[0.5],/home/lab_shared/semindex-eval/t2j0p5/p0.4/3,1236992,1183076,1132832,1684,130
+t2j10p043,0.0,1,1,[10.043],/home/lab_shared/semindex-eval/t2j10p043/p0/1,204800,149019,124148,97,53
+t2j10p043,0.0,2,1,[10.043],/home/lab_shared/semindex-eval/t2j10p043/p0/2,200704,148238,123303,97,50
+t2j10p043,0.0,3,1,[10.043],/home/lab_shared/semindex-eval/t2j10p043/p0/3,204800,149264,124316,96,52
+t2j10p043,0.4,1,1,[10.043],/home/lab_shared/semindex-eval/t2j10p043/p0.4/1,241664,177612,132541,97,92
+t2j10p043,0.4,2,1,[10.043],/home/lab_shared/semindex-eval/t2j10p043/p0.4/2,241664,181473,133740,97,100
+t2j10p043,0.4,3,1,[10.043],/home/lab_shared/semindex-eval/t2j10p043/p0.4/3,241664,187668,137332,96,132
+t2j1p359,0.0,1,1,[1.359],/home/lab_shared/semindex-eval/t2j1p359/p0/1,688128,626154,601312,679,237
+t2j1p359,0.0,2,1,[1.359],/home/lab_shared/semindex-eval/t2j1p359/p0/2,675840,619342,594436,677,227
+t2j1p359,0.0,3,1,[1.359],/home/lab_shared/semindex-eval/t2j1p359/p0/3,684032,624110,599190,679,234
+t2j1p359,0.4,1,1,[1.359],/home/lab_shared/semindex-eval/t2j1p359/p0.4/1,622592,563639,518595,666,129
+t2j1p359,0.4,2,1,[1.359],/home/lab_shared/semindex-eval/t2j1p359/p0.4/2,606208,549844,502143,663,117
+t2j1p359,0.4,3,1,[1.359],/home/lab_shared/semindex-eval/t2j1p359/p0.4/3,610304,555746,505445,664,128
+t2j3p695,0.0,1,1,[3.695],/home/lab_shared/semindex-eval/t2j3p695/p0/1,348160,286935,262093,255,116
+t2j3p695,0.0,2,1,[3.695],/home/lab_shared/semindex-eval/t2j3p695/p0/2,344064,288113,263207,256,120
+t2j3p695,0.0,3,1,[3.695],/home/lab_shared/semindex-eval/t2j3p695/p0/3,348160,291526,266606,256,125
+t2j3p695,0.4,1,1,[3.695],/home/lab_shared/semindex-eval/t2j3p695/p0.4/1,339968,282735,237692,253,90
+t2j3p695,0.4,2,1,[3.695],/home/lab_shared/semindex-eval/t2j3p695/p0.4/2,327680,270180,222479,252,69
+t2j3p695,0.4,3,1,[3.695],/home/lab_shared/semindex-eval/t2j3p695/p0.4/3,348160,290547,240242,254,111
+t2jmix,0.0,1,1,"[0.5, 1.359, 3.695, 10.043]",/home/lab_shared/semindex-eval/t2jmix/p0/1,311296,248164,223142,235,63
+t2jmix,0.0,2,1,"[0.5, 1.359, 3.695, 10.043]",/home/lab_shared/semindex-eval/t2jmix/p0/2,307200,245331,220245,248,54
+t2jmix,0.0,3,1,"[0.5, 1.359, 3.695, 10.043]",/home/lab_shared/semindex-eval/t2jmix/p0/3,311296,252356,227256,230,77
+t2jmix,0.4,1,1,"[0.5, 1.359, 3.695, 10.043]",/home/lab_shared/semindex-eval/t2jmix/p0.4/1,327680,268319,223095,233,92
+t2jmix,0.4,2,1,"[0.5, 1.359, 3.695, 10.043]",/home/lab_shared/semindex-eval/t2jmix/p0.4/2,344064,283799,235916,246,114
+t2jmix,0.4,3,1,"[0.5, 1.359, 3.695, 10.043]",/home/lab_shared/semindex-eval/t2jmix/p0.4/3,335872,280537,230053,230,112
+t2k1,0.4,1,1,null,/home/lab_shared/semindex-eval/t2k1/p0.4/1,475136,411303,367013,462,109
+t2k1,0.4,2,1,null,/home/lab_shared/semindex-eval/t2k1/p0.4/2,454656,394137,347187,459,99
+t2k1,0.4,3,1,null,/home/lab_shared/semindex-eval/t2k1/p0.4/3,466944,412416,362867,457,128
+t2k2,0.4,1,2,null,/home/lab_shared/semindex-eval/t2k2/p0.4/1,561152,507811,447093,458,209
+t2k2,0.4,2,2,null,/home/lab_shared/semindex-eval/t2k2/p0.4/2,544768,487369,423955,456,193
+t2k2,0.4,3,2,null,/home/lab_shared/semindex-eval/t2k2/p0.4/3,585728,530108,464059,457,276
+t2k4,0.4,1,4,null,/home/lab_shared/semindex-eval/t2k4/p0.4/1,897024,845372,751626,458,580
+t2k4,0.4,2,4,null,/home/lab_shared/semindex-eval/t2k4/p0.4/2,794624,748340,651899,458,495
+t2k4,0.4,3,4,null,/home/lab_shared/semindex-eval/t2k4/p0.4/3,917504,872658,773636,456,700
+t2k8,0.4,1,8,null,/home/lab_shared/semindex-eval/t2k8/p0.4/1,1716224,1659915,1500239,455,1548
+t2k8,0.4,2,8,null,/home/lab_shared/semindex-eval/t2k8/p0.4/2,1650688,1593092,1430733,451,1355
+t2k8,0.4,3,8,null,/home/lab_shared/semindex-eval/t2k8/p0.4/3,1662976,1610026,1445109,459,1452
+t2mix,0.0,1,1,"[0.5, 1.0, 2.0, 4.0, 8.0]",/home/lab_shared/semindex-eval/t2mix/p0/1,339968,275565,250830,283,80
+t2mix,0.0,2,1,"[0.5, 1.0, 2.0, 4.0, 8.0]",/home/lab_shared/semindex-eval/t2mix/p0/2,344064,287003,262204,314,71
+t2mix,0.0,3,1,"[0.5, 1.0, 2.0, 4.0, 8.0]",/home/lab_shared/semindex-eval/t2mix/p0/3,356352,297325,272512,309,87
+t2mix,0.4,1,1,"[0.5, 1.0, 2.0, 4.0, 8.0]",/home/lab_shared/semindex-eval/t2mix/p0.4/1,352256,291091,246152,284,96
+t2mix,0.4,2,1,"[0.5, 1.0, 2.0, 4.0, 8.0]",/home/lab_shared/semindex-eval/t2mix/p0.4/2,356352,296853,249258,305,87
+t2mix,0.4,3,1,"[0.5, 1.0, 2.0, 4.0, 8.0]",/home/lab_shared/semindex-eval/t2mix/p0.4/3,356352,300739,250544,307,111
+s1sub,0.0,1,1,null,/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/trial04-analysis/out2/s1store/s1sub/p0/1,487424,426505,402546,469,212
+s1sub,0.0,2,1,null,/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/trial04-analysis/out2/s1store/s1sub/p0/2,487424,426295,402273,468,217
+s1sub,0.0,3,1,null,/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/trial04-analysis/out2/s1store/s1sub/p0/3,487424,423922,399885,464,213
+s1sub,0.4,1,1,null,/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/trial04-analysis/out2/s1store/s1sub/p0.4/1,442368,384287,340100,462,122
+s1sub,0.4,2,1,null,/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/trial04-analysis/out2/s1store/s1sub/p0.4/2,425984,362960,316115,459,100
+s1sub,0.4,3,1,null,/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/trial04-analysis/out2/s1store/s1sub/p0.4/3,421888,369418,319968,456,124

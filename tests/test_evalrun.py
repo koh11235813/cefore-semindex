@@ -1075,6 +1075,8 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "stage",
         "k",
         "state_poll_interval_choices_s",
+        "state_poll_choice_jitter_frac",
+        "max_in_flight_per_neighbor",
         "semindex_git_commit",
         "semindex_git_dirty",
         "recefore_git_commit",
@@ -1090,6 +1092,8 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
     assert meta["stage"] == "s1"
     assert meta["k"] == 1
     assert meta["state_poll_interval_choices_s"] is None
+    assert meta["state_poll_choice_jitter_frac"] is None
+    assert meta["max_in_flight_per_neighbor"] is None
     assert meta["recefore_exit_code"] == 0
     assert meta["validity"]["valid"] is True
     assert set(meta["host_python"]) == {"evalrun", "recefore_venv"}
@@ -1117,12 +1121,15 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
         capture_subprocess=_fake_capture_subprocess,
         k=2,
         state_poll_interval_choices_s=[1.0, 2.0],
+        max_in_flight_per_neighbor=32,
     )
 
     run_dir = store / "s2" / "p0.4" / "3"
     meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     assert meta["k"] == 2
     assert meta["state_poll_interval_choices_s"] == [1.0, 2.0]
+    assert meta["state_poll_choice_jitter_frac"] == 0.1  # the default, made explicit
+    assert meta["max_in_flight_per_neighbor"] == 32
     # evalvalid matches record_created to the schedule by seq index, so 2 records
     # per generation time (60 per origin) is still a valid run.
     assert meta["validity"]["valid"] is True
@@ -1130,6 +1137,9 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
     experiment = json.loads((run_dir / "s2_p040_seed3.experiment.json").read_text(encoding="utf-8"))
     assert len(experiment["schedule"]["0"]) == 2 * evalgen.RECORD_COUNT
     assert experiment["state_poll_interval_choices_s"] == [1.0, 2.0]
+    assert experiment["max_in_flight_per_neighbor"] == 32
+    h0 = json.loads((run_dir / "s2_p040_seed3" / "h0.json").read_text(encoding="utf-8"))
+    assert h0["max_in_flight_per_neighbor"] == 32
 
 
 def test_main_refuses_a_non_finite_interval_choice_before_any_run(tmp_path: Path, monkeypatch, capsys):
@@ -1162,11 +1172,44 @@ def test_main_passes_k_and_interval_choices_to_run_all(tmp_path: Path, monkeypat
     staging_parent.mkdir()
     rc = evalrun.main(
         ["--stage", "s2", "--p", "0", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
-         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--k", "4", "--interval-choices", "1", "2"]
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--k", "4", "--interval-choices", "1", "2",
+         "--choice-jitter", "0", "--max-in-flight", "32"]
     )
     assert rc == 0
     assert seen["k"] == 4
     assert seen["state_poll_interval_choices_s"] == [1.0, 2.0]
+    assert seen["state_poll_choice_jitter_frac"] == 0.0
+    assert seen["max_in_flight_per_neighbor"] == 32
+
+
+def test_main_leaves_max_in_flight_unset_when_not_given(tmp_path: Path, monkeypatch):
+    """Without --max-in-flight, run_all gets None (no cap written; agents keep 8)."""
+    seen: dict = {}
+    monkeypatch.setattr(evalrun, "run_all", lambda *a, **kw: seen.update(kw) or [])
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s2", "--p", "0", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent)]
+    )
+    assert rc == 0
+    assert seen["max_in_flight_per_neighbor"] is None
+
+
+def test_main_refuses_a_zero_max_in_flight_before_any_run(tmp_path: Path, monkeypatch, capsys):
+    """--max-in-flight 0 is refused once, up front (exit 2), and no run is attempted."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s2", "--p", "0", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--max-in-flight", "0"]
+    )
+    assert rc == 2
+    assert calls == []
+    assert capsys.readouterr().err == "semindex.evalrun: max_in_flight_per_neighbor must be an integer >= 1\n"
 
 
 def test_run_one_flags_an_invalid_run_but_still_completes(tmp_path: Path, monkeypatch):

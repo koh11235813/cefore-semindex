@@ -252,6 +252,8 @@ def test_read_meta_reads_evalruns_own_meta_json_shape(tmp_path: Path):
         stage="test",
         k=1,
         state_poll_interval_choices_s=None,
+        state_poll_choice_jitter_frac=None,
+        max_in_flight_per_neighbor=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -271,6 +273,8 @@ def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tm
         stage="test",
         k=4,
         state_poll_interval_choices_s=[1.0, 2.0],
+        state_poll_choice_jitter_frac=None,
+        max_in_flight_per_neighbor=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -279,14 +283,42 @@ def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tm
         capture_subprocess=lambda argv, cwd=None: "",
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
-    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0])
+    # No j given with choices: the default the run actually applied is recorded.
+    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0], 0.1, None)
 
 
 def test_read_meta_generation_is_none_for_a_stage_1_meta_json_or_none_at_all(tmp_path: Path):
-    """A stage-1 meta.json (no k key) and a missing meta.json both give (None, None)."""
-    assert read_meta_generation(str(tmp_path)) == (None, None)
+    """A stage-1 meta.json (no k key) and a missing meta.json both give all None."""
+    assert read_meta_generation(str(tmp_path)) == (None, None, None, None)
     (tmp_path / "meta.json").write_text(json.dumps({"p": 0.2, "validity": {"valid": True, "flags": []}}))
-    assert read_meta_generation(str(tmp_path)) == (None, None)
+    assert read_meta_generation(str(tmp_path)) == (None, None, None, None)
+
+
+def test_read_meta_generation_reads_the_in_flight_cap_from_evalruns_own_meta_json(tmp_path: Path):
+    """A cap given to evalrun comes back as the fourth element."""
+    meta = evalrun._build_meta(
+        p=0.0,
+        seed=1,
+        stage="test",
+        k=8,
+        state_poll_interval_choices_s=None,
+        state_poll_choice_jitter_frac=None,
+        max_in_flight_per_neighbor=32,
+        recefore="/fake/recefore",
+        recefore_rc=0,
+        start_s=0.0,
+        end_s=1.0,
+        verdict={"valid": True, "flags": []},
+        capture_subprocess=lambda argv, cwd=None: "",
+    )
+    evalrun._write_json(str(tmp_path / "meta.json"), meta)
+    assert read_meta_generation(str(tmp_path)) == (8, None, None, 32)
+
+
+def test_read_meta_generation_ignores_a_bool_in_flight_cap(tmp_path: Path):
+    """A JSON true is not taken as the integer 1."""
+    (tmp_path / "meta.json").write_text(json.dumps({"k": 1, "max_in_flight_per_neighbor": True}))
+    assert read_meta_generation(str(tmp_path)) == (1, None, None, None)
 
 
 # -- numeric helpers ------------------------------------------------------
@@ -1823,14 +1855,43 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
 
 
 def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():
-    """runs.csv gets k and the choices (compact JSON) as its last two columns; a run whose
-    meta.json does not record them gets empty cells, an analysis_error run included."""
-    recorded = RunAnalysis(p=0.4, seed=1, status="valid", flags=[], k=4, state_poll_interval_choices_s=[1.0, 2.0])
+    """runs.csv gets k, the choices (compact JSON), the choice jitter j and the
+    per-neighbor in-flight cap as its last four columns; a run whose meta.json does
+    not record them gets empty cells, an analysis_error run included."""
+    recorded = RunAnalysis(
+        p=0.4,
+        seed=1,
+        status="valid",
+        flags=[],
+        k=4,
+        state_poll_interval_choices_s=[1.0, 2.0],
+        state_poll_choice_jitter_frac=0.1,
+        max_in_flight_per_neighbor=32,
+    )
     stage1 = RunAnalysis(p=0.4, seed=2, status="valid", flags=[])
-    broken = RunAnalysis(p=0.4, seed=3, status="valid", flags=[], analysis_error="no t0", k=1)
+    broken = RunAnalysis(
+        p=0.4, seed=3, status="valid", flags=[], analysis_error="no t0", k=1, max_in_flight_per_neighbor=16
+    )
     rows = build_runs_rows([recorded, stage1, broken])
-    assert [(r["k"], r["state_poll_interval_choices_s"]) for r in rows] == [(4, "[1.0,2.0]"), (None, None), (1, None)]
-    assert evalagg.RUNS_FIELDS[-2:] == ["k", "state_poll_interval_choices_s"]
+    assert [
+        (
+            r["k"],
+            r["state_poll_interval_choices_s"],
+            r["state_poll_choice_jitter_frac"],
+            r["max_in_flight_per_neighbor"],
+        )
+        for r in rows
+    ] == [
+        (4, "[1.0,2.0]", 0.1, 32),
+        (None, None, None, None),
+        (1, None, None, 16),
+    ]
+    assert evalagg.RUNS_FIELDS[-4:] == [
+        "k",
+        "state_poll_interval_choices_s",
+        "state_poll_choice_jitter_frac",
+        "max_in_flight_per_neighbor",
+    ]
 
 
 def _poll_decision(status, timeouts, action_prob):
@@ -1923,3 +1984,34 @@ def test_analyze_run_reads_the_poll_reply_fields_off_a_stage_2_decision_line(tmp
         3,
         0.5,
     )
+
+
+def test_irrational_choices_and_j_round_trip_through_meta_json_and_runs_csv(tmp_path: Path):
+    """0.5 * e**n choices and j written by evalrun's own meta.json come back exactly,
+    and the runs.csv cell parses back to the same floats."""
+    import math
+
+    choices = [0.5 * math.e**n for n in range(4)]
+    meta = evalrun._build_meta(
+        p=0.0,
+        seed=1,
+        stage="test",
+        k=1,
+        state_poll_interval_choices_s=choices,
+        state_poll_choice_jitter_frac=0.05,
+        max_in_flight_per_neighbor=None,
+        recefore="/fake/recefore",
+        recefore_rc=0,
+        start_s=0.0,
+        end_s=1.0,
+        verdict={"valid": True, "flags": []},
+        capture_subprocess=lambda argv, cwd=None: "",
+    )
+    evalrun._write_json(str(tmp_path / "meta.json"), meta)
+    k, read_choices, jitter, _max_in_flight = read_meta_generation(str(tmp_path))
+    assert (k, read_choices, jitter) == (1, choices, 0.05)
+    row = build_runs_rows(
+        [RunAnalysis(p=0.0, seed=1, status="valid", flags=[], k=k, state_poll_interval_choices_s=read_choices,
+                     state_poll_choice_jitter_frac=jitter)]
+    )[0]
+    assert json.loads(row["state_poll_interval_choices_s"]) == choices
