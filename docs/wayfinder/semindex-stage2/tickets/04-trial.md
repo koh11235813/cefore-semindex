@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 type: task
 claimed-by: orchestrator
 blocked-by: [01, 02, 03]
@@ -51,3 +51,8 @@ blocked-by: [01, 02, 03]
 
 - 本番の条件の決定（map の Fog）。
 - Data 1 つを返す時間が負荷とともに延びる理由（map の Fog）。
+
+### 2026-10-29 追記
+
+- 本番の条件は決まり、本番を回し終えた（map の Fog「本番の条件」）。回した段と結果は `evidence/05/`。
+- Data 1 つを返す時間の理由は、map の Fog に残したまま、学ぶ方向を決める前に調べる。
