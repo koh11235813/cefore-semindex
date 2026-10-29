@@ -1,4 +1,4 @@
-"""Print the markdown tables summary.md quotes, straight from the ope05 CSVs (no recomputation)."""
+"""Print the ope05 CSVs as Markdown tables, straight from the CSVs (no recomputation)."""
 import argparse
 import csv
 import os
@@ -104,9 +104,11 @@ for r in pv:
                      f(r["b_e2e_sum_of_hop_means_ms"]) + " ± " + f(r["b_e2e_sum_se"]), f(r["b_e2e_direct_ms"]),
                      pct(r["relerr_e2e_vs_sum"]), pct(r["relerr_e2e_vs_direct"]), r["b_e2e_pairs_censored"],
                      f(100 * float(r["cum_censored_share_a"]), 2), f(100 * float(r["cum_censored_share_b"]), 2),
+                     f(100 * float(r["e2e_censored_share_a"]), 2), f(100 * float(r["e2e_censored_share_b"]), 2),
                      "UNRELIABLE" if r["unreliable"] == "1" else ""])
 print(table(["arm s", "p", "predicted (s2a) ± SE", "B sum of hop means ± SE", "B direct", "err vs sum",
-             "err vs direct", "B pairs censored", "s2a hops cens %", "B hops cens %", "flag"], rows))
+             "err vs direct", "B pairs censored", "s2a hops cens %", "B hops cens %",
+             "s2a 4-hop pairs cens %", "B 4-hop pairs cens %", "flag"], rows))
 
 print("\n## T3c end-to-end relative error by hop distance (pred vs B direct)\n")
 rows = []

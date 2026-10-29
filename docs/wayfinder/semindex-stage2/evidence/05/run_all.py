@@ -281,6 +281,14 @@ def main():
                         cens[side][0] += mm["n_recordhops_censored"]
                         cens[side][1] += mm["n_recordhops"] + mm["n_recordhops_censored"]
                     ca, cb = ratio(*cens["a"]), ratio(*cens["b"])
+                    # 2026-10-29 review fix: the pooled hop share above under-counts censoring at
+                    # this hop distance (a record that never reached the upstream drops out of the
+                    # downstream hops' counts), so the end-to-end cell is also judged by the share of
+                    # (origin, seq, node) pairs at exactly this distance that were censored.
+                    ea = ratio(pair[("s2a", pp)].get(("c", hp), 0),
+                               pair[("s2a", pp)].get(("n", hp), 0) + pair[("s2a", pp)].get(("c", hp), 0))
+                    eb = ratio(pair[(bstage[arm], pp)].get(("c", hp), 0),
+                               pair[(bstage[arm], pp)].get(("n", hp), 0) + pair[(bstage[arm], pp)].get(("c", hp), 0))
                     rows.append(dict(
                         arm_s=arm, p=pp, hop=hp,
                         a_n_recordhops=ma["n_recordhops"], a_censored=ma["n_recordhops_censored"],
@@ -320,7 +328,11 @@ def main():
                                                    ratio(pair[(bstage[arm], pp)].get(("lat", hp), 0),
                                                          pair[(bstage[arm], pp)].get(("n", hp), 0))),
                         cum_censored_share_a=ca, cum_censored_share_b=cb,
-                        unreliable=int(ca > CENSOR_FLAG or cb > CENSOR_FLAG),
+                        unreliable=int(ca > CENSOR_FLAG or cb > CENSOR_FLAG
+                                       or ea > CENSOR_FLAG or eb > CENSOR_FLAG),
+                        a_e2e_pairs=int(pair[("s2a", pp)].get(("n", hp), 0)),
+                        a_e2e_pairs_censored=int(pair[("s2a", pp)].get(("c", hp), 0)),
+                        e2e_censored_share_a=ea, e2e_censored_share_b=eb,
                     ))
         write_csv(f"{a.out}/predicted_vs_B.csv", rows)
 
