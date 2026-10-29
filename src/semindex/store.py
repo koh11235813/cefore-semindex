@@ -70,8 +70,9 @@ STORE_SYNCHRONOUS_MODES = ("FULL", "NORMAL", "OFF")
 # 2026-10-29: FULL (SQLite's own default, an fsync on every commit) made a
 # fetching agent spend 33-89 ms on each received record with five agents on
 # one virtual disk, which shaped fetch delays and the in-flight cap's waits;
-# NORMAL brought that to <= 1 ms. Per-commit durability buys little here: the
-# sync protocol re-fetches a lost record from any neighbor that still holds it.
+# NORMAL brought the measured interval to 0-1 ms (whole-ms timestamps).
+# Per-commit durability buys little here: the sync protocol re-fetches a lost
+# record from any neighbor that still holds it.
 DEFAULT_STORE_SYNCHRONOUS = "NORMAL"
 
 

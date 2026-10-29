@@ -406,7 +406,8 @@ def build_experiment(
     2026-10-29: the agents' own synchronous default changed from SQLite's FULL
     (no PRAGMA issued) to NORMAL. Files generated without `store_synchronous`
     are unchanged, but the runs they drive now open index.db with NORMAL; to
-    reproduce a run recorded before that change, pass "FULL".
+    reproduce a run recorded before that change whose meta.json has no mode
+    (null or no key), pass "FULL".
     """
     _validate_p(p)
     validate_settings(
