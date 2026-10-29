@@ -1,0 +1,8 @@
+(a) s2b0p5 p0 hop4 mean 1489 n 4800
+(a) s2b1p359 p0 hop4 mean 3269 n 4800
+(a) s2b3p695 p0 hop4 mean 8591 n 4800
+(a) s2b10p043 p0 hop4 mean 25258 n 4800
+(b) s2b1p359 hop1 wait/interval 0.562 n 3928
+(b) s2b0p5 hop1 wait/interval 0.676 n 3912
+(c) s2b0p5 fetch_plan size mean 3.99 share==8 0.0 n 2407
+(c) s2a fetch_plan size mean 1.85 share==8 0.106 n 10403
