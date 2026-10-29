@@ -1,0 +1,5 @@
+| stage | cap | plans | capped_share | in_flight_q1 | in_flight_med | in_flight_q3 | timeouts | timeouts_link_up_2s | timeouts_link_down | send_to_timeout_min_ms | send_to_timeout_max_ms | records_stored | relay_gap_med_ms |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| t2k4 | 8 | 1775 | 0.903 | 7.000 | 7.000 | 7.000 | 205 | 24 | 181 | 2003 | 2101 | 2874 | 50 |
+| t2c32k4 | 32 | 604 | 0.642 | 0.000 | 31.000 | 31.000 | 159 | 93 | 66 | 2001 | 2458 | 2880 | 34.000 |
+| s3nc32 | 32 | 636 | 0.665 | 0.000 | 31.000 | 31.000 | 0 | 0 | 0 | - | - | 2880 | 0 |
