@@ -36,7 +36,7 @@ from typing import Callable
 from semindex import schema
 from semindex.cefpyco_transport import DEFAULT_RECEIVE_TIMEOUT_MS, CefpycoHandle, CefpycoTransport
 from semindex.engine import SyncConfig, SyncEngine
-from semindex.store import STORE_SYNCHRONOUS_MODES, Store
+from semindex.store import DEFAULT_STORE_SYNCHRONOUS, STORE_SYNCHRONOUS_MODES, Store
 
 # cefpyco_smoke's own default Interest lifetime for a chunk fetch
 # (/home/lab_shared/cefpyco/semindex_smoke/chunk_fetch.py); reused here as
@@ -92,9 +92,9 @@ class AgentConfig:
     # The run's seed, or None if the config gave none. Only the
     # state_poll_interval_choices_s policy draws from it (see _poll_choice_rng).
     seed: int | None
-    # The index.db `PRAGMA synchronous` mode, or None to issue none and keep
-    # SQLite's default (see Store.__init__).
-    store_synchronous: str | None = None
+    # The index.db `PRAGMA synchronous` mode; NORMAL unless the config names
+    # another (see Store.__init__ and DEFAULT_STORE_SYNCHRONOUS).
+    store_synchronous: str = DEFAULT_STORE_SYNCHRONOUS
 
 
 # The SyncConfig fields an agent config may override; map.md's "時間・サ
@@ -379,16 +379,21 @@ def _validate_seed(raw, *, required: bool) -> int | None:
     return value
 
 
-def _validate_store_synchronous(raw) -> str | None:
-    """Validate the optional `store_synchronous` (index.db's `PRAGMA synchronous` mode), or None if absent.
+def _validate_store_synchronous(raw) -> str:
+    """Validate the optional `store_synchronous` (index.db's `PRAGMA synchronous` mode), or NORMAL if absent.
 
     Exact upper-case mode names only: SQLite itself would take "normal" or 1
     as well, but then one setting could be written several ways in configs
     and the run records made from them. isinstance rejects a bool before the
-    membership test could ever see it.
+    membership test could ever see it. An explicit null is refused like any
+    other non-name: absent is the one way to ask for the default.
+
+    2026-10-29: absent used to mean "issue no PRAGMA" (SQLite's FULL); it now
+    means NORMAL (see DEFAULT_STORE_SYNCHRONOUS for why), so configs written
+    without the key -- every stage-1 and earlier stage-2 one -- now run NORMAL.
     """
     if "store_synchronous" not in raw:
-        return None
+        return DEFAULT_STORE_SYNCHRONOUS
     value = raw["store_synchronous"]
     if not isinstance(value, str) or value not in STORE_SYNCHRONOUS_MODES:
         raise ConfigError(f"store_synchronous must be one of {list(STORE_SYNCHRONOUS_MODES)}")

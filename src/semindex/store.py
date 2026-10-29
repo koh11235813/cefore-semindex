@@ -66,34 +66,42 @@ def attrs_match(record, *, zone: str | None, disaster: str | None, media: str | 
 # integer spellings (0/1/2) would let one setting be recorded two ways.
 STORE_SYNCHRONOUS_MODES = ("FULL", "NORMAL", "OFF")
 
+# The mode a Store, and so every agent's index.db, uses unless told otherwise.
+# 2026-10-29: FULL (SQLite's own default, an fsync on every commit) made a
+# fetching agent spend 33-89 ms on each received record with five agents on
+# one virtual disk, which shaped fetch delays and the in-flight cap's waits;
+# NORMAL brought that to <= 1 ms. Per-commit durability buys little here: the
+# sync protocol re-fetches a lost record from any neighbor that still holds it.
+DEFAULT_STORE_SYNCHRONOUS = "NORMAL"
+
 
 class Store:
     """Append-only SQLite store for Index records and per-origin progress."""
 
-    def __init__(self, path: str | Path, synchronous: str | None = None) -> None:
+    def __init__(self, path: str | Path, synchronous: str = DEFAULT_STORE_SYNCHRONOUS) -> None:
         """Open (or create) the SQLite database file at `path` in WAL mode.
 
-        `synchronous`, when given, is one of STORE_SYNCHRONOUS_MODES and sets
-        this connection's `PRAGMA synchronous`. None issues no such PRAGMA,
-        so SQLite's compiled-in default (FULL: an fsync on every commit)
-        applies exactly as it did before the setting existed. NORMAL with WAL
+        `synchronous` is one of STORE_SYNCHRONOUS_MODES and always sets this
+        connection's `PRAGMA synchronous`; there is no "leave SQLite's default"
+        state, so a run's record of its mode is the mode it ran with. The
+        default is NORMAL (see DEFAULT_STORE_SYNCHRONOUS). NORMAL with WAL
         fsyncs only at checkpoints: a crash of the agent process loses
         nothing, an OS crash may lose the last commits. The sync protocol
         fetches those again from any neighbor that still holds them; a
         record this node created itself and no neighbor had fetched yet is
-        lost.
+        lost. FULL fsyncs on every commit and closes that gap.
         """
         # A PRAGMA takes no bound parameters, so the mode is spliced into the
         # SQL text below; this check, made before anything is opened, keeps
-        # anything but the three literal mode names from ever reaching it.
-        if synchronous is not None and synchronous not in STORE_SYNCHRONOUS_MODES:
+        # anything but the three literal mode names (None included) from
+        # ever reaching it.
+        if synchronous not in STORE_SYNCHRONOUS_MODES:
             raise ValueError(f"synchronous must be one of {list(STORE_SYNCHRONOUS_MODES)}")
         # The agent is single-threaded (CLAUDE.md), so the default
         # same-thread connection is correct; nothing here spans threads.
         self._conn = sqlite3.connect(str(path))
         self._conn.execute("PRAGMA journal_mode=WAL")
-        if synchronous is not None:
-            self._conn.execute(f"PRAGMA synchronous={synchronous}")
+        self._conn.execute(f"PRAGMA synchronous={synchronous}")
         self._init_schema()
 
     def _init_schema(self) -> None:

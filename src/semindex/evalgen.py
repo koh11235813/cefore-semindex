@@ -32,7 +32,7 @@ import random
 import sys
 
 from semindex import gen, schema
-from semindex.store import STORE_SYNCHRONOUS_MODES
+from semindex.store import DEFAULT_STORE_SYNCHRONOUS, STORE_SYNCHRONOUS_MODES
 
 # Fixed topology: a 5-host line, agents on every host, h2 in the middle.
 HOSTS = 5
@@ -236,6 +236,13 @@ def resolve_choice_jitter_frac(
     return DEFAULT_CHOICE_JITTER_FRAC if state_poll_choice_jitter_frac is None else state_poll_choice_jitter_frac
 
 
+def resolve_store_synchronous(store_synchronous: str | None) -> str:
+    """The index.db `PRAGMA synchronous` mode a run's agents actually use: the given
+    one, else the agents' own default (DEFAULT_STORE_SYNCHRONOUS, NORMAL), which is
+    what an agent config without the key runs with."""
+    return DEFAULT_STORE_SYNCHRONOUS if store_synchronous is None else store_synchronous
+
+
 def validate_settings(
     k: int,
     state_poll_interval_choices_s: list[float] | None,
@@ -393,8 +400,13 @@ def build_experiment(
     fetch Interests per neighbor; None writes nothing, so the agents keep their
     own default (8). `store_synchronous`, likewise only when given, is passed
     through as the agents' index.db `PRAGMA synchronous` mode; None writes
-    nothing, so SQLite's default (FULL) applies. The defaults give stage 1's
-    schedule and agent configs.
+    nothing, so the agents use their own default. The defaults give stage 1's
+    schedule and agent configs, byte for byte.
+
+    2026-10-29: the agents' own synchronous default changed from SQLite's FULL
+    (no PRAGMA issued) to NORMAL. Files generated without `store_synchronous`
+    are unchanged, but the runs they drive now open index.db with NORMAL; to
+    reproduce a run recorded before that change, pass "FULL".
     """
     _validate_p(p)
     validate_settings(
@@ -443,7 +455,8 @@ def build_experiment(
     # could be set, and the agent's default is then the one that applies.
     if max_in_flight_per_neighbor is not None:
         raw["max_in_flight_per_neighbor"] = max_in_flight_per_neighbor
-    # Same reasoning: absent, the files stay what they were before the key.
+    # Same reasoning: absent, the files stay what they were before the key
+    # (the agents' own default, NORMAL since 2026-10-29, then applies).
     if store_synchronous is not None:
         raw["store_synchronous"] = store_synchronous
     return raw
@@ -547,7 +560,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=STORE_SYNCHRONOUS_MODES,
         default=None,
         dest="store_synchronous",
-        help="PRAGMA synchronous for every agent's index.db; omit for SQLite's default (FULL)",
+        help=f"PRAGMA synchronous for every agent's index.db; omit for the agent default ({DEFAULT_STORE_SYNCHRONOUS})",
     )
     return parser.parse_args(argv)
 

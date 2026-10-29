@@ -20,7 +20,7 @@ Run as:
         --seeds 1-100 --store /home/lab_shared/semindex-eval \\
         --recefore /home/lab_shared/cefore-emu-sslab \\
         [--k 4] [--interval-choices 1 2 4] [--choice-jitter 0.1] \
-        [--max-in-flight 32] [--store-synchronous NORMAL]
+        [--max-in-flight 32] [--store-synchronous FULL]
 
 `--k`, `--interval-choices`, `--choice-jitter`, `--max-in-flight` and
 `--store-synchronous` (stage-2 map "生成器と集計") go straight to
@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from semindex import evalgen, evalvalid, gen
-from semindex.store import STORE_SYNCHRONOUS_MODES
+from semindex.store import DEFAULT_STORE_SYNCHRONOUS, STORE_SYNCHRONOUS_MODES
 
 # 2026-10-23 (orchestrator's live trial, p=0.2 seed=1): one stage-1 run's
 # own ReCefore scenario is 135s of simulated time (evalgen's
@@ -587,9 +587,14 @@ def _build_meta(
     and `state_poll_choice_jitter_frac` (the j actually applied with choices,
     None without) and `max_in_flight_per_neighbor` (None = not set, so the
     agents ran with their own default cap of 8) and `store_synchronous` (None =
-    not set, so the agents' index.db ran with SQLite's default, FULL) are the
-    generator settings this run was made with, so the aggregate can tell runs
-    apart by them (runs.csv) without re-reading the generated schedule.
+    not set; recorded resolved, see below) are the generator settings this run
+    was made with, so the aggregate can tell runs apart by them (runs.csv)
+    without re-reading the generated schedule.
+
+    2026-10-29: `store_synchronous` is written as the mode the agents actually
+    used -- the given one, else their default NORMAL -- never null. Before
+    then null meant "no PRAGMA issued", i.e. SQLite's FULL, and a reader could
+    not tell that from the new default without knowing the run's date.
     """
     recefore_python = os.path.join(recefore, ".venv", "bin", "python3")
     return {
@@ -604,8 +609,9 @@ def _build_meta(
         # Recorded as given, null included: unlike j, no default is written
         # into the agent configs, so null is the faithful record of "not set".
         "max_in_flight_per_neighbor": max_in_flight_per_neighbor,
-        # Same: null means no PRAGMA was issued, not that FULL was chosen.
-        "store_synchronous": store_synchronous,
+        # Resolved like j, not recorded as given: the agents always issue the
+        # PRAGMA now, so the effective mode is known even when not set.
+        "store_synchronous": evalgen.resolve_store_synchronous(store_synchronous),
         "semindex_git_commit": _git_commit(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "semindex_git_dirty": _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "recefore_git_commit": _git_commit(recefore, capture_subprocess),
@@ -991,7 +997,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=STORE_SYNCHRONOUS_MODES,
         default=None,
         dest="store_synchronous",
-        help="PRAGMA synchronous for every agent's index.db; omit for SQLite's default (FULL)",
+        help=f"PRAGMA synchronous for every agent's index.db; omit for the agent default ({DEFAULT_STORE_SYNCHRONOUS})",
     )
     return parser.parse_args(argv)
 

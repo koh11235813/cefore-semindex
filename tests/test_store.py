@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -288,20 +287,15 @@ def test_a_given_synchronous_mode_is_applied_to_the_connection(tmp_path: Path, m
     store.close()
 
 
-def test_no_synchronous_mode_leaves_sqlites_default(tmp_path: Path):
-    """Without a mode no PRAGMA is issued: the Store reads back what a bare WAL connection
-    reads back (FULL, 2, for the stock build), not some value of its own."""
-    bare = sqlite3.connect(str(tmp_path / "bare.db"))
-    bare.execute("PRAGMA journal_mode=WAL")
-    default = bare.execute("PRAGMA synchronous").fetchone()[0]
-    bare.close()
+def test_no_synchronous_mode_opens_the_store_with_normal(tmp_path: Path):
+    """Without a mode the Store still issues the PRAGMA, with NORMAL (1), not SQLite's
+    own default (FULL, 2, for the stock build)."""
     store = Store(tmp_path / "store.db")
-    assert store._conn.execute("PRAGMA synchronous").fetchone()[0] == default
-    assert default == 2
+    assert store._conn.execute("PRAGMA synchronous").fetchone()[0] == 1
     store.close()
 
 
-@pytest.mark.parametrize("mode", ["normal", "EXTRA", "1", ""])
+@pytest.mark.parametrize("mode", ["normal", "EXTRA", "1", "", None])
 def test_a_synchronous_mode_outside_the_three_names_is_refused(tmp_path: Path, mode: str):
     """Only the exact names reach the PRAGMA text; anything else is refused before it."""
     with pytest.raises(ValueError) as excinfo:

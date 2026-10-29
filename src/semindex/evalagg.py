@@ -299,8 +299,12 @@ def read_meta_generation(
     recorded before the choices-mode jitter existed (which ran with none).
     The in-flight cap is None when the run did not set it -- its agents then
     used their own default of 8 -- and for a run recorded before it could be set.
-    The store synchronous mode is None on the same two grounds (its agents then
-    ran index.db with SQLite's default, FULL).
+    The store synchronous mode is None only for a run recorded before
+    2026-10-29, whose meta.json has null or no key: its agents issued no
+    PRAGMA and so ran index.db with SQLite's default, FULL. From then on
+    semindex.evalrun always records the effective mode (NORMAL when not set).
+    None is kept as None (an empty runs.csv cell), not rewritten to "FULL",
+    so the cell shows what was recorded.
     """
     path = os.path.join(run_dir, "meta.json")
     try:

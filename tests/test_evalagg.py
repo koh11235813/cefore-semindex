@@ -285,8 +285,8 @@ def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tm
         capture_subprocess=lambda argv, cwd=None: "",
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
-    # No j given with choices: the default the run actually applied is recorded.
-    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0], 0.1, None, None)
+    # No j and no synchronous mode given: the defaults the run actually applied are recorded.
+    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0], 0.1, None, "NORMAL")
 
 
 def test_read_meta_generation_is_none_for_a_stage_1_meta_json_or_none_at_all(tmp_path: Path):
@@ -315,7 +315,7 @@ def test_read_meta_generation_reads_the_in_flight_cap_from_evalruns_own_meta_jso
         capture_subprocess=lambda argv, cwd=None: "",
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
-    assert read_meta_generation(str(tmp_path)) == (8, None, None, 32, None)
+    assert read_meta_generation(str(tmp_path)) == (8, None, None, 32, "NORMAL")
 
 
 def test_read_meta_generation_ignores_a_bool_in_flight_cap(tmp_path: Path):
@@ -2062,17 +2062,18 @@ def test_irrational_choices_and_j_round_trip_through_meta_json_and_runs_csv(tmp_
 
 
 def test_store_synchronous_round_trips_from_the_cli_to_runs_csv(tmp_path: Path):
-    """--store-synchronous NORMAL lands in the experiment JSON and the agent configs (as
+    """--store-synchronous FULL lands in the experiment JSON and the agent configs (as
     the agent loads them), then in meta.json and the last runs.csv cell; a run whose
-    meta.json predates the key gets an empty cell there."""
+    meta.json predates the key, or records null (both ran FULL, issuing no PRAGMA),
+    gets an empty cell there."""
     gen_out = tmp_path / "gen"
     assert evalgen.main(
-        ["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(gen_out), "--store-synchronous", "NORMAL"]
+        ["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(gen_out), "--store-synchronous", "FULL"]
     ) == 0
     experiment = json.loads((gen_out / "s2_p000_seed1.experiment.json").read_text(encoding="utf-8"))
-    assert experiment["store_synchronous"] == "NORMAL"
+    assert experiment["store_synchronous"] == "FULL"
     config = agent.load_config(str(gen_out / "s2_p000_seed1" / "h0.json"), t0_ms=0)
-    assert config.store_synchronous == "NORMAL"
+    assert config.store_synchronous == "FULL"
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -2099,8 +2100,14 @@ def test_store_synchronous_round_trips_from_the_cli_to_runs_csv(tmp_path: Path):
         json.dumps({"k": 1, "max_in_flight_per_neighbor": 32, "validity": {"valid": True, "flags": []}})
     )
 
+    null_dir = tmp_path / "null"
+    null_dir.mkdir()
+    (null_dir / "meta.json").write_text(
+        json.dumps({"k": 1, "store_synchronous": None, "validity": {"valid": True, "flags": []}})
+    )
+
     analyses = []
-    for seed, directory in ((1, run_dir), (2, old_dir)):
+    for seed, directory in ((1, run_dir), (2, old_dir), (3, null_dir)):
         *_, store_synchronous = read_meta_generation(str(directory))
         analyses.append(
             RunAnalysis(p=0.0, seed=seed, status="valid", flags=[], k=1, store_synchronous=store_synchronous)
@@ -2109,4 +2116,4 @@ def test_store_synchronous_round_trips_from_the_cli_to_runs_csv(tmp_path: Path):
     evalagg._write_csv(str(csv_path), evalagg.RUNS_FIELDS, build_runs_rows(analyses))
     rows = _read_csv(csv_path)
     assert list(rows[0])[-1] == "store_synchronous"
-    assert [row["store_synchronous"] for row in rows] == ["NORMAL", ""]
+    assert [row["store_synchronous"] for row in rows] == ["FULL", "", ""]

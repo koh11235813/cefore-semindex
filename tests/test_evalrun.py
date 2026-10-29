@@ -1095,7 +1095,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
     assert meta["state_poll_interval_choices_s"] is None
     assert meta["state_poll_choice_jitter_frac"] is None
     assert meta["max_in_flight_per_neighbor"] is None
-    assert meta["store_synchronous"] is None
+    assert meta["store_synchronous"] == "NORMAL"  # not set: the agents' default, made explicit
     assert meta["recefore_exit_code"] == 0
     assert meta["validity"]["valid"] is True
     assert set(meta["host_python"]) == {"evalrun", "recefore_venv"}
@@ -1124,7 +1124,7 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
         k=2,
         state_poll_interval_choices_s=[1.0, 2.0],
         max_in_flight_per_neighbor=32,
-        store_synchronous="NORMAL",
+        store_synchronous="FULL",
     )
 
     run_dir = store / "s2" / "p0.4" / "3"
@@ -1133,7 +1133,7 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
     assert meta["state_poll_interval_choices_s"] == [1.0, 2.0]
     assert meta["state_poll_choice_jitter_frac"] == 0.1  # the default, made explicit
     assert meta["max_in_flight_per_neighbor"] == 32
-    assert meta["store_synchronous"] == "NORMAL"
+    assert meta["store_synchronous"] == "FULL"
     # evalvalid matches record_created to the schedule by seq index, so 2 records
     # per generation time (60 per origin) is still a valid run.
     assert meta["validity"]["valid"] is True
@@ -1144,8 +1144,8 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
     assert experiment["max_in_flight_per_neighbor"] == 32
     h0 = json.loads((run_dir / "s2_p040_seed3" / "h0.json").read_text(encoding="utf-8"))
     assert h0["max_in_flight_per_neighbor"] == 32
-    assert experiment["store_synchronous"] == "NORMAL"
-    assert h0["store_synchronous"] == "NORMAL"
+    assert experiment["store_synchronous"] == "FULL"
+    assert h0["store_synchronous"] == "FULL"
 
 
 def test_main_refuses_a_non_finite_interval_choice_before_any_run(tmp_path: Path, monkeypatch, capsys):
