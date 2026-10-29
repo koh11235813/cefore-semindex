@@ -61,15 +61,37 @@ def attrs_match(record, *, zone: str | None, disaster: str | None, media: str | 
     return True
 
 
+# The `PRAGMA synchronous` modes a Store may be opened with. Only these three
+# are offered: EXTRA buys nothing over FULL for a WAL database, and SQLite's
+# integer spellings (0/1/2) would let one setting be recorded two ways.
+STORE_SYNCHRONOUS_MODES = ("FULL", "NORMAL", "OFF")
+
+
 class Store:
     """Append-only SQLite store for Index records and per-origin progress."""
 
-    def __init__(self, path: str | Path) -> None:
-        """Open (or create) the SQLite database file at `path` in WAL mode."""
+    def __init__(self, path: str | Path, synchronous: str | None = None) -> None:
+        """Open (or create) the SQLite database file at `path` in WAL mode.
+
+        `synchronous`, when given, is one of STORE_SYNCHRONOUS_MODES and sets
+        this connection's `PRAGMA synchronous`. None issues no such PRAGMA,
+        so SQLite's compiled-in default (FULL: an fsync on every commit)
+        applies exactly as it did before the setting existed. NORMAL with WAL
+        fsyncs only at checkpoints: a crash of the agent process loses
+        nothing, an OS crash may lose the last commits, which the sync
+        protocol fetches again from the neighbors.
+        """
+        # A PRAGMA takes no bound parameters, so the mode is spliced into the
+        # SQL text below; this check, made before anything is opened, keeps
+        # anything but the three literal mode names from ever reaching it.
+        if synchronous is not None and synchronous not in STORE_SYNCHRONOUS_MODES:
+            raise ValueError(f"synchronous must be one of {list(STORE_SYNCHRONOUS_MODES)}")
         # The agent is single-threaded (CLAUDE.md), so the default
         # same-thread connection is correct; nothing here spans threads.
         self._conn = sqlite3.connect(str(path))
         self._conn.execute("PRAGMA journal_mode=WAL")
+        if synchronous is not None:
+            self._conn.execute(f"PRAGMA synchronous={synchronous}")
         self._init_schema()
 
     def _init_schema(self) -> None:

@@ -37,6 +37,7 @@ import sys
 from dataclasses import dataclass
 
 from semindex import schema
+from semindex.store import STORE_SYNCHRONOUS_MODES
 
 # This generator and the agent it configures live in, and are only ever
 # run from, this one repo's own venv -- ReCefore's host_apps argv is a
@@ -147,6 +148,7 @@ class ExperimentSpec:
     state_poll_interval_choices_s: tuple[float, ...] | None
     state_poll_choice_jitter_frac: float | None
     max_in_flight_per_neighbor: int | None
+    store_synchronous: str | None
 
 
 _TOP_LEVEL_REQUIRED = (
@@ -171,6 +173,7 @@ _TOP_LEVEL_OPTIONAL = (
     "state_poll_interval_choices_s",
     "state_poll_choice_jitter_frac",
     "max_in_flight_per_neighbor",
+    "store_synchronous",
 )
 _TOP_LEVEL_ALLOWED = frozenset(_TOP_LEVEL_REQUIRED) | frozenset(_TOP_LEVEL_OPTIONAL)
 
@@ -550,6 +553,21 @@ def parse_max_in_flight_per_neighbor(raw) -> int | None:
     return raw
 
 
+def parse_store_synchronous(raw) -> str | None:
+    """Validate the optional `store_synchronous` top-level key, or None if absent.
+
+    Forwarded verbatim into every generated agent config, where it sets the
+    agents' index.db `PRAGMA synchronous`. The agent refuses anything but
+    the exact mode names with this same message; checking here too stops a
+    bad value at generation instead of at every agent's startup mid-run.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or raw not in STORE_SYNCHRONOUS_MODES:
+        raise ExperimentError(f"store_synchronous must be one of {list(STORE_SYNCHRONOUS_MODES)}")
+    return raw
+
+
 def parse_experiment(raw: dict) -> ExperimentSpec:
     """Validate an experiment description dict and build the `ExperimentSpec` it describes.
 
@@ -613,6 +631,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         raw.get("state_poll_choice_jitter_frac"), have_choices=state_poll_interval_choices_s is not None
     )
     max_in_flight_per_neighbor = parse_max_in_flight_per_neighbor(raw.get("max_in_flight_per_neighbor"))
+    store_synchronous = parse_store_synchronous(raw.get("store_synchronous"))
 
     all_at_s = [entry.at_s for entries in schedule.values() for entry in entries]
     if all_at_s and min(all_at_s) < MIN_FIRST_RECORD_MARGIN_S:
@@ -641,6 +660,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         state_poll_interval_choices_s=state_poll_interval_choices_s,
         state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
         max_in_flight_per_neighbor=max_in_flight_per_neighbor,
+        store_synchronous=store_synchronous,
     )
 
 
@@ -766,6 +786,9 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
     # the config stays byte for byte what it was before this key existed.
     if spec.max_in_flight_per_neighbor is not None:
         config["max_in_flight_per_neighbor"] = spec.max_in_flight_per_neighbor
+    # Same rule: left out, no PRAGMA is issued and SQLite's default applies.
+    if spec.store_synchronous is not None:
+        config["store_synchronous"] = spec.store_synchronous
 
     drop_rec = spec.fault.get(host, ())
     if drop_rec:

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from semindex import evalagg, evalgen, evalrun
+from semindex import agent, evalagg, evalgen, evalrun
 from semindex.check import CheckUsageError
 from semindex.agent import ScheduledProbe, ScheduledRecord
 from semindex.evalagg import (
@@ -254,6 +254,7 @@ def test_read_meta_reads_evalruns_own_meta_json_shape(tmp_path: Path):
         state_poll_interval_choices_s=None,
         state_poll_choice_jitter_frac=None,
         max_in_flight_per_neighbor=None,
+        store_synchronous=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -275,6 +276,7 @@ def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tm
         state_poll_interval_choices_s=[1.0, 2.0],
         state_poll_choice_jitter_frac=None,
         max_in_flight_per_neighbor=None,
+        store_synchronous=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -284,14 +286,14 @@ def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tm
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
     # No j given with choices: the default the run actually applied is recorded.
-    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0], 0.1, None)
+    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0], 0.1, None, None)
 
 
 def test_read_meta_generation_is_none_for_a_stage_1_meta_json_or_none_at_all(tmp_path: Path):
     """A stage-1 meta.json (no k key) and a missing meta.json both give all None."""
-    assert read_meta_generation(str(tmp_path)) == (None, None, None, None)
+    assert read_meta_generation(str(tmp_path)) == (None, None, None, None, None)
     (tmp_path / "meta.json").write_text(json.dumps({"p": 0.2, "validity": {"valid": True, "flags": []}}))
-    assert read_meta_generation(str(tmp_path)) == (None, None, None, None)
+    assert read_meta_generation(str(tmp_path)) == (None, None, None, None, None)
 
 
 def test_read_meta_generation_reads_the_in_flight_cap_from_evalruns_own_meta_json(tmp_path: Path):
@@ -304,6 +306,7 @@ def test_read_meta_generation_reads_the_in_flight_cap_from_evalruns_own_meta_jso
         state_poll_interval_choices_s=None,
         state_poll_choice_jitter_frac=None,
         max_in_flight_per_neighbor=32,
+        store_synchronous=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -312,13 +315,42 @@ def test_read_meta_generation_reads_the_in_flight_cap_from_evalruns_own_meta_jso
         capture_subprocess=lambda argv, cwd=None: "",
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
-    assert read_meta_generation(str(tmp_path)) == (8, None, None, 32)
+    assert read_meta_generation(str(tmp_path)) == (8, None, None, 32, None)
 
 
 def test_read_meta_generation_ignores_a_bool_in_flight_cap(tmp_path: Path):
     """A JSON true is not taken as the integer 1."""
     (tmp_path / "meta.json").write_text(json.dumps({"k": 1, "max_in_flight_per_neighbor": True}))
-    assert read_meta_generation(str(tmp_path)) == (1, None, None, None)
+    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, None)
+
+
+def test_read_meta_generation_reads_the_store_synchronous_mode_from_evalruns_own_meta_json(tmp_path: Path):
+    """A mode given to evalrun comes back as the fifth element."""
+    meta = evalrun._build_meta(
+        p=0.0,
+        seed=1,
+        stage="test",
+        k=1,
+        state_poll_interval_choices_s=None,
+        state_poll_choice_jitter_frac=None,
+        max_in_flight_per_neighbor=None,
+        store_synchronous="NORMAL",
+        recefore="/fake/recefore",
+        recefore_rc=0,
+        start_s=0.0,
+        end_s=1.0,
+        verdict={"valid": True, "flags": []},
+        capture_subprocess=lambda argv, cwd=None: "",
+    )
+    evalrun._write_json(str(tmp_path / "meta.json"), meta)
+    assert meta["store_synchronous"] == "NORMAL"
+    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, "NORMAL")
+
+
+def test_read_meta_generation_ignores_a_non_string_store_synchronous(tmp_path: Path):
+    """A JSON number (SQLite's own spelling of a mode) is not taken as a recorded mode."""
+    (tmp_path / "meta.json").write_text(json.dumps({"k": 1, "store_synchronous": 1}))
+    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, None)
 
 
 # -- numeric helpers ------------------------------------------------------
@@ -1855,9 +1887,10 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
 
 
 def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():
-    """runs.csv gets k, the choices (compact JSON), the choice jitter j and the
-    per-neighbor in-flight cap as its last four columns; a run whose meta.json does
-    not record them gets empty cells, an analysis_error run included."""
+    """runs.csv gets k, the choices (compact JSON), the choice jitter j, the
+    per-neighbor in-flight cap and the store synchronous mode as its last five
+    columns; a run whose meta.json does not record them gets empty cells, an
+    analysis_error run included."""
     recorded = RunAnalysis(
         p=0.4,
         seed=1,
@@ -1867,10 +1900,18 @@ def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():
         state_poll_interval_choices_s=[1.0, 2.0],
         state_poll_choice_jitter_frac=0.1,
         max_in_flight_per_neighbor=32,
+        store_synchronous="NORMAL",
     )
     stage1 = RunAnalysis(p=0.4, seed=2, status="valid", flags=[])
     broken = RunAnalysis(
-        p=0.4, seed=3, status="valid", flags=[], analysis_error="no t0", k=1, max_in_flight_per_neighbor=16
+        p=0.4,
+        seed=3,
+        status="valid",
+        flags=[],
+        analysis_error="no t0",
+        k=1,
+        max_in_flight_per_neighbor=16,
+        store_synchronous="OFF",
     )
     rows = build_runs_rows([recorded, stage1, broken])
     assert [
@@ -1879,18 +1920,20 @@ def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():
             r["state_poll_interval_choices_s"],
             r["state_poll_choice_jitter_frac"],
             r["max_in_flight_per_neighbor"],
+            r["store_synchronous"],
         )
         for r in rows
     ] == [
-        (4, "[1.0,2.0]", 0.1, 32),
-        (None, None, None, None),
-        (1, None, None, 16),
+        (4, "[1.0,2.0]", 0.1, 32, "NORMAL"),
+        (None, None, None, None, None),
+        (1, None, None, 16, "OFF"),
     ]
-    assert evalagg.RUNS_FIELDS[-4:] == [
+    assert evalagg.RUNS_FIELDS[-5:] == [
         "k",
         "state_poll_interval_choices_s",
         "state_poll_choice_jitter_frac",
         "max_in_flight_per_neighbor",
+        "store_synchronous",
     ]
 
 
@@ -2000,6 +2043,7 @@ def test_irrational_choices_and_j_round_trip_through_meta_json_and_runs_csv(tmp_
         state_poll_interval_choices_s=choices,
         state_poll_choice_jitter_frac=0.05,
         max_in_flight_per_neighbor=None,
+        store_synchronous=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -2008,10 +2052,61 @@ def test_irrational_choices_and_j_round_trip_through_meta_json_and_runs_csv(tmp_
         capture_subprocess=lambda argv, cwd=None: "",
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
-    k, read_choices, jitter, _max_in_flight = read_meta_generation(str(tmp_path))
+    k, read_choices, jitter, _max_in_flight, _store_synchronous = read_meta_generation(str(tmp_path))
     assert (k, read_choices, jitter) == (1, choices, 0.05)
     row = build_runs_rows(
         [RunAnalysis(p=0.0, seed=1, status="valid", flags=[], k=k, state_poll_interval_choices_s=read_choices,
                      state_poll_choice_jitter_frac=jitter)]
     )[0]
     assert json.loads(row["state_poll_interval_choices_s"]) == choices
+
+
+def test_store_synchronous_round_trips_from_the_cli_to_runs_csv(tmp_path: Path):
+    """--store-synchronous NORMAL lands in the experiment JSON and the agent configs (as
+    the agent loads them), then in meta.json and the last runs.csv cell; a run whose
+    meta.json predates the key gets an empty cell there."""
+    gen_out = tmp_path / "gen"
+    assert evalgen.main(
+        ["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(gen_out), "--store-synchronous", "NORMAL"]
+    ) == 0
+    experiment = json.loads((gen_out / "s2_p000_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert experiment["store_synchronous"] == "NORMAL"
+    config = agent.load_config(str(gen_out / "s2_p000_seed1" / "h0.json"), t0_ms=0)
+    assert config.store_synchronous == "NORMAL"
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    meta = evalrun._build_meta(
+        p=0.0,
+        seed=1,
+        stage="s2",
+        k=1,
+        state_poll_interval_choices_s=None,
+        state_poll_choice_jitter_frac=None,
+        max_in_flight_per_neighbor=None,
+        store_synchronous=config.store_synchronous,
+        recefore="/fake/recefore",
+        recefore_rc=0,
+        start_s=0.0,
+        end_s=1.0,
+        verdict={"valid": True, "flags": []},
+        capture_subprocess=lambda argv, cwd=None: "",
+    )
+    evalrun._write_json(str(run_dir / "meta.json"), meta)
+    old_dir = tmp_path / "old"
+    old_dir.mkdir()
+    (old_dir / "meta.json").write_text(
+        json.dumps({"k": 1, "max_in_flight_per_neighbor": 32, "validity": {"valid": True, "flags": []}})
+    )
+
+    analyses = []
+    for seed, directory in ((1, run_dir), (2, old_dir)):
+        *_, store_synchronous = read_meta_generation(str(directory))
+        analyses.append(
+            RunAnalysis(p=0.0, seed=seed, status="valid", flags=[], k=1, store_synchronous=store_synchronous)
+        )
+    csv_path = tmp_path / "runs.csv"
+    evalagg._write_csv(str(csv_path), evalagg.RUNS_FIELDS, build_runs_rows(analyses))
+    rows = _read_csv(csv_path)
+    assert list(rows[0])[-1] == "store_synchronous"
+    assert [row["store_synchronous"] for row in rows] == ["NORMAL", ""]

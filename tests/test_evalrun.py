@@ -1077,6 +1077,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "state_poll_interval_choices_s",
         "state_poll_choice_jitter_frac",
         "max_in_flight_per_neighbor",
+        "store_synchronous",
         "semindex_git_commit",
         "semindex_git_dirty",
         "recefore_git_commit",
@@ -1094,6 +1095,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
     assert meta["state_poll_interval_choices_s"] is None
     assert meta["state_poll_choice_jitter_frac"] is None
     assert meta["max_in_flight_per_neighbor"] is None
+    assert meta["store_synchronous"] is None
     assert meta["recefore_exit_code"] == 0
     assert meta["validity"]["valid"] is True
     assert set(meta["host_python"]) == {"evalrun", "recefore_venv"}
@@ -1122,6 +1124,7 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
         k=2,
         state_poll_interval_choices_s=[1.0, 2.0],
         max_in_flight_per_neighbor=32,
+        store_synchronous="NORMAL",
     )
 
     run_dir = store / "s2" / "p0.4" / "3"
@@ -1130,6 +1133,7 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
     assert meta["state_poll_interval_choices_s"] == [1.0, 2.0]
     assert meta["state_poll_choice_jitter_frac"] == 0.1  # the default, made explicit
     assert meta["max_in_flight_per_neighbor"] == 32
+    assert meta["store_synchronous"] == "NORMAL"
     # evalvalid matches record_created to the schedule by seq index, so 2 records
     # per generation time (60 per origin) is still a valid run.
     assert meta["validity"]["valid"] is True
@@ -1140,6 +1144,8 @@ def test_run_one_generates_with_and_records_k_and_interval_choices(tmp_path: Pat
     assert experiment["max_in_flight_per_neighbor"] == 32
     h0 = json.loads((run_dir / "s2_p040_seed3" / "h0.json").read_text(encoding="utf-8"))
     assert h0["max_in_flight_per_neighbor"] == 32
+    assert experiment["store_synchronous"] == "NORMAL"
+    assert h0["store_synchronous"] == "NORMAL"
 
 
 def test_main_refuses_a_non_finite_interval_choice_before_any_run(tmp_path: Path, monkeypatch, capsys):
@@ -1173,13 +1179,14 @@ def test_main_passes_k_and_interval_choices_to_run_all(tmp_path: Path, monkeypat
     rc = evalrun.main(
         ["--stage", "s2", "--p", "0", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
          str(tmp_path / "recefore"), "--staging", str(staging_parent), "--k", "4", "--interval-choices", "1", "2",
-         "--choice-jitter", "0", "--max-in-flight", "32"]
+         "--choice-jitter", "0", "--max-in-flight", "32", "--store-synchronous", "OFF"]
     )
     assert rc == 0
     assert seen["k"] == 4
     assert seen["state_poll_interval_choices_s"] == [1.0, 2.0]
     assert seen["state_poll_choice_jitter_frac"] == 0.0
     assert seen["max_in_flight_per_neighbor"] == 32
+    assert seen["store_synchronous"] == "OFF"
 
 
 def test_main_leaves_max_in_flight_unset_when_not_given(tmp_path: Path, monkeypatch):
@@ -1194,6 +1201,7 @@ def test_main_leaves_max_in_flight_unset_when_not_given(tmp_path: Path, monkeypa
     )
     assert rc == 0
     assert seen["max_in_flight_per_neighbor"] is None
+    assert seen["store_synchronous"] is None
 
 
 def test_main_refuses_a_zero_max_in_flight_before_any_run(tmp_path: Path, monkeypatch, capsys):
@@ -1210,6 +1218,34 @@ def test_main_refuses_a_zero_max_in_flight_before_any_run(tmp_path: Path, monkey
     assert rc == 2
     assert calls == []
     assert capsys.readouterr().err == "semindex.evalrun: max_in_flight_per_neighbor must be an integer >= 1\n"
+
+
+def test_main_refuses_a_lower_case_store_synchronous_before_any_run(tmp_path: Path, monkeypatch):
+    """--store-synchronous normal is an argparse usage error (exit 2); no run is attempted."""
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    with pytest.raises(SystemExit) as excinfo:
+        evalrun.main(
+            ["--stage", "s2", "--p", "0", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+             str(tmp_path / "recefore"), "--staging", str(staging_parent), "--store-synchronous", "normal"]
+        )
+    assert excinfo.value.code == 2
+    assert calls == []
+
+
+def test_run_all_refuses_a_bad_store_synchronous_before_any_run(tmp_path: Path, monkeypatch):
+    """Called directly (no argparse in front), run_all refuses a bad mode once, up front."""
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    with pytest.raises(evalrun.gen.ExperimentError) as excinfo:
+        evalrun.run_all(
+            [0.0], [1], "s2", str(tmp_path / "store"), str(tmp_path / "recefore"), str(tmp_path),
+            store_synchronous="normal",
+        )
+    assert str(excinfo.value) == "store_synchronous must be one of ['FULL', 'NORMAL', 'OFF']"
+    assert calls == []
 
 
 def test_run_one_flags_an_invalid_run_but_still_completes(tmp_path: Path, monkeypatch):
