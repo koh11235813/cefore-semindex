@@ -78,8 +78,10 @@ class Store:
         so SQLite's compiled-in default (FULL: an fsync on every commit)
         applies exactly as it did before the setting existed. NORMAL with WAL
         fsyncs only at checkpoints: a crash of the agent process loses
-        nothing, an OS crash may lose the last commits, which the sync
-        protocol fetches again from the neighbors.
+        nothing, an OS crash may lose the last commits. The sync protocol
+        fetches those again from any neighbor that still holds them; a
+        record this node created itself and no neighbor had fetched yet is
+        lost.
         """
         # A PRAGMA takes no bound parameters, so the mode is spliced into the
         # SQL text below; this check, made before anything is opened, keeps
