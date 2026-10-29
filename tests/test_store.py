@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -274,3 +275,35 @@ def test_record_probe_executed_increments_and_persists_across_a_restart(tmp_path
     assert reopened.get_probe_count() == 2
     reopened.record_probe_executed()
     assert reopened.get_probe_count() == 3
+
+
+# -- PRAGMA synchronous (agent key store_synchronous) --
+
+
+@pytest.mark.parametrize(("mode", "expected"), [("FULL", 2), ("NORMAL", 1), ("OFF", 0)])
+def test_a_given_synchronous_mode_is_applied_to_the_connection(tmp_path: Path, mode: str, expected: int):
+    """Each mode name sets the connection's PRAGMA synchronous to SQLite's own number for it."""
+    store = Store(tmp_path / "store.db", synchronous=mode)
+    assert store._conn.execute("PRAGMA synchronous").fetchone()[0] == expected
+    store.close()
+
+
+def test_no_synchronous_mode_leaves_sqlites_default(tmp_path: Path):
+    """Without a mode no PRAGMA is issued: the Store reads back what a bare WAL connection
+    reads back (FULL, 2, for the stock build), not some value of its own."""
+    bare = sqlite3.connect(str(tmp_path / "bare.db"))
+    bare.execute("PRAGMA journal_mode=WAL")
+    default = bare.execute("PRAGMA synchronous").fetchone()[0]
+    bare.close()
+    store = Store(tmp_path / "store.db")
+    assert store._conn.execute("PRAGMA synchronous").fetchone()[0] == default
+    assert default == 2
+    store.close()
+
+
+@pytest.mark.parametrize("mode", ["normal", "EXTRA", "1", ""])
+def test_a_synchronous_mode_outside_the_three_names_is_refused(tmp_path: Path, mode: str):
+    """Only the exact names reach the PRAGMA text; anything else is refused before it."""
+    with pytest.raises(ValueError) as excinfo:
+        Store(tmp_path / "store.db", synchronous=mode)
+    assert str(excinfo.value) == "synchronous must be one of ['FULL', 'NORMAL', 'OFF']"

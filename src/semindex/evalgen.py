@@ -32,6 +32,7 @@ import random
 import sys
 
 from semindex import gen, schema
+from semindex.store import STORE_SYNCHRONOUS_MODES
 
 # Fixed topology: a 5-host line, agents on every host, h2 in the middle.
 HOSTS = 5
@@ -240,11 +241,13 @@ def validate_settings(
     state_poll_interval_choices_s: list[float] | None,
     state_poll_choice_jitter_frac: float | None = None,
     max_in_flight_per_neighbor: int | None = None,
+    store_synchronous: str | None = None,
 ) -> None:
     """Reject a records-per-generation count that is not an integer >= 1, or interval
-    choices / a choice jitter / a per-neighbor in-flight cap semindex.gen would
-    refuse (see gen.parse_state_poll_interval_choices_s,
-    gen.parse_state_poll_choice_jitter_frac and gen.parse_max_in_flight_per_neighbor).
+    choices / a choice jitter / a per-neighbor in-flight cap / a store synchronous
+    mode semindex.gen would refuse (see gen.parse_state_poll_interval_choices_s,
+    gen.parse_state_poll_choice_jitter_frac, gen.parse_max_in_flight_per_neighbor
+    and gen.parse_store_synchronous).
 
     Public so a sweep can refuse bad settings once, up front, instead of failing
     every (p, seed) run of it the same way.
@@ -256,6 +259,7 @@ def validate_settings(
         state_poll_choice_jitter_frac, have_choices=state_poll_interval_choices_s is not None
     )
     gen.parse_max_in_flight_per_neighbor(max_in_flight_per_neighbor)
+    gen.parse_store_synchronous(store_synchronous)
 
 
 def _record_schedule(host: int, seed: int, k: int = 1) -> list[dict]:
@@ -365,6 +369,7 @@ def build_experiment(
     state_poll_interval_choices_s: list[float] | None = None,
     state_poll_choice_jitter_frac: float | None = None,
     max_in_flight_per_neighbor: int | None = None,
+    store_synchronous: str | None = None,
 ) -> dict:
     """Build the one `semindex.gen` experiment description this (p, seed, stage) run needs.
 
@@ -386,10 +391,19 @@ def build_experiment(
     the agents' choice rng needs -- see semindex.gen). `max_in_flight_per_neighbor`,
     when given, is passed through to every agent config as its cap on outstanding
     fetch Interests per neighbor; None writes nothing, so the agents keep their
-    own default (8). The defaults give stage 1's schedule and agent configs.
+    own default (8). `store_synchronous`, likewise only when given, is passed
+    through as the agents' index.db `PRAGMA synchronous` mode; None writes
+    nothing, so SQLite's default (FULL) applies. The defaults give stage 1's
+    schedule and agent configs.
     """
     _validate_p(p)
-    validate_settings(k, state_poll_interval_choices_s, state_poll_choice_jitter_frac, max_in_flight_per_neighbor)
+    validate_settings(
+        k,
+        state_poll_interval_choices_s,
+        state_poll_choice_jitter_frac,
+        max_in_flight_per_neighbor,
+        store_synchronous=store_synchronous,
+    )
     name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
     schedule = {str(host): _record_schedule(host, seed, k) for host in RECORD_ORIGIN_HOSTS}
     raw = {
@@ -429,6 +443,9 @@ def build_experiment(
     # could be set, and the agent's default is then the one that applies.
     if max_in_flight_per_neighbor is not None:
         raw["max_in_flight_per_neighbor"] = max_in_flight_per_neighbor
+    # Same reasoning: absent, the files stay what they were before the key.
+    if store_synchronous is not None:
+        raw["store_synchronous"] = store_synchronous
     return raw
 
 
@@ -442,6 +459,7 @@ def generate_run(
     state_poll_interval_choices_s: list[float] | None = None,
     state_poll_choice_jitter_frac: float | None = None,
     max_in_flight_per_neighbor: int | None = None,
+    store_synchronous: str | None = None,
 ) -> list[str]:
     """Build and write one run's experiment description, ReCefore YAML and agent configs.
 
@@ -463,8 +481,9 @@ def generate_run(
     rejected, but only after that escaping write had already landed on
     disk, or outside it.
 
-    `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac` and
-    `max_in_flight_per_neighbor` are passed straight to `build_experiment`.
+    `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac`,
+    `max_in_flight_per_neighbor` and `store_synchronous` are passed straight
+    to `build_experiment`.
 
     Returns every path written, experiment description first.
     """
@@ -477,6 +496,7 @@ def generate_run(
         state_poll_interval_choices_s=state_poll_interval_choices_s,
         state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
         max_in_flight_per_neighbor=max_in_flight_per_neighbor,
+        store_synchronous=store_synchronous,
     )
     gen.parse_experiment(raw)  # raises gen.ExperimentError before any filesystem write
 
@@ -522,6 +542,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="max_in_flight",
         help="cap on outstanding fetch Interests per neighbor for every agent; omit for the agent default (8)",
     )
+    parser.add_argument(
+        "--store-synchronous",
+        choices=STORE_SYNCHRONOUS_MODES,
+        default=None,
+        dest="store_synchronous",
+        help="PRAGMA synchronous for every agent's index.db; omit for SQLite's default (FULL)",
+    )
     return parser.parse_args(argv)
 
 
@@ -538,6 +565,7 @@ def main(argv: list[str] | None = None) -> int:
             state_poll_interval_choices_s=args.interval_choices,
             state_poll_choice_jitter_frac=args.choice_jitter,
             max_in_flight_per_neighbor=args.max_in_flight,
+            store_synchronous=args.store_synchronous,
         )
     except gen.ExperimentError as exc:
         print(f"semindex.evalgen: {exc}", file=sys.stderr)

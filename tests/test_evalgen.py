@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from semindex import evalgen, gen, schema
+from semindex.agent import load_config
 from semindex.gen import ExperimentError, parse_experiment
 
 
@@ -716,3 +717,80 @@ def test_cli_rejects_a_zero_max_in_flight(tmp_path: Path, capsys):
     rc = evalgen.main(["--p", "0.2", "--seed", "7", "--stage", "s2", "--out", str(tmp_path / "run"), "--max-in-flight", "0"])
     assert rc == 1
     assert capsys.readouterr().err == "semindex.evalgen: max_in_flight_per_neighbor must be an integer >= 1\n"
+
+
+# -- index.db PRAGMA synchronous (agent key store_synchronous) --
+
+
+def test_no_store_synchronous_writes_nothing():
+    """Not given: no key in the experiment or any agent config, so the agents issue
+    no PRAGMA synchronous and the files stay what they were before the key."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out")
+    assert "store_synchronous" not in raw
+    for config in gen.generate(parse_experiment(raw), "/cfg").agent_configs.values():
+        assert "store_synchronous" not in config
+
+
+@pytest.mark.parametrize("p", sorted(_STAGE1_DIGESTS))
+def test_an_explicit_none_store_synchronous_still_reproduces_stage_1(p: float):
+    """Passing None is the same as not passing it: stage 1's files, byte for byte."""
+    raw = evalgen.build_experiment(p, 7, "s1", "/out", store_synchronous=None)
+    assert _normalized_digest(raw) == _STAGE1_DIGESTS[p]
+
+
+@pytest.mark.parametrize("value", ["FULL", "NORMAL", "OFF"])
+def test_a_given_store_synchronous_reaches_every_agent_config(value):
+    """A given mode is written, as given, into the experiment and every agent config."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out", store_synchronous=value)
+    assert raw["store_synchronous"] == value
+    configs = gen.generate(parse_experiment(raw), "/cfg").agent_configs
+    assert {c["store_synchronous"] for c in configs.values()} == {value}
+
+
+@pytest.mark.parametrize("value", ["normal", "Full", "EXTRA", "", 1, True, False])
+def test_a_bad_store_synchronous_is_rejected_at_generation(value):
+    """Anything but the three exact names is refused with the exact diagnostic."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.build_experiment(0.2, 7, "s2", "/out", store_synchronous=value)
+    assert str(excinfo.value) == "store_synchronous must be one of ['FULL', 'NORMAL', 'OFF']"
+
+
+def test_validate_settings_rejects_a_bad_store_synchronous():
+    """The up-front sweep check refuses it too, before any run is generated."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(1, None, store_synchronous="normal")
+    assert str(excinfo.value) == "store_synchronous must be one of ['FULL', 'NORMAL', 'OFF']"
+
+
+def test_gen_rejects_a_bad_store_synchronous_in_an_experiment_description():
+    """semindex.gen checks the key itself too, for a description not made by evalgen."""
+    raw = evalgen.build_experiment(0.2, 7, "s2", "/out")
+    raw["store_synchronous"] = "normal"
+    with pytest.raises(ExperimentError) as excinfo:
+        parse_experiment(raw)
+    assert str(excinfo.value) == "store_synchronous must be one of ['FULL', 'NORMAL', 'OFF']"
+
+
+def test_cli_store_synchronous_reaches_the_written_agent_configs(tmp_path: Path):
+    """--store-synchronous goes through the CLI into the experiment JSON and every agent
+    config, and each written config loads as an agent config carrying that mode."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(outdir), "--store-synchronous", "NORMAL"]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s2_p000_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert raw["store_synchronous"] == "NORMAL"
+    for host in evalgen.AGENTS:
+        path = outdir / "s2_p000_seed1" / f"h{host}.json"
+        assert json.loads(path.read_text(encoding="utf-8"))["store_synchronous"] == "NORMAL"
+        assert load_config(str(path), t0_ms=0).store_synchronous == "NORMAL"
+
+
+def test_cli_refuses_a_lower_case_store_synchronous(tmp_path: Path):
+    """argparse's choices refuse "normal" (usage error, exit 2) before anything is written."""
+    outdir = tmp_path / "run"
+    with pytest.raises(SystemExit) as excinfo:
+        evalgen.main(["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(outdir), "--store-synchronous", "normal"])
+    assert excinfo.value.code == 2
+    assert not outdir.exists()

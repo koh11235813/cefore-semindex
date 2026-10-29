@@ -36,7 +36,7 @@ from typing import Callable
 from semindex import schema
 from semindex.cefpyco_transport import DEFAULT_RECEIVE_TIMEOUT_MS, CefpycoHandle, CefpycoTransport
 from semindex.engine import SyncConfig, SyncEngine
-from semindex.store import Store
+from semindex.store import STORE_SYNCHRONOUS_MODES, Store
 
 # cefpyco_smoke's own default Interest lifetime for a chunk fetch
 # (/home/lab_shared/cefpyco/semindex_smoke/chunk_fetch.py); reused here as
@@ -92,6 +92,9 @@ class AgentConfig:
     # The run's seed, or None if the config gave none. Only the
     # state_poll_interval_choices_s policy draws from it (see _poll_choice_rng).
     seed: int | None
+    # The index.db `PRAGMA synchronous` mode, or None to issue none and keep
+    # SQLite's default (see Store.__init__).
+    store_synchronous: str | None = None
 
 
 # The SyncConfig fields an agent config may override; map.md's "時間・サ
@@ -140,6 +143,9 @@ _ALLOWED_KEYS = (
         "seed",
         "state_poll_interval_choices_s",
         "state_poll_choice_jitter_frac",
+        # A Store setting, not a SyncConfig field, so it is not in
+        # _SYNC_OVERRIDE_KEYS; nor is it numeric, so not in _AGENT_NUMERIC_KEYS.
+        "store_synchronous",
     }
     | set(_SYNC_OVERRIDE_KEYS)
     | set(_AGENT_NUMERIC_KEYS)
@@ -373,6 +379,22 @@ def _validate_seed(raw, *, required: bool) -> int | None:
     return value
 
 
+def _validate_store_synchronous(raw) -> str | None:
+    """Validate the optional `store_synchronous` (index.db's `PRAGMA synchronous` mode), or None if absent.
+
+    Exact upper-case mode names only: SQLite itself would take "normal" or 1
+    as well, but then one setting could be written several ways in configs
+    and the run records made from them. isinstance rejects a bool before the
+    membership test could ever see it.
+    """
+    if "store_synchronous" not in raw:
+        return None
+    value = raw["store_synchronous"]
+    if not isinstance(value, str) or value not in STORE_SYNCHRONOUS_MODES:
+        raise ConfigError(f"store_synchronous must be one of {list(STORE_SYNCHRONOUS_MODES)}")
+    return value
+
+
 def validate_config(raw) -> AgentConfig:
     """Validate a merged config dict (JSON file plus any CLI overrides) and build the AgentConfig it describes.
 
@@ -453,6 +475,7 @@ def validate_config(raw) -> AgentConfig:
     if choice_jitter_frac is not None:
         sync_overrides["state_poll_choice_jitter_frac"] = choice_jitter_frac
     seed = _validate_seed(raw, required=poll_interval_choices is not None)
+    store_synchronous = _validate_store_synchronous(raw)
 
     return AgentConfig(
         node=node,
@@ -470,6 +493,7 @@ def validate_config(raw) -> AgentConfig:
         stop_at_s=stop_at_s,
         counters_snapshot_at_s=counters_snapshot_at_s,
         seed=seed,
+        store_synchronous=store_synchronous,
     )
 
 
@@ -1009,7 +1033,7 @@ def build_agent(config: AgentConfig, handle: CefpycoHandle, *, clock: Callable[[
     transport only after the engine itself has finished constructing.
     """
     os.makedirs(config.state_dir, exist_ok=True)
-    store = Store(os.path.join(config.state_dir, "index.db"))
+    store = Store(os.path.join(config.state_dir, "index.db"), synchronous=config.store_synchronous)
     transport = CefpycoTransport(handle, clock=clock, receive_timeout_ms=config.receive_timeout_ms)
     # validate_config guarantees a seed whenever choices are set; without
     # choices the engine never draws either choices-mode rng, so their defaults stay.

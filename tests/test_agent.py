@@ -1653,3 +1653,36 @@ def test_evalagg_does_not_censor_a_store_whose_processing_time_lands_before_wind
     row = rows[("h1", 1, "h0")]
     assert row["censored"] is False, row
     assert row["latency_ms"] == pytest.approx(69_900.0)
+
+
+# -- store_synchronous: index.db's PRAGMA synchronous --------------------------------
+
+
+@pytest.mark.parametrize("value", ["normal", "Full", "EXTRA", "", 1, True, None, ["NORMAL"]])
+def test_validate_config_rejects_a_store_synchronous_that_is_not_an_exact_mode_name(value):
+    """Lower case, other SQLite modes, numbers, bools, null and lists are all refused the same way."""
+    raw = _minimal_raw()
+    raw["store_synchronous"] = value
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == "store_synchronous must be one of ['FULL', 'NORMAL', 'OFF']"
+
+
+@pytest.mark.parametrize("value", ["FULL", "NORMAL", "OFF"])
+def test_validate_config_accepts_each_store_synchronous_mode(value):
+    """Each exact mode name is kept as given."""
+    raw = _minimal_raw()
+    raw["store_synchronous"] = value
+    assert validate_config(raw).store_synchronous == value
+
+
+def test_validate_config_leaves_store_synchronous_unset_when_absent():
+    """Absent means None: no PRAGMA synchronous is issued at all."""
+    assert validate_config(_minimal_raw()).store_synchronous is None
+
+
+@pytest.mark.parametrize(("value", "expected"), [("NORMAL", 1), ("OFF", 0), ("FULL", 2)])
+def test_build_agent_opens_its_store_with_the_configured_synchronous_mode(tmp_path: Path, value, expected):
+    """The configured mode reaches the agent's own index.db connection."""
+    agent = build_agent(_config(tmp_path, store_synchronous=value), _FakeHandle(), clock=_FakeClock(0.0))
+    assert agent._store._conn.execute("PRAGMA synchronous").fetchone()[0] == expected
