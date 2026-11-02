@@ -4,7 +4,8 @@ Rerun (from the worktree root, seconds; needs probe_extract.py's pickle first):
   /home/lab_shared/cefore-semindex/.venv/bin/python3 docs/wayfinder/semindex-stage2/evidence/07/probe_analyze.py \\
     --pkl <scratch>/extract.pkl.gz > probe_analyze.txt
 
-The latency questions (Q1 per-hop excess, Q2 bound on the 4-hop latency, Q4a by arm) are in
+The latency questions (Q1 per-hop excess, Q2 block time on completed 4-hop pairs, which is
+descriptive and not an upper bound, Q4a by arm) are in
 probe_analyze2.py, conditioned on the link schedule. 2026-11-02: an unconditioned first pass of
 those three was dropped from this file, because p is a per-link, per-5-s-slot down probability
 and a failed probe fetch shares its cause (a down link) with a slow hop, which confounded it.
