@@ -1,0 +1,595 @@
+== Q1 (link-conditioned): latency excess per hop class, ms ==
+(cond% = share of uncensored hops whose own link passes the up-window; E%/means/contrasts are among those.
+ id: ok = |pl+4s - pl+6s| <= SE, NID = placebos disagree, exc not identified. predUB = mean over E hops of
+ t_{i+1} - max(due, arrival): upper bound on E-N from the poll delay alone. rawE_ok/rawE_fail = raw mean
+ latency of E hops whose due fell in a successful / failed (2 s) block, NOT placebo-corrected.)
+-- s4c p=0.0
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400 100.0   0.0     nan     nan     nan      50      24     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4   2400 100.0   2.8     893     862     -31    -332    -151     210     72     6.0 NID  predUB=  289  rawE_ok(n=68)=   862  rawE_fail(n=0)=   nan
+   out_h2:h0    2400 100.0  36.2    1075    1098      23      14     -17      25     61     8.9 ok 
+   out_h2:h4    2400 100.0  24.7    1084     965    -119     -82     -31     -62     78   -15.4 ok 
+   first:h0     2400 100.0  36.7    1114    1305     191    -295     -43     361     20   132.2 NID
+   first:h4     2400 100.0  36.7    1174    1182       8      -0    -111      64     47    23.4 NID
+   last:h0      2400 100.0  33.6    1036    1101      65    -143    -277     275     63    92.4 NID
+   last:h4      2400 100.0  34.3    1255    1254      -1      60      37     -49     29   -16.8 ok 
+-- s4c p=0.1
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  89.3   1.5     841    1635     794      89     220     639    337     9.5 ok   predUB=  683  rawE_ok(n=24)=  1259  rawE_fail(n=8)=  2764
+   into_h2:h4   2400  81.3   5.3     877    1139     262    -140    -135     400    182    21.3 ok   predUB=  640  rawE_ok(n=52)=   807  rawE_fail(n=52)=  1471
+   out_h2:h0    2400  77.3  33.0     993    1104     111    -115     -27     182     58    59.9 NID
+   out_h2:h4    2400  86.5  25.0    1124    1074     -50     -56     -31      -7     95    -1.6 ok 
+   first:h0     2400  84.7  37.0    1131    1245     115    -200     -18     224     47    82.8 NID
+   first:h4     2400  82.2  37.7    1200    1163     -37     -14    -208      74     56    27.8 NID
+   last:h0      2400  80.8  31.1    1062    1013     -49     -17    -106      12    108     3.8 ok 
+   last:h4      2400  84.3  33.8    1264    1205     -59     122     163    -202     91   -68.1 ok 
+-- s4c p=0.2
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  74.8   5.3     924    1189     264    -118     343     152    509     8.1 ok   predUB=  315  rawE_ok(n=68)=  1044  rawE_fail(n=28)=  1540
+   into_h2:h4   2400  70.3  11.6     958    1145     187     146    -204     216    276    25.1 NID  predUB=  770  rawE_ok(n=44)=   639  rawE_fail(n=152)=  1292
+   out_h2:h0    2400  66.2  28.0    1022    1120      98     -28     -67     145     97    40.6 ok 
+   out_h2:h4    2400  68.3  20.7    1044     890    -154    -119      99    -144    128   -29.9 NID
+   first:h0     2400  68.7  38.8    1170    1303     133    -238     -13     258     36   100.2 NID
+   first:h4     2400  58.5  41.3    1146    1144      -2     -78     -96      85    109    35.0 ok 
+   last:h0      2400  61.6  38.3     985    1068      83     -21    -130     159    154    60.9 ok 
+   last:h4      2400  71.0  29.3    1363    1222    -142     186     174    -322    113   -94.5 ok 
+-- s4c p=0.3
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  58.5   3.7     844    1583     738    -217      -4     849    239    31.4 ok   predUB=  826  rawE_ok(n=24)=   926  rawE_fail(n=28)=  2146
+   into_h2:h4   2400  53.2  19.1     928    1392     464     -70     -51     524    251   100.3 ok   predUB=  774  rawE_ok(n=44)=  1250  rawE_fail(n=200)=  1424
+   out_h2:h0    2400  48.5  19.2    1057    1116      58     136    -185      83    134    15.9 NID
+   out_h2:h4    2400  51.5  20.7    1130     868    -262       0     160    -342    211   -70.9 ok 
+   first:h0     2400  54.2  38.8    1155    1286     131    -151     -90     251     41    97.4 NID
+   first:h4     2400  50.0  42.3    1202    1030    -172       0     -46    -149    110   -63.1 ok 
+   last:h0      2400  50.7  37.2     961    1154     193     112    -285     280    181   104.0 NID
+   last:h4      2400  56.7  25.3    1341    1110    -231     317      -2    -388    182   -98.2 NID
+-- s4c p=0.4
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  42.3  11.8     971    1159     188    -177    -322     437    381    51.6 ok   predUB=  675  rawE_ok(n=24)=   838  rawE_fail(n=96)=  1239
+   into_h2:h4   2400  37.3  25.4     895    1033     138    -414     -52     372    156    94.6 NID  predUB=  666  rawE_ok(n=8)=  1385  rawE_fail(n=220)=  1020
+   out_h2:h0    2400  36.3  16.5    1305    1133    -172     107     349    -400    201   -66.1 NID
+   out_h2:h4    2400  35.5  11.7    1120    1100     -20     -54     158     -71    454    -8.4 ok 
+   first:h0     2400  36.0  41.7    1151    1284     133    -170     -34     235     95    98.0 NID
+   first:h4     2400  37.7  43.8    1166    1161      -6    -176    -151     157    103    69.0 ok 
+   last:h0      2400  40.5  43.2     972     965      -6     -64    -253     152    246    65.6 ok 
+   last:h4      2396  31.2  32.1    1026    1244     218     -99    -196     365    318   117.2 ok 
+-- s4c p=pooled
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  12000  73.0   3.4     857    1293     435     -68      69     435    198    14.9 ok   predUB=  587  rawE_ok(n=140)=  1025  rawE_fail(n=160)=  1526
+   into_h2:h4  12000  68.4  10.2     907    1163     256    -119    -113     372    105    38.0 ok   predUB=  688  rawE_ok(n=216)=   902  rawE_fail(n=624)=  1253
+   out_h2:h0   12000  65.7  29.1    1073    1108      35      10      -6      33     45     9.6 ok 
+   out_h2:h4   12000  68.4  22.1    1097     976    -121     -64      40    -109     69   -24.1 NID
+   first:h0    12000  68.7  38.0    1139    1285     146    -224     -38     277     20   105.2 NID
+   first:h4    12000  65.7  39.4    1179    1143     -36     -39    -127      47     35    18.5 NID
+   last:h0     12000  66.7  35.6    1016    1064      48     -40    -211     174     58    61.8 NID
+   last:h4     11996  68.7  31.5    1275    1215     -60     132      56    -154     54   -48.5 NID
+-- s4b0p5 p=0.0
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400 100.0   8.2     293     385      91    -102    -141     213     56    17.4 ok   predUB=  309  rawE_ok(n=180)=   262  rawE_fail(n=16)=  1763
+   into_h2:h4   2400 100.0   7.8     288     350      62     -90    -109     161     52    12.6 ok   predUB=  285  rawE_ok(n=168)=   221  rawE_fail(n=20)=  1432
+   out_h2:h0    2400 100.0  19.8     319     306     -12       8      31     -32     26    -6.3 ok 
+   out_h2:h4    2400 100.0  19.8     318     308      -9     -14      17     -11     26    -2.2 NID
+   first:h0     2400 100.0  39.2     246     251       4      -1     -10      10     15     3.9 ok 
+   first:h4     2400 100.0  38.8     256     246     -10     -11      -2      -3     18    -1.3 ok 
+   last:h0      2400 100.0  23.5     314     315       1       9     -10       2     21     0.4 ok 
+   last:h4      2400 100.0  24.4     316     325       9       9      16      -4     19    -0.9 ok 
+-- s4b0p5 p=0.1
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  90.8   7.0     311     534     223     -80     -66     296     84    20.7 ok   predUB=  428  rawE_ok(n=124)=   290  rawE_fail(n=28)=  1617
+   into_h2:h4   2400  84.2  11.3     313     642     328     -90     -89     418    108    47.2 ok   predUB=  599  rawE_ok(n=144)=   237  rawE_fail(n=84)=  1336
+   out_h2:h0    2400  77.0  17.7     317     332      15       5     -33      29     35     5.1 NID
+   out_h2:h4    2400  86.5  17.7     308     323      14      -3      23       5     35     0.8 ok 
+   first:h0     2400  84.7  39.6     253     246      -8      -3      13     -13     20    -5.1 ok 
+   first:h4     2400  82.2  40.6     236     266      30     -29      -5      47     20    19.1 NID
+   last:h0      2400  80.8  21.5     317     322       4      -2      28      -8     29    -1.8 NID
+   last:h4      2400  84.3  21.7     309     291     -19       2      22     -30     27    -6.6 ok 
+-- s4b0p5 p=0.2
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  79.2  11.8     305     373      68     -62     -50     124     84    14.6 ok   predUB=  320  rawE_ok(n=204)=   218  rawE_fail(n=20)=  1955
+   into_h2:h4   2400  76.0  20.6     291     812     521    -163    -120     663    108   136.6 ok   predUB=  740  rawE_ok(n=212)=   202  rawE_fail(n=164)=  1601
+   out_h2:h0    2400  66.8  16.8     300     317      16     -30      16      24     34     4.0 NID
+   out_h2:h4    2400  69.2  14.2     299     293      -6      32     -19     -12     23    -1.8 NID
+   first:h0     2400  68.7  41.0     255     235     -20       5      -3     -20     20    -8.3 ok 
+   first:h4     2400  58.5  43.6     260     252      -7     -13       9      -6     24    -2.4 ok 
+   last:h0      2400  60.0  21.2     305     283     -23     -33       2      -7     40    -1.5 ok 
+   last:h4      2400  69.8  18.1     281     364      83      28     -35      86     48    15.7 NID
+-- s4b0p5 p=0.3
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  63.8  18.0     313     602     288     -70     -79     363    145    65.3 ok   predUB=  526  rawE_ok(n=204)=   305  rawE_fail(n=72)=  1441
+   into_h2:h4   2400  58.3  24.0     309     943     634    -194    -142     803    160   192.6 ok   predUB=  897  rawE_ok(n=144)=   197  rawE_fail(n=192)=  1504
+   out_h2:h0    2400  49.7  11.1     295     312      17      16      -4      11     40     1.2 ok 
+   out_h2:h4    2400  52.7   9.5     348     285     -63      34     -10     -75     41    -7.1 NID
+   first:h0     2400  54.2  42.2     258     247     -11     -18     -12       4     26     1.6 ok 
+   first:h4     2400  50.0  43.7     265     258      -7     -26      14      -1     29    -0.5 NID
+   last:h0      2400  50.7  23.7     301     289     -12      -2      25     -24     58    -5.6 ok 
+   last:h4      2400  57.3  16.6     289     316      27     -13     -34      51     65     8.5 ok 
+-- s4b0p5 p=0.4
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  50.7  21.4     292     660     369    -163    -124     512    209   109.5 ok   predUB=  569  rawE_ok(n=188)=   315  rawE_fail(n=72)=  1560
+   into_h2:h4   2400  45.8  26.2     314    1363    1049    -305    -340    1371    318   359.1 ok   predUB= 1262  rawE_ok(n=72)=   198  rawE_fail(n=216)=  1752
+   out_h2:h0    2400  36.7   5.9     331     287     -44      64     -12     -70     79    -4.1 ok 
+   out_h2:h4    2400  36.2   5.5     308     388      80     -38     -36     117    100     6.5 ok 
+   first:h0     2400  36.0  43.5     238     273      35     -25      14      41     40    17.9 ok 
+   first:h4     2400  37.7  45.1     240     243       3     -20      17       4     33     1.8 NID
+   last:h0      2400  41.3  29.0     320     369      49     -47     -33      90     73    26.0 ok 
+   last:h4      2396  33.6  13.4     307     371      64      36      58      17     96     2.2 ok 
+-- s4b0p5 p=pooled
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  12000  76.9  12.0     303     522     219     -79     -82     299     65    35.9 ok   predUB=  443  rawE_ok(n=900)=   277  rawE_fail(n=208)=  1580
+   into_h2:h4  12000  72.9  16.2     301     867     566    -129    -125     693     79   112.2 ok   predUB=  800  rawE_ok(n=740)=   212  rawE_fail(n=676)=  1583
+   out_h2:h0   12000  66.0  15.9     313     315       3       7       2      -2     19    -0.3 ok 
+   out_h2:h4   12000  68.9  15.1     315     311      -5       4       1      -7     16    -1.1 ok 
+   first:h0    12000  68.7  40.6     251     248      -2      -6      -1       1     11     0.3 ok 
+   first:h4    12000  65.7  41.6     251     254       2     -19       4      10     11     4.1 NID
+   last:h0     12000  66.6  23.3     312     316       4      -8       5       5     17     1.3 ok 
+   last:h4     11996  69.0  20.1     302     325      23       9      -0      19     19     3.8 ok 
+-- s4b1p359 p=0.0
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400 100.0   2.3     751     945     194     227     176      -7    200    -0.2 ok   predUB=  546  rawE_ok(n=36)=   654  rawE_fail(n=20)=  1469
+   into_h2:h4   2400 100.0   2.3     728     915     187    -192     182     192    193     4.4 NID  predUB=  412  rawE_ok(n=39)=   847  rawE_fail(n=16)=  1082
+   out_h2:h0    2400 100.0  30.8     768     806      38      20     -37      46     62    14.1 ok 
+   out_h2:h4    2400 100.0  31.7     739     743       4     -12     -28      24     56     7.6 ok 
+   first:h0     2400 100.0  38.7     683     748      65     -10     -12      76     37    29.4 ok 
+   first:h4     2400 100.0  38.8     692     721      29     -32      44      23     48     8.8 NID
+   last:h0      2400 100.0  29.5     805     751     -55     -43      41     -54     49   -15.9 NID
+   last:h4      2400 100.0  33.1     759     694     -65      21      49    -100     63   -33.0 ok 
+-- s4b1p359 p=0.1
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  90.0   4.3     723     993     269     -45     -75     329    224    14.0 ok   predUB=  580  rawE_ok(n=56)=   767  rawE_fail(n=36)=  1344
+   into_h2:h4   2400  82.3   6.7     713     810      97      61     150      -8    215    -0.5 ok   predUB=  612  rawE_ok(n=60)=   351  rawE_fail(n=72)=  1192
+   out_h2:h0    2400  77.7  26.6     766     809      44     -66      71      41     66    11.0 NID
+   out_h2:h4    2400  86.5  25.4     831     720    -111     -71    -108     -21     80    -5.4 ok 
+   first:h0     2400  84.7  40.2     689     721      32     -12      38      19     55     7.6 ok 
+   first:h4     2400  82.2  41.6     682     697      15      18       9       2     46     0.9 ok 
+   last:h0      2400  80.5  29.7     693     703      10    -123     -22      83     69    24.5 NID
+   last:h4      2400  83.8  32.6     813     799     -14      63     -37     -27     95    -8.9 NID
+-- s4b1p359 p=0.2
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  76.1   4.2     700    1097     396    -357     -28     589    224    24.5 NID  predUB=  681  rawE_ok(n=48)=   697  rawE_fail(n=28)=  1782
+   into_h2:h4   2400  74.0  11.8     706    1103     397    -136      67     431    127    50.7 NID  predUB=  917  rawE_ok(n=48)=   615  rawE_fail(n=161)=  1248
+   out_h2:h0    2400  66.0  20.5     832     882      50     -63      64      50     76    10.2 NID
+   out_h2:h4    2400  68.8  21.8     765     758      -7    -114     -50      75     67    16.4 ok 
+   first:h0     2400  68.5  40.6     669     735      66     -32      12      77     64    31.1 ok 
+   first:h4     2400  58.5  43.6     673     693      20     -22      30      15     63     6.7 ok 
+   last:h0      2400  61.7  28.6     699     659     -40     127     -97     -55     72   -15.7 NID
+   last:h4      2400  69.7  26.8     747     725     -22       4     120     -84    112   -22.4 NID
+-- s4b1p359 p=0.3
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  61.7   5.4     692    1141     449    -651     -46     797    259    43.1 NID  predUB=  905  rawE_ok(n=20)=   327  rawE_fail(n=60)=  1412
+   into_h2:h4   2400  55.7  15.3     639    1122     484    -172     127     506    164    77.3 NID  predUB= 1013  rawE_ok(n=20)=   491  rawE_fail(n=184)=  1191
+   out_h2:h0    2400  49.0  10.2     704     674     -30     -20      68     -54    121    -5.5 ok 
+   out_h2:h4    2400  51.3  13.3     825     758     -67      57     -13     -89    112   -11.9 ok 
+   first:h0     2400  54.2  40.6     648     738      90     -52      -6     119     72    48.5 ok 
+   first:h4     2400  50.0  43.3     688     757      69     -52      -9     100     74    43.2 ok 
+   last:h0      2400  52.2  28.1     938     605    -332     -33      17    -324    114   -91.2 ok 
+   last:h4      2400  57.0  21.1     726     909     183     -64      80     175    195    36.7 ok 
+-- s4b1p359 p=0.4
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  48.2   7.6     716    1678     962     -14    -192    1065    267    81.1 ok   predUB= 1425  rawE_ok(n=4)=  1238  rawE_fail(n=84)=  1699
+   into_h2:h4   2400  43.3  20.8     772    1179     408     -29     -62     453    106    94.1 ok   predUB= 1063  rawE_ok(n=4)=   503  rawE_fail(n=212)=  1192
+   out_h2:h0    2400  36.0   7.4     745     745       0     226    -206     -10    149    -0.7 NID
+   out_h2:h4    2400  35.5   8.9     904     990      86      73      11      44    127     3.9 ok 
+   first:h0     2400  36.0  42.6     678     678       0     -61      35      13     93     5.6 NID
+   first:h4     2400  37.5  45.8     676     753      77     -35     -59     124     80    56.6 ok 
+   last:h0      2400  42.2  29.2     805     763     -43     189     117    -196    322   -57.3 ok 
+   last:h4      2396  31.7  22.1     680     691      11    -157     302     -62    242   -13.6 NID
+-- s4b1p359 p=pooled
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  12000  75.2   4.3     720    1190     470     -83     -53     538    108    23.4 ok   predUB=  851  rawE_ok(n=164)=   679  rawE_fail(n=228)=  1557
+   into_h2:h4  12000  71.1   9.6     712    1068     356     -85      95     352     71    33.6 NID  predUB=  897  rawE_ok(n=171)=   558  rawE_fail(n=645)=  1203
+   out_h2:h0   12000  65.7  22.1     767     810      43      -3       3      43     36     9.5 ok 
+   out_h2:h4   12000  68.4  23.0     802     751     -51     -26     -39     -19     43    -4.3 ok 
+   first:h0    12000  68.7  40.1     676     729      54     -26      11      61     28    24.6 NID
+   first:h4    12000  65.6  41.8     684     720      36     -21      13      40     26    16.5 NID
+   last:h0     12000  67.3  29.1     780     702     -78      -6      11     -80     51   -23.2 ok 
+   last:h4     11996  68.5  28.7     755     755       0      -4      70     -33     55    -9.4 NID
+-- s4b3p695 p=0.0
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400 100.0   2.2    2013    1651    -362     785     246    -878    277   -19.0 NID  predUB=  157  rawE_ok(n=52)=  1651  rawE_fail(n=0)=   nan
+   into_h2:h4   2400 100.0   1.7    2012    1856    -155     286    -149    -224    382    -3.7 NID  predUB=  228  rawE_ok(n=40)=  1856  rawE_fail(n=0)=   nan
+   out_h2:h0    2400 100.0  30.5    1855    1838     -17     -58     -66      46    172    13.9 ok 
+   out_h2:h4    2400 100.0  31.4    1846    1802     -44     103     -57     -67    176   -21.1 ok 
+   first:h0     2400 100.0  33.3    1865    1939      74     -28       5      86     53    28.5 ok 
+   first:h4     2400 100.0  33.3    1861    1915      54     -20     -34      81     83    27.0 ok 
+   last:h0      2400 100.0  35.0    1856    1964     108      54      34      64    195    22.3 ok 
+   last:h4      2400 100.0  31.9    1757    1702     -55      52      29     -96    201   -30.5 ok 
+-- s4b3p695 p=0.1
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  87.5   5.2    2139    3308    1170    -911     180    1535    418    79.7 NID  predUB=  616  rawE_ok(n=57)=  2623  rawE_fail(n=52)=  4060
+   into_h2:h4   2400  77.8   7.5    1825    2539     714    -271    -344    1021    270    76.6 ok   predUB=  654  rawE_ok(n=76)=  2563  rawE_fail(n=64)=  2511
+   out_h2:h0    2400  76.2  28.7    1792    2065     273      -4      76     237    243    68.0 ok 
+   out_h2:h4    2400  86.5  27.6    2170    2096     -75     238     234    -311    238   -85.7 ok 
+   first:h0     2400  84.7  34.1    1860    1897      37      69     -52      28    143     9.7 ok 
+   first:h4     2400  82.2  34.7    1869    1910      41     -11      46      24     85     8.2 ok 
+   last:h0      2400  81.2  34.5    1678    1974     296    -354      -8     477    215   164.6 NID
+   last:h4      2400  80.5  37.0    1878    1908      30      63    -162      79    337    29.3 ok 
+-- s4b3p695 p=0.2
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  69.8   5.5    1933    2949    1016    -705    -648    1693    651    92.9 ok   predUB=  355  rawE_ok(n=76)=  2902  rawE_fail(n=16)=  3172
+   into_h2:h4   2400  67.7  12.3    1756    2838    1082      38    -683    1404    504   172.9 NID  predUB=  921  rawE_ok(n=16)=  2680  rawE_fail(n=184)=  2852
+   out_h2:h0    2400  63.3  29.7    2237    2139     -98     427     382    -502    331  -149.3 ok 
+   out_h2:h4    2400  65.8  29.9    2257    2140    -118     235     310    -390    387  -116.8 ok 
+   first:h0     2400  68.7  35.9    1827    1947     120      32      -8     108    111    38.8 ok 
+   first:h4     2400  58.5  39.0    1937    1932      -5      18     166     -97    104   -37.8 NID
+   last:h0      2400  63.2  44.1    1849    1933      84     158     255    -122    375   -53.7 ok 
+   last:h4      2400  68.0  37.1    1784    1792       7     160    -293      74    372    27.4 NID
+-- s4b3p695 p=0.3
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  50.7   5.6    1799    2291     492   -1462    -719    1583   1045    88.5 ok   predUB= 1000  rawE_ok(n=4)=   870  rawE_fail(n=64)=  2379
+   into_h2:h4   2400  46.7   8.8    1913    2833     920    -212    -893    1472    556   130.1 NID  predUB=  903  rawE_ok(n=8)=  3197  rawE_fail(n=91)=  2801
+   out_h2:h0    2400  50.2  21.6    2107    2353     246     112     113     134    366    28.8 ok 
+   out_h2:h4    2400  47.0  21.3    2483    1472   -1011     659     725   -1703    382  -362.4 ok 
+   first:h0     2400  54.2  35.1    1829    1849      20    -135     -75     125    146    43.8 ok 
+   first:h4     2400  50.0  41.3    1969    1903     -66     -79     111     -82    144   -34.0 NID
+   last:h0      2400  52.5  41.9    1808    1633    -175     162      97    -304    486  -127.3 ok 
+   last:h4      2400  57.0  53.2    1656    1361    -296     464     390    -722    348  -384.5 ok 
+-- s4b3p695 p=0.4
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  36.5  11.9    1644    2844    1200    -641    -891    1966    675   233.4 ok   predUB=  776  rawE_ok(n=40)=  3563  rawE_fail(n=64)=  2394
+   into_h2:h4   2400  32.4  20.7    1461    2149     688    -313    -457    1073    614   222.3 ok   predUB= 1218  rawE_ok(n=4)=   598  rawE_fail(n=157)=  2189
+   out_h2:h0    2400  34.8  21.5    2069    1046   -1024     703     -96   -1328    452  -285.8 NID
+   out_h2:h4    2400  34.9  11.5    2151    1229    -922     673     604   -1561    572  -178.8 ok 
+   first:h0     2400  36.0  38.0    1915    1946      31    -160     -22     122    168    46.4 ok 
+   first:h4     2400  37.7  43.4    1984    1913     -71     -13      56     -92    207   -40.0 ok 
+   last:h0      2400  41.3  58.5    1477    1561      84    -416     767     -91    620   -53.3 NID
+   last:h4      2392  33.2  47.9    1648    1748     100     151     313    -132    928   -63.4 ok 
+-- s4b3p695 p=pooled
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  12000  68.9   5.1    1961    2751     790    -621    -530    1366    265    70.2 ok   predUB=  604  rawE_ok(n=229)=  2628  rawE_fail(n=196)=  2895
+   into_h2:h4  12000  64.9   8.2    1854    2537     683    -188    -569    1062    226    87.2 NID  predUB=  891  rawE_ok(n=144)=  2360  rawE_fail(n=496)=  2589
+   out_h2:h0   12000  64.9  27.6    1980    1953     -27     195      85    -167    133   -46.0 ok 
+   out_h2:h4   12000  66.8  26.6    2141    1893    -248     320     310    -563    142  -149.7 ok 
+   first:h0    12000  68.7  34.8    1856    1917      61     -22     -27      86     50    29.8 ok 
+   first:h4    12000  65.7  37.1    1904    1915      11     -17      56      -9     54    -3.3 NID
+   last:h0     12000  67.6  40.5    1768    1836      68     -84     153      33    162    13.4 NID
+   last:h4     11992  67.8  39.3    1771    1693     -78     159      -2    -156    167   -61.3 ok 
+-- s4b10p043 p=0.0
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400 100.0   0.0     nan     nan     nan    1387    -999     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4   2400 100.0   0.0     nan     nan     nan     323    -765     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   out_h2:h0    2400 100.0  22.5    4453    7234    2782   -2076   -2971    5305   1018  1193.7 ok 
+   out_h2:h4    2400 100.0  15.5    5335    6807    1472    -796   -1192    2466   1591   382.2 ok 
+   first:h0     2400 100.0  32.2    4176    6722    2547   -2377   -1816    4643    457  1493.5 NID
+   first:h4     2400 100.0  32.3    4081    6817    2737   -2440   -2391    5153    345  1666.0 ok 
+   last:h0      2400 100.0  27.2    4440    4463      23    -715   -1022     892   2143   242.2 ok 
+   last:h4      2400 100.0  11.0    4314    6253    1939    -505   -2659    3521   1522   387.3 NID
+-- s4b10p043 p=0.1
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  84.8   0.0     nan     nan     nan    2562   -3086     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4   2400  73.8   0.0     nan     nan     nan    2244    -877     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   out_h2:h0    2400  77.9  24.0    5359    7582    2223   -2312   -2874    4816   1572  1153.8 ok 
+   out_h2:h4    2400  83.5  20.4    5189    6809    1620   -1957   -1577    3387   1464   689.6 ok 
+   first:h0     2400  84.7  32.3    4441    7099    2658   -2704   -1654    4837    553  1561.5 NID
+   first:h4     2400  82.2  33.1    4380    6919    2539   -2739   -2250    5034    423  1664.3 NID
+   last:h0      2400  76.5  28.1    4497    4769     272   -1396   -1675    1808   2462   508.2 ok 
+   last:h4      2400  89.3  12.3    4311    6205    1894      65   -2108    2916   1948   359.0 NID
+-- s4b10p043 p=0.2
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2400  63.3   0.0     nan     nan     nan    3624   -1679     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4   2400  57.5   0.0     nan     nan     nan    1831    2352     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   out_h2:h0    2400  59.3  35.1    5062    8606    3544   -2220   -1915    5612   2525  1970.4 ok 
+   out_h2:h4    2400  57.0  19.6    5526    7750    2224   -1925   -2054    4213   1782   825.4 ok 
+   first:h0     2400  68.7  33.0    4490    7126    2635   -2622   -1489    4691    624  1548.5 NID
+   first:h4     2400  58.5  34.2    4893    7564    2672   -3011   -1911    5133    676  1754.8 NID
+   last:h0      2400  66.7  24.0    4456    4938     482     104     406     227   3033    54.4 ok 
+   last:h4      2400  72.7  14.7    4806    6062    1255    3482   -6101    2565   1897   376.5 NID
+-- s4b10p043 p=0.3
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2376  38.3   0.0     nan     nan     nan    3379   -2806     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4   2400  39.3   0.0     nan     nan     nan    1870   -1986     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   out_h2:h0    2372  44.4  44.5    4789    9379    4590   -5401   -4657    9619   2784  4279.3 ok 
+   out_h2:h4    2384  46.5  26.0    5261    9445    4184   -1627   -1793    5894   3301  1531.9 ok 
+   first:h0     2400  54.2  33.8    5044    7509    2465   -2688    -383    4001    946  1354.1 NID
+   first:h4     2400  50.0  37.7    4788    7125    2336   -3530   -2257    5230    874  1970.0 NID
+   last:h0      2364  47.5  30.2    3634    5891    2258   -1482     -50    3023   3500   914.5 ok 
+   last:h4      2360  65.3  17.1    3605    3951     346    -231    -293     608   2599   104.3 ok 
+-- s4b10p043 p=0.4
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0   2260  22.6   0.0     nan     nan     nan    3097    -105     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4   2400  32.8   0.0     nan     nan     nan    5492   -2880     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   out_h2:h0    2248  26.7  55.3    4378    8519    4142   -3982    2611    4827   5320  2671.0 NID
+   out_h2:h4    2276  32.5  32.4    3737   12371    8633   -6852  -10276   17197   6805  5577.4 ok 
+   first:h0     2400  36.0  32.4    5402    8248    2846   -3531    -795    5009   1057  1623.3 NID
+   first:h4     2400  37.7  35.8    4941    8133    3192   -3150     142    4696   1219  1683.2 NID
+   last:h0      2228  42.9  37.2    2567    6240    3674   -2132   -2520    6000   3465  2234.3 ok 
+   last:h4      2236  39.9  13.9    2715    2989     274   -1410     nan     nan    nan     nan NID
+-- s4b10p043 p=pooled
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  11836  62.3   0.0     nan     nan     nan    2796   -1936     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4  12000  60.7   0.0     nan     nan     nan    1824   -1225     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   out_h2:h0   11820  62.1  31.1    4854    8227    3374   -2688   -2267    5851    955  1822.4 ok 
+   out_h2:h4   11860  64.2  20.7    5189    8297    3108   -2174   -2394    5392   1303  1115.2 ok 
+   first:h0    12000  68.7  32.7    4568    7183    2616   -2690   -1415    4668    266  1524.4 NID
+   first:h4    12000  65.7  34.1    4499    7186    2687   -2868   -1982    5112    296  1741.3 NID
+   last:h0     11792  67.1  28.4    4147    5112     965    -965    -968    1932   1237   548.6 ok 
+   last:h4     11796  73.9  13.4    4128    5337    1209     213   -2939    2572    930   345.7 NID
+-- s4a p=0.0
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  12000 100.0   4.5    3669    4987    1318      14     378    1122    700    50.9 ok   predUB=  782  rawE_ok(n=236)=  4142  rawE_fail(n=308)=  5635
+   into_h2:h4  12000 100.0   4.1    3909    3518    -391    -807    -187     106    621     4.4 ok   predUB=  303  rawE_ok(n=384)=  4143  rawE_fail(n=112)=  1374
+   out_h2:h0   12000 100.0  28.9    3646    3322    -324     318    -157    -404    370  -116.8 NID
+   out_h2:h4   12000 100.0  32.6    3882    3675    -207     266     186    -434    403  -141.3 ok 
+   first:h0    12000 100.0  34.3    3764    3753     -10     -91      34      18    211     6.2 ok 
+   first:h4    12000 100.0  34.2    3839    3708    -132      39      41    -172    222   -58.8 ok 
+   last:h0     12000 100.0  34.3    3883    3716    -167      13      99    -223    438   -76.5 ok 
+   last:h4     12000 100.0  33.9    3705    3260    -445     310     -26    -587    373  -199.2 ok 
+-- s4a p=0.1
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  12000  83.7   6.0    3585    4127     542    -635   -1502    1610    690    96.9 NID  predUB=  755  rawE_ok(n=208)=  2491  rawE_fail(n=396)=  4986
+   into_h2:h4  12000  74.5   5.9    3855    3615    -240    -238      24    -132    729    -7.8 ok   predUB=  633  rawE_ok(n=260)=  3850  rawE_fail(n=268)=  3387
+   out_h2:h0   12000  77.9  30.8    3871    3245    -626      75    -274    -526    484  -161.8 ok 
+   out_h2:h4   12000  82.7  30.5    4041    3463    -578     338     359    -926    534  -282.7 ok 
+   first:h0    12000  78.5  35.3    3756    3832      76    -189     -24     183    244    64.6 ok 
+   first:h4    12000  81.5  36.7    3975    3804    -171     -93    -115     -67    267   -24.4 ok 
+   last:h0     12000  82.1  33.9    3922    4265     342    -587      59     606    570   205.7 NID
+   last:h4     11956  80.0  34.4    3957    3392    -565     314    1101   -1273    513  -438.3 NID
+-- s4a p=0.2
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  12000  64.4   6.9    3533    4862    1328     -10   -1443    2055    600   142.5 NID  predUB=  810  rawE_ok(n=148)=  3931  rawE_fail(n=388)=  5217
+   into_h2:h4  12000  59.7  10.0    3511    3651     140    -492     473     150    699    14.9 NID  predUB=  877  rawE_ok(n=100)=  2180  rawE_fail(n=616)=  3889
+   out_h2:h0   12000  62.4  29.5    3660    3306    -355    -103    -624       9    611     2.7 ok 
+   out_h2:h4   12000  62.7  25.7    4226    4649     423     583     567    -152   1481   -39.0 ok 
+   first:h0    12000  59.4  35.6    3903    3842     -62     -49      48     -61    240   -21.8 ok 
+   first:h4    12000  62.8  38.8    4075    3869    -206     148     -65    -247    292   -96.0 ok 
+   last:h0     12000  61.6  36.4    3943    3940      -3     233     757    -498    905  -181.3 ok 
+   last:h4     12000  60.9  32.3    3815    3356    -459      41      48    -504    699  -163.0 ok 
+-- s4a p=0.3
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  12000  43.8   9.9    3383    4660    1278    1634    -856     889   1112    87.9 NID  predUB=  983  rawE_ok(n=56)=  2174  rawE_fail(n=464)=  4960
+   into_h2:h4  12000  44.0  13.1    3129    2813    -315    -320    1000    -655    651   -85.8 NID  predUB=  985  rawE_ok(n=8)=   572  rawE_fail(n=683)=  2839
+   out_h2:h0   12000  47.5  29.0    4421    3955    -467     908    1151   -1496   1660  -433.5 ok 
+   out_h2:h4   11992  45.1  29.4    4448    4005    -442    1398    -458    -912   1081  -267.8 NID
+   first:h0    12000  44.5  36.7    4000    3986     -14    -469    -284     362    309   133.0 ok 
+   first:h4    12000  48.9  40.2    4217    4031    -187      44    -431       7    376     2.9 NID
+   last:h0     11976  45.2  36.5    4068    4344     277     371     571    -195   1104   -71.1 ok 
+   last:h4     11960  45.9  35.3    3535    3545      10     344      84    -204   1203   -72.0 ok 
+-- s4a p=0.4
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  11996  31.7   9.7    2850    4533    1683     444   -1161    2042   1354   197.3 NID  predUB=  814  rawE_ok(n=28)=   686  rawE_fail(n=340)=  4849
+   into_h2:h4  11960  32.6  15.5    2753    2749      -4    -505     537     -20    826    -3.1 NID  predUB= 1005  rawE_ok(n=36)=  1510  rawE_fail(n=568)=  2827
+   out_h2:h0   11908  30.7  38.4    4163    3434    -728     520     159   -1068   1420  -410.6 ok 
+   out_h2:h4   11928  33.3  26.4    4157    5539    1382    -317     110    1485   2894   391.7 ok 
+   first:h0    12000  31.8  37.3    4153    4250      98    -993     -79     633    362   236.1 NID
+   first:h4    12000  33.9  40.1    4006    4128     122    -185    -135     281    372   112.8 ok 
+   last:h0     11744  34.2  46.4    5309    4756    -553     815    1062   -1492   2914  -692.3 ok 
+   last:h4     11788  37.6  42.9    4581    2572   -2009    1827    -153   -2846    987 -1220.1 NID
+-- s4a p=pooled
+   class        n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  59996  64.7   6.6    3505    4628    1123     170    -996    1536    379   101.7 NID  predUB=  827  rawE_ok(n=676)=  3282  rawE_fail(n=1896)=  5108
+   into_h2:h4  59960  62.2   8.1    3605    3253    -352    -618     205    -146    321   -11.9 NID  predUB=  791  rawE_ok(n=788)=  3641  rawE_fail(n=2247)=  3116
+   out_h2:h0   59908  63.7  30.4    3865    3403    -462     303      20    -623    369  -189.5 ok 
+   out_h2:h4   59920  64.8  29.6    4101    3999    -103     519     257    -490    439  -145.4 ok 
+   first:h0    60000  62.8  35.4    3859    3877      18    -254     -40     165    119    58.3 NID
+   first:h4    60000  65.4  37.2    3988    3863    -125       4    -110     -72    131   -26.9 ok 
+   last:h0     59720  64.8  36.2    4055    4118      63      50     398    -161    458   -58.3 ok 
+   last:h4     59704  65.0  35.0    3853    3253    -600     449     279    -964    318  -337.2 ok 
+
+== Q4a (link-conditioned): into-h2 hop by arm of the governing h2 poll ==
+-- s4c p=0.0
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=2.0      2400 100.0   0.0     nan     nan     nan      50      24     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4  arm=2.0      2400 100.0   2.8     893     862     -31    -332    -151     210     68     6.0 NID  predUB=  289  rawE_ok(n=68)=   862  rawE_fail(n=0)=   nan
+-- s4c p=0.1
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=2.0      2400  89.3   1.5     841    1635     794      89     220     639    341     9.5 ok   predUB=  683  rawE_ok(n=24)=  1259  rawE_fail(n=8)=  2764
+   into_h2:h4  arm=2.0      2400  81.3   5.3     877    1139     262    -140    -135     400    166    21.3 ok   predUB=  640  rawE_ok(n=52)=   807  rawE_fail(n=52)=  1471
+-- s4c p=0.2
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=2.0      2400  74.8   5.3     924    1189     264    -118     343     152    493     8.1 ok   predUB=  315  rawE_ok(n=68)=  1044  rawE_fail(n=28)=  1540
+   into_h2:h4  arm=2.0      2400  70.3  11.6     958    1145     187     146    -204     216    256    25.1 NID  predUB=  770  rawE_ok(n=44)=   639  rawE_fail(n=152)=  1292
+-- s4c p=0.3
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=2.0      2400  58.5   3.7     844    1583     738    -217      -4     849    240    31.4 ok   predUB=  826  rawE_ok(n=24)=   926  rawE_fail(n=28)=  2146
+   into_h2:h4  arm=2.0      2400  53.2  19.1     928    1392     464     -70     -51     524    257   100.3 ok   predUB=  774  rawE_ok(n=44)=  1250  rawE_fail(n=200)=  1424
+-- s4c p=0.4
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=2.0      2400  42.3  11.8     971    1159     188    -177    -322     437    356    51.6 ok   predUB=  675  rawE_ok(n=24)=   838  rawE_fail(n=96)=  1239
+   into_h2:h4  arm=2.0      2400  37.3  25.4     895    1033     138    -414     -52     372    154    94.6 NID  predUB=  666  rawE_ok(n=8)=  1385  rawE_fail(n=220)=  1020
+-- s4c p=pooled
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=2.0     12000  73.0   3.4     857    1293     435     -68      69     435    191    14.9 ok   predUB=  587  rawE_ok(n=140)=  1025  rawE_fail(n=160)=  1526
+   into_h2:h4  arm=2.0     12000  68.4  10.2     907    1163     256    -119    -113     372    100    38.0 ok   predUB=  688  rawE_ok(n=216)=   902  rawE_fail(n=624)=  1253
+-- s4b0p5 p=0.0
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5      2400 100.0   8.2     293     385      91    -102    -141     213     55    17.4 ok   predUB=  309  rawE_ok(n=180)=   262  rawE_fail(n=16)=  1763
+   into_h2:h4  arm=0.5      2400 100.0   7.8     288     350      62     -90    -109     161     53    12.6 ok   predUB=  285  rawE_ok(n=168)=   221  rawE_fail(n=20)=  1432
+-- s4b0p5 p=0.1
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5      2400  90.8   7.0     311     534     223     -80     -66     296     77    20.7 ok   predUB=  428  rawE_ok(n=124)=   290  rawE_fail(n=28)=  1617
+   into_h2:h4  arm=0.5      2400  84.2  11.3     313     642     328     -90     -89     418     99    47.2 ok   predUB=  599  rawE_ok(n=144)=   237  rawE_fail(n=84)=  1336
+-- s4b0p5 p=0.2
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5      2400  79.2  11.8     305     373      68     -62     -50     124     90    14.6 ok   predUB=  320  rawE_ok(n=204)=   218  rawE_fail(n=20)=  1955
+   into_h2:h4  arm=0.5      2400  76.0  20.6     291     812     521    -163    -120     663    108   136.6 ok   predUB=  740  rawE_ok(n=212)=   202  rawE_fail(n=164)=  1601
+-- s4b0p5 p=0.3
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5      2400  63.8  18.0     313     602     288     -70     -79     363    157    65.3 ok   predUB=  526  rawE_ok(n=204)=   305  rawE_fail(n=72)=  1441
+   into_h2:h4  arm=0.5      2400  58.3  24.0     309     943     634    -194    -142     803    153   192.6 ok   predUB=  897  rawE_ok(n=144)=   197  rawE_fail(n=192)=  1504
+-- s4b0p5 p=0.4
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5      2400  50.7  21.4     292     660     369    -163    -124     512    201   109.5 ok   predUB=  569  rawE_ok(n=188)=   315  rawE_fail(n=72)=  1560
+   into_h2:h4  arm=0.5      2400  45.8  26.2     314    1363    1049    -305    -340    1371    296   359.1 ok   predUB= 1262  rawE_ok(n=72)=   198  rawE_fail(n=216)=  1752
+-- s4b0p5 p=pooled
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5     12000  76.9  12.0     303     522     219     -79     -82     299     66    35.9 ok   predUB=  443  rawE_ok(n=900)=   277  rawE_fail(n=208)=  1580
+   into_h2:h4  arm=0.5     12000  72.9  16.2     301     867     566    -129    -125     693     84   112.2 ok   predUB=  800  rawE_ok(n=740)=   212  rawE_fail(n=676)=  1583
+-- s4b1p359 p=0.0
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=1.359    2400 100.0   2.3     751     945     194     227     176      -7    212    -0.2 ok   predUB=  546  rawE_ok(n=36)=   654  rawE_fail(n=20)=  1469
+   into_h2:h4  arm=1.359    2400 100.0   2.3     728     915     187    -192     182     192    189     4.4 NID  predUB=  412  rawE_ok(n=39)=   847  rawE_fail(n=16)=  1082
+-- s4b1p359 p=0.1
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=1.359    2400  90.0   4.3     723     993     269     -45     -75     329    223    14.0 ok   predUB=  580  rawE_ok(n=56)=   767  rawE_fail(n=36)=  1344
+   into_h2:h4  arm=1.359    2400  82.3   6.7     713     810      97      61     150      -8    217    -0.5 ok   predUB=  612  rawE_ok(n=60)=   351  rawE_fail(n=72)=  1192
+-- s4b1p359 p=0.2
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=1.359    2400  76.1   4.2     700    1097     396    -357     -28     589    229    24.5 NID  predUB=  681  rawE_ok(n=48)=   697  rawE_fail(n=28)=  1782
+   into_h2:h4  arm=1.359    2400  74.0  11.8     706    1103     397    -136      67     431    131    50.7 NID  predUB=  917  rawE_ok(n=48)=   615  rawE_fail(n=161)=  1248
+-- s4b1p359 p=0.3
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=1.359    2400  61.7   5.4     692    1141     449    -651     -46     797    244    43.1 NID  predUB=  905  rawE_ok(n=20)=   327  rawE_fail(n=60)=  1412
+   into_h2:h4  arm=1.359    2400  55.7  15.3     639    1122     484    -172     127     506    170    77.3 NID  predUB= 1013  rawE_ok(n=20)=   491  rawE_fail(n=184)=  1191
+-- s4b1p359 p=0.4
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=1.359    2400  48.2   7.6     716    1678     962     -14    -192    1065    270    81.1 ok   predUB= 1425  rawE_ok(n=4)=  1238  rawE_fail(n=84)=  1699
+   into_h2:h4  arm=1.359    2400  43.3  20.8     772    1179     408     -29     -62     453    109    94.1 ok   predUB= 1063  rawE_ok(n=4)=   503  rawE_fail(n=212)=  1192
+-- s4b1p359 p=pooled
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=1.359   12000  75.2   4.3     720    1190     470     -83     -53     538    115    23.4 ok   predUB=  851  rawE_ok(n=164)=   679  rawE_fail(n=228)=  1557
+   into_h2:h4  arm=1.359   12000  71.1   9.6     712    1068     356     -85      95     352     71    33.6 NID  predUB=  897  rawE_ok(n=171)=   558  rawE_fail(n=645)=  1203
+-- s4b3p695 p=0.0
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=3.695    2400 100.0   2.2    2013    1651    -362     785     246    -878    283   -19.0 NID  predUB=  157  rawE_ok(n=52)=  1651  rawE_fail(n=0)=   nan
+   into_h2:h4  arm=3.695    2400 100.0   1.7    2012    1856    -155     286    -149    -224    410    -3.7 NID  predUB=  228  rawE_ok(n=40)=  1856  rawE_fail(n=0)=   nan
+-- s4b3p695 p=0.1
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=3.695    2400  87.5   5.2    2139    3308    1170    -911     180    1535    447    79.7 NID  predUB=  616  rawE_ok(n=57)=  2623  rawE_fail(n=52)=  4060
+   into_h2:h4  arm=3.695    2400  77.8   7.5    1825    2539     714    -271    -344    1021    283    76.6 ok   predUB=  654  rawE_ok(n=76)=  2563  rawE_fail(n=64)=  2511
+-- s4b3p695 p=0.2
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=3.695    2400  69.8   5.5    1933    2949    1016    -705    -648    1693    616    92.9 ok   predUB=  355  rawE_ok(n=76)=  2902  rawE_fail(n=16)=  3172
+   into_h2:h4  arm=3.695    2400  67.7  12.3    1756    2838    1082      38    -683    1404    523   172.9 NID  predUB=  921  rawE_ok(n=16)=  2680  rawE_fail(n=184)=  2852
+-- s4b3p695 p=0.3
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=3.695    2400  50.7   5.6    1799    2291     492   -1462    -719    1583    979    88.5 ok   predUB= 1000  rawE_ok(n=4)=   870  rawE_fail(n=64)=  2379
+   into_h2:h4  arm=3.695    2400  46.7   8.8    1913    2833     920    -212    -893    1472    557   130.1 NID  predUB=  903  rawE_ok(n=8)=  3197  rawE_fail(n=91)=  2801
+-- s4b3p695 p=0.4
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=3.695    2400  36.5  11.9    1644    2844    1200    -641    -891    1966    602   233.4 ok   predUB=  776  rawE_ok(n=40)=  3563  rawE_fail(n=64)=  2394
+   into_h2:h4  arm=3.695    2400  32.4  20.7    1461    2149     688    -313    -457    1073    549   222.3 ok   predUB= 1218  rawE_ok(n=4)=   598  rawE_fail(n=157)=  2189
+-- s4b3p695 p=pooled
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=3.695   12000  68.9   5.1    1961    2751     790    -621    -530    1366    267    70.2 ok   predUB=  604  rawE_ok(n=229)=  2628  rawE_fail(n=196)=  2895
+   into_h2:h4  arm=3.695   12000  64.9   8.2    1854    2537     683    -188    -569    1062    239    87.2 NID  predUB=  891  rawE_ok(n=144)=  2360  rawE_fail(n=496)=  2589
+-- s4b10p043 p=0.0
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=10.043   2400 100.0   0.0     nan     nan     nan    1387    -999     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4  arm=10.043   2400 100.0   0.0     nan     nan     nan     323    -765     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+-- s4b10p043 p=0.1
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=10.043   2400  84.8   0.0     nan     nan     nan    2562   -3086     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4  arm=10.043   2400  73.8   0.0     nan     nan     nan    2244    -877     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+-- s4b10p043 p=0.2
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=10.043   2400  63.3   0.0     nan     nan     nan    3624   -1679     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4  arm=10.043   2400  57.5   0.0     nan     nan     nan    1831    2352     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+-- s4b10p043 p=0.3
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=10.043   2376  38.3   0.0     nan     nan     nan    3379   -2806     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4  arm=10.043   2400  39.3   0.0     nan     nan     nan    1870   -1986     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+-- s4b10p043 p=0.4
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=10.043   2260  22.6   0.0     nan     nan     nan    3097    -105     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4  arm=10.043   2400  32.8   0.0     nan     nan     nan    5492   -2880     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+-- s4b10p043 p=pooled
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=10.043  11836  62.3   0.0     nan     nan     nan    2796   -1936     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h4  arm=10.043  12000  60.7   0.0     nan     nan     nan    1824   -1225     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+-- s4a p=0.0
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5       601 100.0   2.0     273     533     260     nan     nan     nan    nan     nan NID  predUB=  373  rawE_ok(n=12)=   533  rawE_fail(n=0)=   nan
+   into_h2:h0  arm=1.359    1074 100.0   0.0     nan     nan     nan     111     194     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h0  arm=3.695    2826 100.0   4.4    1797    2287     490      84     108     394    706    17.3 ok   predUB=  427  rawE_ok(n=100)=  1857  rawE_fail(n=24)=  4079
+   into_h2:h0  arm=10.043   7499 100.0   5.4    5111    5939     828    -446    1474     314    706    17.1 NID  predUB=  902  rawE_ok(n=124)=  6334  rawE_fail(n=284)=  5766
+   into_h2:h4  arm=0.5       468 100.0   5.1     263    1070     807    -104     200     759    140    38.9 NID  predUB= 1066  rawE_ok(n=0)=   nan  rawE_fail(n=24)=  1070
+   into_h2:h4  arm=1.359     918 100.0   5.7     823     521    -302     115     322    -521    152   -29.5 NID  predUB=  364  rawE_ok(n=24)=   594  rawE_fail(n=28)=   457
+   into_h2:h4  arm=3.695    2795 100.0   5.2    1972    1656    -316     305     -38    -449    610   -23.1 ok   predUB=  211  rawE_ok(n=124)=  1890  rawE_fail(n=20)=   207
+   into_h2:h4  arm=10.043   7819 100.0   3.5    5158    5266     108   -1258    -771    1123    722    39.6 ok   predUB=  273  rawE_ok(n=236)=  5687  rawE_fail(n=40)=  2782
+-- s4a p=0.1
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5       454  89.4   3.0     265     329      64    -193     268      27    259     0.8 NID  predUB=  177  rawE_ok(n=12)=   329  rawE_fail(n=0)=   nan
+   into_h2:h0  arm=1.359     980  91.0   2.2     661     699      38      26      96     -23    118    -0.5 ok   predUB=  141  rawE_ok(n=20)=   699  rawE_fail(n=0)=   nan
+   into_h2:h0  arm=3.695    2992  87.3   7.0    1855    2789     933     141     209     758    741    53.4 ok   predUB=  795  rawE_ok(n=96)=  1723  rawE_fail(n=88)=  3951
+   into_h2:h0  arm=10.043   7574  80.9   6.3    4988    5055      68    -164   -1410     854   1171    54.1 NID  predUB=  785  rawE_ok(n=80)=  4185  rawE_fail(n=308)=  5281
+   into_h2:h4  arm=0.5       398  77.9   6.5     295     902     607     142     nan     nan    nan     nan NID  predUB=  895  rawE_ok(n=0)=   nan  rawE_fail(n=20)=   902
+   into_h2:h4  arm=1.359     944  75.8   2.8     807    1637     830      36      70     777    486    21.7 ok   predUB= 1057  rawE_ok(n=4)=  1662  rawE_fail(n=16)=  1631
+   into_h2:h4  arm=3.695    2840  78.2   9.2    1836    2709     872    -300    -338    1191    545   109.5 ok   predUB=  764  rawE_ok(n=80)=  2365  rawE_fail(n=124)=  2931
+   into_h2:h4  arm=10.043   7818  72.8   5.0    5190    4596    -593     397     364    -973    993   -48.6 ok   predUB=  490  rawE_ok(n=176)=  4576  rawE_fail(n=108)=  4630
+-- s4a p=0.2
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5       320  57.5   2.2     260    2405    2145    -310     nan     nan    nan     nan NID  predUB= 1957  rawE_ok(n=0)=   nan  rawE_fail(n=4)=  2405
+   into_h2:h0  arm=1.359     936  75.2   2.8     770     853      83      -6    -252     212    195     6.0 NID  predUB=  381  rawE_ok(n=20)=   853  rawE_fail(n=0)=   nan
+   into_h2:h0  arm=3.695    2984  71.2   8.5    1842    3292    1450    -415     139    1588    637   134.6 ok   predUB=  848  rawE_ok(n=80)=  2123  rawE_fail(n=100)=  4226
+   into_h2:h0  arm=10.043   7760  60.8   7.0    4849    5984    1135    -114   -1788    2086    687   146.9 NID  predUB=  801  rawE_ok(n=48)=  8227  rawE_fail(n=284)=  5605
+   into_h2:h4  arm=0.5       441  57.6   7.9     288     902     614    -259    -127     807     53    63.6 NID  predUB=  894  rawE_ok(n=0)=   nan  rawE_fail(n=20)=   902
+   into_h2:h4  arm=1.359    1061  71.7   9.2     758    1255     497    -118     126     493    470    45.4 ok   predUB=  942  rawE_ok(n=8)=   590  rawE_fail(n=62)=  1341
+   into_h2:h4  arm=3.695    2584  69.8  14.4    2113    2235     121      61    -709     445    488    64.2 NID  predUB= 1032  rawE_ok(n=44)=  1887  rawE_fail(n=216)=  2306
+   into_h2:h4  arm=10.043   7914  54.9   8.4    4720    5265     544   -1013     686     708    780    59.6 NID  predUB=  754  rawE_ok(n=48)=  2715  rawE_fail(n=318)=  5650
+-- s4a p=0.3
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5       208  59.6   0.0     nan     nan     nan    -124     nan     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h0  arm=1.359    1020  60.8   2.6     697    2626    1929     167     137    1777    163    45.9 ok   predUB= 2043  rawE_ok(n=0)=   nan  rawE_fail(n=16)=  2626
+   into_h2:h0  arm=3.695    2808  52.3   6.5    1718    2887    1169    -872     520    1345    753    88.0 NID  predUB=  691  rawE_ok(n=56)=  2174  rawE_fail(n=40)=  3885
+   into_h2:h0  arm=10.043   7964  38.2  13.4    5011    5157     147    2542   -1590    -329   1170   -44.1 NID  predUB= 1010  rawE_ok(n=0)=   nan  rawE_fail(n=408)=  5157
+   into_h2:h4  arm=0.5       432  60.2  12.3     248    1706    1458    -232       0    1574    131   193.7 NID  predUB= 1563  rawE_ok(n=0)=   nan  rawE_fail(n=32)=  1706
+   into_h2:h4  arm=1.359     861  62.4  14.2     730     892     162      -7     -53     192    603    27.2 ok   predUB=  631  rawE_ok(n=8)=   572  rawE_fail(n=68)=   930
+   into_h2:h4  arm=3.695    2960  53.9  17.3    2212    1983    -229     197      84    -369    389   -63.9 ok   predUB= 1089  rawE_ok(n=0)=   nan  rawE_fail(n=276)=  1983
+   into_h2:h4  arm=10.043   7747  37.2  10.6    4282    4150    -132   -1144     588     146   1102    15.6 NID  predUB=  920  rawE_ok(n=0)=   nan  rawE_fail(n=307)=  4150
+-- s4a p=0.4
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5       328  48.8   0.0     nan     nan     nan    -133     nan     nan    nan     nan NID  predUB=    0  rawE_ok(n=0)=   nan  rawE_fail(n=0)=   nan
+   into_h2:h0  arm=1.359     928  52.2   5.0     774     308    -466     277     197    -703     44   -34.8 NID  predUB=  303  rawE_ok(n=24)=   308  rawE_fail(n=0)=   nan
+   into_h2:h0  arm=3.695    2952  34.8   1.2    1661    3260    1599    -517    -504    2110    450    24.6 ok   predUB= 1314  rawE_ok(n=4)=  2953  rawE_fail(n=8)=  3414
+   into_h2:h0  arm=10.043   7788  27.4  15.5    4277    4884     607     261   -1131    1042   1656   161.9 ok   predUB=  833  rawE_ok(n=0)=   nan  rawE_fail(n=332)=  4884
+   into_h2:h4  arm=0.5       385  57.4  14.5     258    1703    1444    -275     -86    1625    158   235.3 NID  predUB= 1696  rawE_ok(n=0)=   nan  rawE_fail(n=32)=  1703
+   into_h2:h4  arm=1.359     955  49.8  14.3     632    1593     961     -54     -35    1005    641   143.6 ok   predUB= 1307  rawE_ok(n=4)=  1107  rawE_fail(n=64)=  1623
+   into_h2:h4  arm=3.695    3024  40.5  15.7    2094    1812    -282     310    -306    -284    568   -44.5 NID  predUB= 1156  rawE_ok(n=0)=   nan  rawE_fail(n=192)=  1812
+   into_h2:h4  arm=10.043   7596  26.0  15.8    3964    3684    -280   -1364    -247     526   1214    83.0 ok   predUB=  776  rawE_ok(n=32)=  1561  rawE_fail(n=280)=  3927
+-- s4a p=pooled
+   class       arm          n_all cond%  E%    mean_N  mean_E  E-N    pl+4s   pl+6s    exc     SE  per-hop id
+   into_h2:h0  arm=0.5      1911  77.2   1.9     269     713     443    -181     233     418    363     7.9 NID  predUB=  515  rawE_ok(n=24)=   431  rawE_fail(n=4)=  2405
+   into_h2:h0  arm=1.359    4938  76.4   2.1     718    1006     287      69      46     230    539     4.9 ok   predUB=  630  rawE_ok(n=64)=   601  rawE_fail(n=16)=  2626
+   into_h2:h0  arm=3.695   14562  69.1   5.9    1795    2862    1066    -255     134    1127    377    66.8 NID  predUB=  728  rawE_ok(n=336)=  1948  rawE_fail(n=260)=  4042
+   into_h2:h0  arm=10.043  38585  61.0   7.9    4943    5405     462     371    -896     724    465    57.5 NID  predUB=  871  rawE_ok(n=252)=  6012  rawE_fail(n=1616)=  5310
+   into_h2:h4  arm=0.5      2124  71.2   8.5     271    1335    1064     -99      41    1093    215    92.4 ok   predUB= 1294  rawE_ok(n=0)=   nan  rawE_fail(n=128)=  1335
+   into_h2:h4  arm=1.359    4739  71.9   8.4     766    1132     366     -18      49     351    252    29.4 ok   predUB=  849  rawE_ok(n=48)=   722  rawE_fail(n=238)=  1215
+   into_h2:h4  arm=3.695   14203  67.9  11.2    2017    2107      90     115    -332     199    230    22.2 NID  predUB=  908  rawE_ok(n=248)=  2043  rawE_fail(n=828)=  2127
+   into_h2:h4  arm=10.043  38894  58.4   6.8    4883    4601    -282   -1069    -121     313    430    21.3 NID  predUB=  657  rawE_ok(n=492)=  4731  rawE_fail(n=1053)=  4541
+
+== Q2: probe contribution bound on mean 4-hop latency (ms per 4-hop pair; % of lat4) ==
+stage      p        pairs   lat4    dAttr   %     dAttrUp  %     ovl2    %     ovl23   %
+s4c        0.0        4800    4246       4   0.1       4   0.1      21   0.5      40   0.9
+s4c        0.1        4800    5744      26   0.5      21   0.4      65   1.1     100   1.7
+s4c        0.2        4800    7638      69   0.9      45   0.6     186   2.4     279   3.7
+s4c        0.3        4800   10597     110   1.0      60   0.6     417   3.9     636   6.0
+s4c        0.4        4796   15155     149   1.0      59   0.4     755   5.0    1258   8.3
+s4c        pooled    23996    8675      72   0.8      38   0.4     289   3.3     462   5.3
+s4b0p5     0.0        4800    1180      24   2.0      24   2.0      28   2.4      29   2.5
+s4b0p5     0.1        4800    2322      53   2.3      42   1.8      90   3.9     107   4.6
+s4b0p5     0.2        4800    4121     103   2.5      73   1.8     173   4.2     223   5.4
+s4b0p5     0.3        4800    7106     167   2.3      93   1.3     404   5.7     543   7.6
+s4b0p5     0.4        4796   12041     269   2.2     105   0.9     818   6.8    1210  10.0
+s4b0p5     pooled    23996    5353     123   2.3      67   1.3     303   5.7     422   7.9
+s4b1p359   0.0        4800    2973      11   0.4      11   0.4      20   0.7      42   1.4
+s4b1p359   0.1        4800    4201      41   1.0      29   0.7      75   1.8     111   2.6
+s4b1p359   0.2        4800    6057      80   1.3      53   0.9     193   3.2     275   4.5
+s4b1p359   0.3        4800    8979     122   1.4      61   0.7     409   4.6     586   6.5
+s4b1p359   0.4        4796   13775     205   1.5      77   0.6     780   5.7    1222   8.9
+s4b1p359   pooled    23996    7196      92   1.3      46   0.6     295   4.1     447   6.2
+s4b3p695   0.0        4800    7550       4   0.0       4   0.0      45   0.6      95   1.3
+s4b3p695   0.1        4800    9579      47   0.5      33   0.3     143   1.5     247   2.6
+s4b3p695   0.2        4800   12137      70   0.6      47   0.4     311   2.6     514   4.2
+s4b3p695   0.3        4800   15230      90   0.6      49   0.3     497   3.3     873   5.7
+s4b3p695   0.4        4792   19415     130   0.7      67   0.3     853   4.4    1533   7.9
+s4b3p695   pooled    23992   12780      68   0.5      40   0.3     370   2.9     652   5.1
+s4b10p043  0.0        4800   20548       0   0.0       0   0.0     177   0.9     343   1.7
+s4b10p043  0.1        4800   24342       0   0.0       0   0.0     375   1.5     755   3.1
+s4b10p043  0.2        4800   29561       0   0.0       0   0.0     769   2.6    1550   5.2
+s4b10p043  0.3        4724   36437       0   0.0       0   0.0    1110   3.0    2466   6.8
+s4b10p043  0.4        4464   43082       0   0.0       0   0.0    1577   3.7    3565   8.3
+s4b10p043  pooled    23588   30601       0   0.0       0   0.0     789   2.6    1707   5.6
+s4a        0.0       24000   14961      24   0.2      24   0.2     144   1.0     241   1.6
+s4a        0.1       23956   17806      45   0.3      36   0.2     316   1.8     577   3.2
+s4a        0.2       24000   21507      84   0.4      49   0.2     565   2.6    1041   4.8
+s4a        0.3       23936   27261     112   0.4      61   0.2     956   3.5    1730   6.3
+s4a        0.4       23532   33565     119   0.4      60   0.2    1250   3.7    2434   7.3
+s4a        pooled   119424   22978      77   0.3      46   0.2     643   2.8    1200   5.2
+
+== Tail: h2 polls due inside a block, sent at t_{i+1}; t_{i+1} - block end (retrieved ts), ms ==
+stage      n      mean  p50  p90  max   (<0 would mean a poll inside the stamped block)
+s4c          979     97  100  101   101
+s4b0p5      1563     85  100  101   101
+s4b1p359    1098     95  100  101   101
+s4b3p695     513     97  100  101   101
+s4b10p043      3    100  100  100   101
+s4a         1963     99  100  101   210

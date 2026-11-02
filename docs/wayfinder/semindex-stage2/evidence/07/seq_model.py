@@ -23,14 +23,16 @@ evidence/05), compared end-to-end with B's measured discovery latency (pairs, `p
 Uncertainty: bootstrap over runs within (stage, p) (`--reps`, default 200); B direct's SE is the same
 bootstrap over B runs. Censoring flags are copied from evidence/07 predicted_vs_B.csv (`unreliable`).
 
-Rerun (from the worktree root):
+s4-specific: the stage names (s4a, s4b*) are fixed below, so this reads only the NORMAL
+re-collection; the FULL main run (s2*) would need its own stage map.
+
+Rerun (from the worktree root; <AGG> = the evalagg output dir of the s4 stages):
   PYTHONPATH=src:docs/wayfinder/semindex-stage2/evidence/05 \\
     /home/lab_shared/cefore-semindex/.venv/bin/python3 docs/wayfinder/semindex-stage2/evidence/07/seq_model.py \\
-    --store /home/lab_shared/semindex-eval \\
-    --agg /tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/main3-agg
-Needs evidence/07 predicted_vs_B.csv first (`run_all.py --prefix s4 --out <evidence/07>`): it supplies
+    --store /home/lab_shared/semindex-eval --agg <AGG>
+Needs predicted_vs_B.csv in --out first (`run_all.py --prefix s4 --out <same dir>`): it supplies
 the censoring flags and is the reference for the `current` identity check.
-Outputs (next to this script): seq_vs_B.csv, seq_pieces.csv, seq_model.md.
+Outputs (into --out, default this script's directory): seq_vs_B.csv, seq_pieces.csv, seq_model.md.
 """
 from __future__ import annotations
 
@@ -270,7 +272,9 @@ def main():
     rms_a_matched = {p: RunMatrix([r for r in runs[(A_STAGE, p)] if r[0] in bseeds]) for p in PS}
 
     cur = {}
-    with open(f"{HERE}/predicted_vs_B.csv") as f:
+    # 2026-11-02 fix: read the reference from --out; reading it from HERE paired a scratch --out
+    # with the committed predicted_vs_B.csv, so a rerun elsewhere checked against the wrong file.
+    with open(f"{a.out}/predicted_vs_B.csv") as f:
         for r in csv.DictReader(f):
             cur[(float(r["arm_s"]), float(r["p"]), int(r["hop"]))] = r
 

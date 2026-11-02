@@ -1,0 +1,15 @@
+s4a p0: fetches=1106 nomatch=94 failed=29 block ms median=333 p90=378 max=2099 mean_share_of_window=2.8%
+s4a p0.1: fetches=1097 nomatch=103 failed=245 block ms median=351 p90=2007 max=2106 mean_share_of_window=6.1%
+s4a p0.2: fetches=1084 nomatch=116 failed=431 block ms median=372 p90=2017 max=2117 mean_share_of_window=8.8%
+s4a p0.3: fetches=1066 nomatch=134 failed=587 block ms median=2003 p90=2023 max=2117 mean_share_of_window=11.1%
+s4a p0.4: fetches=1035 nomatch=165 failed=712 block ms median=2003 p90=2028 max=2196 mean_share_of_window=12.8%
+s4b0p5 p0: fetches=236 nomatch=4 failed=4 block ms median=334 p90=381 max=2016 mean_share_of_window=2.8%
+s4b0p5 p0.1: fetches=235 nomatch=5 failed=48 block ms median=348 p90=2008 max=2110 mean_share_of_window=6.1%
+s4b0p5 p0.2: fetches=233 nomatch=7 failed=88 block ms median=373 p90=2019 max=2111 mean_share_of_window=9.2%
+s4b0p5 p0.3: fetches=229 nomatch=11 failed=122 block ms median=2003 p90=2071 max=2114 mean_share_of_window=11.7%
+s4b0p5 p0.4: fetches=226 nomatch=14 failed=150 block ms median=2004 p90=2034 max=2107 mean_share_of_window=13.6%
+s2a p0: fetches=1101 nomatch=99 failed=33 block ms median=390 p90=852 max=3255 mean_share_of_window=4.1%
+s2a p0.1: fetches=1093 nomatch=107 failed=238 block ms median=418 p90=2095 max=2534 mean_share_of_window=7.0%
+s2a p0.2: fetches=1080 nomatch=120 failed=427 block ms median=465 p90=2108 max=2849 mean_share_of_window=9.7%
+s2a p0.3: fetches=1060 nomatch=140 failed=581 block ms median=2035 p90=2123 max=2702 mean_share_of_window=11.9%
+s2a p0.4: fetches=1034 nomatch=166 failed=706 block ms median=2041 p90=2121 max=2961 mean_share_of_window=13.5%
