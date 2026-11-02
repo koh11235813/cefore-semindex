@@ -1,4 +1,7 @@
-"""Print the ope05 CSVs as Markdown tables, straight from the CSVs (no recomputation)."""
+"""Print the ope05 CSVs as Markdown tables, straight from the CSVs (no recomputation).
+
+Usage: make_tables.py [--dir DIR] [--prefix s2]   (--prefix: stage-name family the CSVs were made from)
+"""
 import argparse
 import csv
 import os
@@ -7,7 +10,13 @@ from collections import defaultdict
 _ap = argparse.ArgumentParser()
 _ap.add_argument("--dir", default=os.path.dirname(os.path.abspath(__file__)),
                  help="directory holding the ope05 CSVs (default: this script's directory)")
-D = _ap.parse_args().dir
+# 2026-11-02: stage names come from --prefix so the same code reads the NORMAL re-collection (s4*).
+_ap.add_argument("--prefix", default="s2", help="stage-name family (s2 = FULL main run, s4 = NORMAL)")
+_args = _ap.parse_args()
+D = _args.dir
+P = _args.prefix
+STAGES = [P + sfx for sfx in ("b0p5", "b1p359", "b3p695", "b10p043", "c", "a")]
+A = P + "a"  # the uniform-mix stage whose per-arm numbers are the "predicted" side
 
 
 def rd(name):
@@ -53,7 +62,7 @@ for r in ck:
     c[(r["stage"], r["p"])][r["check"]] = float(r["value"])
 print("\n## T2 checks (checks.csv)\n")
 rows = []
-for st in ["s2b0p5", "s2b1p359", "s2b3p695", "s2b10p043", "s2c", "s2a"]:
+for st in STAGES:
     a = c[(st, "all")]
     rows.append([st, int(a.get("runs_valid", 0)), int(a.get("runs_invalid", 0)), int(a.get("exact_n", 0)),
                  f(a.get("exact_maxerr", 0), 1), f(a.get("exact_share_within_1ms", 0), 4),
@@ -65,7 +74,7 @@ print(table(["stage", "valid runs", "invalid", "pairs checked", "max |err| ms", 
              "neg fetch", "multi-life nodes"], rows))
 print()
 rows = []
-for st in ["s2b0p5", "s2b1p359", "s2b3p695", "s2b10p043", "s2c", "s2a"]:
+for st in STAGES:
     for p in ["0.0", "0.1", "0.2", "0.3", "0.4"]:
         a = c[(st, p)]
         pk = p if p != "0.0" else "0"
@@ -79,7 +88,7 @@ print(table(["stage", "p", "% learned via hi", "% via extra (recon)", "% fp befo
              "% never learned", "spill % of wait", "post-gap % of wait", "hops censored", "hops uncensored"], rows))
 
 pv = rd("predicted_vs_B.csv")
-print("\n## T3a per-hop components, s2a-predicted (a) vs B-measured (b), hop-averaged relative errors (predicted_vs_B.csv)\n")
+print(f"\n## T3a per-hop components, {A}-predicted (a) vs B-measured (b), hop-averaged relative errors (predicted_vs_B.csv)\n")
 rows = []
 for arm in ["0.5", "1.359", "3.695", "10.043"]:
     for p in ["0", "0.1", "0.2", "0.3", "0.4"]:
@@ -92,7 +101,7 @@ for arm in ["0.5", "1.359", "3.695", "10.043"]:
                      f(mean("b_post_ms")), f(mean("a_fetch_ms")), f(mean("b_fetch_ms")), pct(mean("relerr_fetch")),
                      f(mean("a_batch"), 1), f(mean("b_batch"), 1),
                      f(mean("a_poll_B_per_rh")), f(mean("b_poll_B_per_rh")), pct(mean("relerr_poll_B"))])
-print(table(["arm s", "p", "s2a rh (4 hops)", "a wait", "b wait", "err wait", "err in-gap", "a post", "b post",
+print(table(["arm s", "p", f"{A} rh (4 hops)", "a wait", "b wait", "err wait", "err in-gap", "a post", "b post",
              "a fetch", "b fetch", "err fetch", "a batch", "b batch", "a poll B/rh", "b poll B/rh", "err poll B"], rows))
 print("\n(values are means over hops 1-4 of the per-hop numbers; ms unless noted)\n")
 
@@ -106,9 +115,9 @@ for r in pv:
                      f(100 * float(r["cum_censored_share_a"]), 2), f(100 * float(r["cum_censored_share_b"]), 2),
                      f(100 * float(r["e2e_censored_share_a"]), 2), f(100 * float(r["e2e_censored_share_b"]), 2),
                      "UNRELIABLE" if r["unreliable"] == "1" else ""])
-print(table(["arm s", "p", "predicted (s2a) ± SE", "B sum of hop means ± SE", "B direct", "err vs sum",
-             "err vs direct", "B pairs censored", "s2a hops cens %", "B hops cens %",
-             "s2a 4-hop pairs cens %", "B 4-hop pairs cens %", "flag"], rows))
+print(table(["arm s", "p", f"predicted ({A}) ± SE", "B sum of hop means ± SE", "B direct", "err vs sum",
+             "err vs direct", "B pairs censored", f"{A} hops cens %", "B hops cens %",
+             f"{A} 4-hop pairs cens %", "B 4-hop pairs cens %", "flag"], rows))
 
 print("\n## T3c end-to-end relative error by hop distance (pred vs B direct)\n")
 rows = []

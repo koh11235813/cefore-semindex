@@ -146,4 +146,6 @@ PYTHONPATH=src:$D .venv/bin/python3 $D/run_all.py --agg $AGG --store $ST --out $
 .venv/bin/python3 $D/indep_check.py --agg $AGG --store $ST
 ```
 
+`run_all.py`・`make_tables.py`・`capbind.py`・`fetchsplit.py`・`indep_check.py` は `--prefix` を受ける（既定は `s2`。`s4` にすると NORMAL で回し直した段を読む、`evidence/07/`）。`attrib.attribute_run` には、`evidence/07/seq_model.py` が使う `seq`（既定は切ってある）もある。
+
 `run_all.py` は 1000 回を 6 プロセスで 14 秒ほどで読む。`--agg` と `--store` の既定値は、ここの CSV を作ったときの場所（`--agg` はそのときの作業用のディレクトリで、いまは残っていないことがある）。行の順番はプロセスの終わる順で変わることがあるので、比べるときは行を並べ替えてから比べる。

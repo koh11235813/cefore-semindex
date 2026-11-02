@@ -51,17 +51,78 @@ def _add(acc, key, **vals):
         d[k] = d.get(k, 0) + v
 
 
-def attribute_run(stage, p, seed, run_dir, disc=None):
+# 2026-11-02: opt-in accumulators for the sequential-attribution study (evidence/07 seq_model.py).
+# The default attribution charges a record-hop's whole wait to the decision whose gap holds the
+# arrival; after poll i+1 fails, though, the time until the next poll is set by decision i+1's arm.
+# These sums let a driver (a) re-charge each ms of wait to the decision whose gap holds it, and
+# (b) measure the pieces a multi-decision model needs, without re-deriving learned/censoring here.
+SEQ_SBUCKETS = (1, 2, 3)            # failed-poll step index k - i, last bucket pooled ("3" = 3+)
+SEQ_EBINS_S = (0.0, 2.0, 5.0, 10.0, 20.0)  # elapsed t_k - t_{i+1} lower edges (s) for the hazard
+
+
+def _ebin(e_ms):
+    """Lower edge (s) of the elapsed-time bin holding e_ms (since the first failed poll t_{i+1})."""
+    return max(b for b in SEQ_EBINS_S if e_ms >= b * 1000.0)
+
+
+def _seq_record_hop(acc, hop, rows, i, j, arrival, learned, fetch):
+    """Accumulate one uncensored record-hop's sequential pieces into `acc` (keys lead with a tag).
+
+    i = decision whose gap holds the arrival, j = latest poll at/before `learned` (j >= i, or j = i
+    when n learned before t_{i+1}). Polls i+1..j-1 are the failed ones; their gaps are complete
+    because t_{k+1} <= t_j <= learned.
+    """
+    ri = rows[i]
+    x = ri["arm"]
+    t1 = ri["t"] + ri["gap"]                  # t_{i+1} (gap end), as in the default `post`
+    ingap = min(learned, t1) - arrival
+    post = max(0.0, learned - t1)
+    failed = list(range(i + 1, j))            # polls that did not yield this record
+    # ---- (a) time-segment charges: each ms to the decision whose gap holds it; the final
+    # reply RTT (t_j -> learned) and the fetch go to decision j, whose gap holds `learned`.
+    _add(acc, ("seg", x, hop), own=ingap)
+    for k in failed:
+        _add(acc, ("seg", rows[k]["arm"], hop), carried=rows[k]["gap"])
+    if j > i:
+        _add(acc, ("seg", rows[j]["arm"], hop), final=learned - rows[j]["t"], fetch=fetch)
+    else:
+        _add(acc, ("seg", x, hop), fetch=fetch)
+    # ---- (b) per-arrival pieces, keyed by the arrival gap's arm
+    nf = len(failed)
+    w = 0.0
+    if all(rows[k]["arm"] == x for k in failed):
+        w = 4.0 ** nf  # 1/0.25 per spanned decision; A logs action_prob 0.25 for every arm
+    _add(acc, ("rh", x, hop), n=1, ingap=ingap, post=post, fetch=fetch,
+         n_f1=int(nf >= 1), post_nf=(post if nf == 0 else 0.0),
+         rtt_f=((learned - rows[j]["t"]) if nf >= 1 else 0.0),
+         is_post=w * post, is_w=w)
+    # ---- (b') continuation after each failed poll k: did poll k+1 also fail?
+    for k in failed:
+        rk = rows[k]
+        cont = int(k + 1 <= j - 1)
+        e = rk["t"] - t1
+        _add(acc, ("step", rk["arm"], hop, min(k - i, SEQ_SBUCKETS[-1])), n=1, cont=cont, gap=rk["gap"])
+        _add(acc, ("stepe", rk["arm"], hop, _ebin(e)), n=1, cont=cont, gap=rk["gap"])
+
+
+def attribute_run(stage, p, seed, run_dir, disc=None, c_stage=None, seq=False):
     """Attribute one valid run; returns {'hop': {...}, 'dec': {...}, 'chk': {...}, 'pair': {...}}.
 
     `disc` is this run's {(origin, seq, node): latency_ms or None} from main-agg discovery.csv,
     used only for the exactness check (None -> check skipped for this run, counted).
+    `c_stage` marks a run of the stage-1 default policy (the C stage), whose poll arm is relabelled 2.0.
+    None (the default) keeps the original rule, stage == "s2c", so a direct call reads s2c as before.
+    `seq` adds a 'seq' key: the opt-in sequential-attribution sums (see _seq_record_hop); the
+    other keys are identical with it on or off.
     """
     meta = json.load(open(f"{run_dir}/meta.json"))
     chk = defaultdict(float)
     if not meta["validity"]["valid"]:
         chk["runs_invalid"] += 1
-        return {"hop": {}, "dec": {}, "chk": dict(chk), "pair": {}, "gapdiff": {}}
+        out = {"hop": {}, "dec": {}, "chk": dict(chk), "pair": {}, "gapdiff": {}}
+        if seq:
+            out["seq"] = {}
+        return out
     chk["runs_valid"] += 1
     nodes = discover_node_events(run_dir)
     results = read_results(run_dir)
@@ -111,8 +172,14 @@ def attribute_run(stage, p, seed, run_dir, disc=None):
         v.sort(key=lambda x: x[0])
     for v in dec_ts.values():
         v.sort(key=lambda x: x[0])
-    s2c_like = stage == "s2c"
-    if s2c_like:
+    # 2026-11-02: the caller says which stage is C (was `stage == "s2c"`), so the same code
+    # reads the NORMAL re-collection (s4*) without the stage name deciding the arm labels.
+    # 2026-11-02 review fix: a caller that passes nothing still gets the old name rule; with
+    # False as the default, attribute_run("s2c", ...) stopped relabelling and split C into
+    # hundreds of jittered "arms".
+    if c_stage is None:
+        c_stage = stage == "s2c"
+    if c_stage:
         # stage-1 policy: interval_s is the jittered value itself, not one of 4 arms; label the arm "2.0".
         for key, lst in polls.items():
             polls[key] = [(t, 2.0, ap, st, c, f) for (t, _a, ap, st, c, f) in lst]
@@ -211,6 +278,7 @@ def attribute_run(stage, p, seed, run_dir, disc=None):
     hop_acc = defaultdict(dict)
     dec_acc = defaultdict(dict)
     gapdiff = defaultdict(lambda: [0, 0.0, 0.0])  # arm -> [n, sum(gap-applied), max |gap-applied|]
+    seq_acc = defaultdict(dict)  # 2026-11-02: filled only when `seq` (opt-in; see _seq_record_hop)
 
     def stratum(n, m, r, hop):
         """Key under which a decision row's hop/decision sums are pooled.
@@ -232,6 +300,18 @@ def attribute_run(stage, p, seed, run_dir, disc=None):
             if ws <= r["t"] <= we:
                 _add(dec_acc, stratum(n, m, r, hop), n_gap=1, gap_ms=r["gap"], int_B=r["int_B"],
                      rep_B=r["rep_B"], n_rep=r["n_rep"], n_norep=int(r["n_rep"] == 0))
+        if seq:
+            # 2026-11-02: decision-level reply counts and fail->fail transitions by arm, to test
+            # whether a poll's failure depends on the arm given p. n_rep >= 2 flags a slow reply to
+            # an earlier poll matched to this one ("latest poll <= reply"), which makes that earlier
+            # poll look failed.
+            for k, r in enumerate(rows):
+                if r["last"] or not (ws <= r["t"] <= we):
+                    continue
+                _add(seq_acc, ("dec", r["arm"], hop, min(r["n_rep"], 2)), n=1)
+                if k + 1 < len(rows) and not rows[k + 1]["last"]:
+                    _add(seq_acc, ("trans", r["arm"], hop, int(r["n_rep"] == 0)), n=1,
+                         next_fail=int(rows[k + 1]["n_rep"] == 0))
 
     # ---- per record-hop -----------------------------------------------------------
     pending_batch, batch_n = [], defaultdict(int)
@@ -324,6 +404,8 @@ def attribute_run(stage, p, seed, run_dir, disc=None):
             _add(hop_acc, key, n_u=1, wait_u=wait, fetch_u=fetch, spill_u=spill, post_u=post,
                  n_spill=int(j >= i + 2), fbytes_u=fb, waitcap_all=wait_cap, wf2_u=(wait + fetch) ** 2)
             pending_batch.append((key, (n, m, learned)))
+            if seq:
+                _seq_record_hop(seq_acc, h, rows, i, j, arrival, learned, fetch)
             batch_n[(n, m, learned)] += 1
 
     # Batch size = how many uncensored record-hops n learned from the same reply of m (record-weighted
@@ -359,5 +441,8 @@ def attribute_run(stage, p, seed, run_dir, disc=None):
                 chk["exact_n"] += 1
                 chk["exact_within1"] += int(err <= 1.0)
                 chk["exact_maxerr"] = max(chk["exact_maxerr"], err)
-    return {"hop": {k: v for k, v in hop_acc.items()}, "dec": {k: v for k, v in dec_acc.items()},
-            "chk": dict(chk), "pair": dict(pair_out), "gapdiff": {k: list(v) for k, v in gapdiff.items()}}
+    out = {"hop": {k: v for k, v in hop_acc.items()}, "dec": {k: v for k, v in dec_acc.items()},
+           "chk": dict(chk), "pair": dict(pair_out), "gapdiff": {k: list(v) for k, v in gapdiff.items()}}
+    if seq:
+        out["seq"] = dict(seq_acc)
+    return out

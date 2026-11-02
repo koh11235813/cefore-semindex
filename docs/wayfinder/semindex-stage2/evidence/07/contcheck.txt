@@ -1,0 +1,8 @@
+s4b0p5 p0.2 arm=s4b0p5: polls=36807 P(fail)=0.174 c=P(next fails|failed)=0.912 (n=6412)
+s4b1p359 p0.2 arm=s4b1p359: polls=14266 P(fail)=0.174 c=P(next fails|failed)=0.772 (n=2476)
+s4b3p695 p0.2 arm=s4b3p695: polls=5249 P(fail)=0.174 c=P(next fails|failed)=0.394 (n=913)
+s4b10p043 p0.2 arm=s4b10p043: polls=1785 P(fail)=0.168 c=P(next fails|failed)=0.147 (n=299)
+s4a p0.2 arm=0.5: polls=6393 P(fail)=0.178 c=P(next fails|failed)=0.907 (n=1138)
+s4a p0.2 arm=1.359: polls=6492 P(fail)=0.171 c=P(next fails|failed)=0.778 (n=1107)
+s4a p0.2 arm=10.043: polls=6027 P(fail)=0.174 c=P(next fails|failed)=0.192 (n=1047)
+s4a p0.2 arm=3.695: polls=6346 P(fail)=0.183 c=P(next fails|failed)=0.401 (n=1162)

@@ -1,0 +1,2 @@
+totals: {'runs': 1000, 'valid': 1000, 'probes': 12000, 'probes_nomatch': 1035}
+h2 events stamped strictly inside a block (event, kind): {('state_rx', None): 284, ('decision', 'fetch_plan'): 67, ('record_stored', None): 1077, ('fetch_timeout', None): 8, ('decision', 'fetch_backoff'): 8}
