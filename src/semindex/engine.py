@@ -362,10 +362,12 @@ class SyncEngine:
         # round(now * 1000) from the same processing `now` this record was
         # actually created at, so reusing it here needs no separate clock
         # reading and guarantees the two can never read differently for the
-        # same record. Without this, a record created in the same step()
-        # that then blocks inside a probe's synchronous fetch (drained only
-        # after that probe returns) would log a ts_ms seconds later than it
-        # was actually created.
+        # same record. Without this, a record created in a step() that then
+        # blocked inside a probe's synchronous fetch (drained only after that
+        # probe returned) logged a ts_ms seconds later than it was actually
+        # created. 2026-11-02: the probe fetch no longer blocks the step, but
+        # events are still drained after the step's other work, so the stamp
+        # stays here rather than at write time.
         self._emit({"event": "record_created", "ts_ms": observed_at, "origin": record.origin, "seq": record.seq})
         return record
 

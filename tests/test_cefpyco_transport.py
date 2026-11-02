@@ -54,8 +54,8 @@ class _FakeHandle:
     further receive() returns _NOTHING, matching a real handle when
     nothing arrives within its own timeout_ms. If `clock` is given,
     receive() advances it by `step_s` on every call, so a test that waits
-    out a deadline via CefpycoTransport's own internal polling loop
-    (fetch_content) terminates without an actual sleep.
+    out a deadline by calling poll() repeatedly (each call one receive())
+    terminates without an actual sleep.
     """
 
     def __init__(self, packets=None, *, clock: _FakeClock | None = None, step_s: float = 0.1) -> None:

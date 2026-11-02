@@ -1691,8 +1691,11 @@ def _run_store_during_probe_wait(tmp_path: Path):
     repro used (SyncEngine.on_record queued record_stored while this node's probe
     was blocked in what was then a synchronous content fetch, and that queued event
     was not flushed to events.jsonl until the probe returned). 2026-11-02: the fetch
-    no longer blocks, so the record is now also flushed in its own step; the two
-    tests below keep pinning the ts_ms/censoring outcome either way.
+    no longer blocks, so the record is now flushed in the same step that stored it,
+    before the fake clock moves; the two tests below still pin the outcome but no
+    longer tell a processing-time stamp from a write-time one.
+    test_record_stored_still_queued_when_stop_at_s_passes_keeps_its_processing_time
+    is the one that does.
 
     The clock starts at 129.7s (chosen so the in-flight record's own processing time
     lands at 129.9s -- inside evalgen's stage-1 [10s, 130s] measurement window -- while
@@ -1785,6 +1788,77 @@ def test_evalagg_does_not_censor_a_store_whose_processing_time_lands_before_wind
     run = evalagg.analyze_run(0.0, 1, str(run_dir))
     assert run.t0_source == "agent_start"
 
+    rows = {(r["origin"], r["seq"], r["node"]): r for r in run.discovery_rows}
+    row = rows[("h1", 1, "h0")]
+    assert row["censored"] is False, row
+    assert row["latency_ms"] == pytest.approx(69_900.0)
+
+
+def test_record_stored_still_queued_when_stop_at_s_passes_keeps_its_processing_time(tmp_path: Path):
+    """A record_stored queued at 129.9s whose flush only happens after the clock has
+    moved past stop_at_s (= evalgen.WINDOW_END_S, 130s) must log ts_ms = 129900, and
+    evalagg must judge the window/censoring rule on that, not on the flush time.
+
+    2026-11-02: once the probe fetch stopped blocking, the record_stored in
+    _run_store_during_probe_wait's scenario is flushed in the very step that
+    queued it, before the fake clock moves, so the two tests above pass even if
+    ts_ms were stamped at write time. This test keeps the event queued across a
+    clock advance instead: on_record is wrapped to let 0.3s pass after it queues
+    (standing in for the store's own write cost), the step's post-poll boundary
+    check then sees elapsed >= stop_at_s and returns without draining, and only
+    shutdown() writes the line -- at clock 130.2s, past the window's end. A
+    write-time stamp would log 130200 and evalagg would censor the row.
+    """
+    clock = _FakeClock(129.7)
+    record = schema.IndexRecord(
+        origin="h1", seq=1, content_name="ccnx:/content/h1/1", zone="zone1", disaster="flood", media="image",
+        observed_at=1,
+    )
+    fetch_name = names.build_record_name("g", "h1", "h1", 1)
+    handle = _FakeHandle(
+        [
+            _FakePacket(),  # first step: nothing arrives; on_tick then sends the record fetch
+            _FakePacket(is_data=True, name=fetch_name, payload=schema.encode(record)),  # second step, at 129.9s
+        ],
+        clock=clock,
+        step_s=0.1,
+    )
+    config = _config(tmp_path, neighbors=["h1"], stop_at_s=evalgen.WINDOW_END_S)
+    agent = build_agent(config, handle, clock=clock)
+    # Same tracker shortcut as _run_store_during_probe_wait: put (h1, 1) in flight
+    # without first driving a real state_rx round trip.
+    agent._engine._tracker.observe_state("h1", "h1", hi=1, extra=())
+
+    real_on_record = agent._engine.on_record
+
+    def on_record_then_time_passes(name, payload, now):
+        real_on_record(name, payload, now)
+        clock.tick(0.3)
+
+    agent._engine.on_record = on_record_then_time_passes
+
+    agent.step()
+    agent.step()
+    assert clock() == pytest.approx(130.2)
+    # Still queued: the step that stored it returned at the stop boundary without draining.
+    assert [e for e in _read_events(config) if e["event"] == "record_stored"] == []
+    agent.shutdown()
+
+    events = _read_events(config)
+    stored = next(e for e in events if e["event"] == "record_stored")
+    assert stored["ts_ms"] == 129_900
+
+    run_dir = tmp_path / "run"
+    for node, text in (
+        ("h0", (Path(config.state_dir) / "events.jsonl").read_text()),
+        # h1's only line evalagg needs: when it created the record h0 stores.
+        ("h1", json.dumps({"event": "record_created", "origin": "h1", "seq": 1, "ts_ms": 60_000}) + "\n"),
+    ):
+        dst = run_dir / "debug" / "node_dirs" / node / "semindex" / "events.jsonl"
+        dst.parent.mkdir(parents=True)
+        dst.write_text(text)
+
+    run = evalagg.analyze_run(0.0, 1, str(run_dir))
     rows = {(r["origin"], r["seq"], r["node"]): r for r in run.discovery_rows}
     row = rows[("h1", 1, "h0")]
     assert row["censored"] is False, row
