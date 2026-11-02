@@ -24,6 +24,10 @@ Q2 (per 4-hop pair, all four hops stored in-window, no link conditioning):
   dAttrUp = same, counted only when link h2-m was up at due_i (a poll sent into a down link
   would have timed out anyway); ovl2 = overlap of the into-h2 hop interval with blocks
   (covers poll delay and deferred tick-driven fetches/retries); ovl23 = hops 2+3 overlap.
+  2026-11-02 review fix: none of these is an upper bound on the delay the blocks add. dAttr
+  looks only at the poll right after the arrival's gap, so a later poll (after a failed one)
+  pushed back by a block counts 0; the overlaps miss the phase shift of the polls after a
+  block. They describe how much block time sits on completed 4-hop pairs, nothing more.
 """
 from __future__ import annotations
 
@@ -177,7 +181,8 @@ def main():
                     if (st, p, cl, a) in q1:
                         P(f"   {cl:11s} {a:11s}" + row((st, p, cl, a)))
 
-    P("\n== Q2: probe contribution bound on mean 4-hop latency (ms per 4-hop pair; % of lat4) ==")
+    P("\n== Q2: block time on completed 4-hop pairs, descriptive, not an upper bound "
+      "(ms per 4-hop pair; % of lat4) ==")
     P("stage      p        pairs   lat4    dAttr   %     dAttrUp  %     ovl2    %     ovl23   %")
     for st in STAGES:
         for p in PS + ["pooled"]:

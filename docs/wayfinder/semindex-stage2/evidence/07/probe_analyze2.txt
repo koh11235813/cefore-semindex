@@ -546,7 +546,7 @@
    into_h2:h4  arm=3.695   14203  67.9  11.2    2017    2107      90     115    -332     199    230    22.2 NID  predUB=  908  rawE_ok(n=248)=  2043  rawE_fail(n=828)=  2127
    into_h2:h4  arm=10.043  38894  58.4   6.8    4883    4601    -282   -1069    -121     313    430    21.3 NID  predUB=  657  rawE_ok(n=492)=  4731  rawE_fail(n=1053)=  4541
 
-== Q2: probe contribution bound on mean 4-hop latency (ms per 4-hop pair; % of lat4) ==
+== Q2: block time on completed 4-hop pairs, descriptive, not an upper bound (ms per 4-hop pair; % of lat4) ==
 stage      p        pairs   lat4    dAttr   %     dAttrUp  %     ovl2    %     ovl23   %
 s4c        0.0        4800    4246       4   0.1       4   0.1      21   0.5      40   0.9
 s4c        0.1        4800    5744      26   0.5      21   0.4      65   1.1     100   1.7

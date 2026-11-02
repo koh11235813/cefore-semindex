@@ -105,12 +105,13 @@ def _seq_record_hop(acc, hop, rows, i, j, arrival, learned, fetch):
         _add(acc, ("stepe", rk["arm"], hop, _ebin(e)), n=1, cont=cont, gap=rk["gap"])
 
 
-def attribute_run(stage, p, seed, run_dir, disc=None, c_stage=False, seq=False):
+def attribute_run(stage, p, seed, run_dir, disc=None, c_stage=None, seq=False):
     """Attribute one valid run; returns {'hop': {...}, 'dec': {...}, 'chk': {...}, 'pair': {...}}.
 
     `disc` is this run's {(origin, seq, node): latency_ms or None} from main-agg discovery.csv,
     used only for the exactness check (None -> check skipped for this run, counted).
     `c_stage` marks a run of the stage-1 default policy (the C stage), whose poll arm is relabelled 2.0.
+    None (the default) keeps the original rule, stage == "s2c", so a direct call reads s2c as before.
     `seq` adds a 'seq' key: the opt-in sequential-attribution sums (see _seq_record_hop); the
     other keys are identical with it on or off.
     """
@@ -173,6 +174,11 @@ def attribute_run(stage, p, seed, run_dir, disc=None, c_stage=False, seq=False):
         v.sort(key=lambda x: x[0])
     # 2026-11-02: the caller says which stage is C (was `stage == "s2c"`), so the same code
     # reads the NORMAL re-collection (s4*) without the stage name deciding the arm labels.
+    # 2026-11-02 review fix: a caller that passes nothing still gets the old name rule; with
+    # False as the default, attribute_run("s2c", ...) stopped relabelling and split C into
+    # hundreds of jittered "arms".
+    if c_stage is None:
+        c_stage = stage == "s2c"
     if c_stage:
         # stage-1 policy: interval_s is the jittered value itself, not one of 4 arms; label the arm "2.0".
         for key, lst in polls.items():
