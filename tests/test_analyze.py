@@ -197,8 +197,9 @@ def test_control_bytes_reports_null_for_a_node_that_never_wrote_a_counters_line(
 # -- probe_pairs -----------------------------------------------------------
 
 
-def test_probe_pairs_pairs_a_discovery_with_its_adjacent_retrieval():
-    """Probe pairs pairs a discovery with its adjacent retrieval."""
+def test_probe_pairs_pairs_a_discovery_with_the_next_retrieval_when_rows_lack_probe_idx():
+    """A log from before probe_idx existed pairs each matched discovery with the next
+    retrieval in file order (the old agent wrote them back to back)."""
     nodes = {
         "h2": [
             {"ts_ms": 100, "event": "probe_discovered", "matches": [{"origin": "h0", "seq": 1}]},
@@ -243,6 +244,41 @@ def test_probe_pairs_keeps_two_probes_on_the_same_node_in_order():
     pairs = probe_pairs(nodes)
     assert [p["discovered_ts_ms"] for p in pairs] == [100, 500]
     assert [p["retrieved"]["success"] for p in pairs] == [False, True]
+
+
+def test_probe_pairs_pairs_by_probe_idx_across_intervening_rows():
+    """2026-11-02: the agent keeps stepping while a probe's body is in flight, so other
+    rows (here a state_rx) can sit between a discovery and its retrieval; both carry
+    probe_idx and are paired by it."""
+    nodes = {
+        "h2": [
+            {"ts_ms": 100, "event": "probe_discovered", "matches": [{"origin": "h0", "seq": 1}], "probe_idx": 0},
+            {"ts_ms": 150, "event": "state_rx", "neighbor": "h1"},
+            {"ts_ms": 300, "event": "probe_retrieved", "origin": "h0", "seq": 1, "success": True, "bytes": 5,
+             "probe_idx": 0},
+        ]
+    }
+    assert [p["retrieved"]["ts_ms"] for p in probe_pairs(nodes)] == [300]
+
+
+def test_probe_pairs_does_not_hand_a_later_probes_retrieval_to_an_unanswered_discovery():
+    """A life SIGKILLed mid-fetch leaves its discovery (probe_idx 0) with no retrieval;
+    pairing in file order would give it the next life's probe 1 retrieval. With
+    probe_idx, probe 0 stays unanswered and probe 1 gets its own."""
+    nodes = {
+        "h2": [
+            {"ts_ms": 100, "event": "probe_discovered", "matches": [{"origin": "h0", "seq": 1}], "probe_idx": 0},
+            {"ts_ms": 200, "event": "agent_start", "node": "h2", "t0_ms": 0},
+            {"ts_ms": 500, "event": "probe_discovered", "matches": [{"origin": "h0", "seq": 1}], "probe_idx": 1},
+            {"ts_ms": 501, "event": "probe_retrieved", "origin": "h0", "seq": 1, "success": True, "bytes": 5,
+             "probe_idx": 1},
+        ]
+    }
+    pairs = probe_pairs(nodes)
+    assert [p["retrieved"] for p in pairs] == [
+        None,
+        {"ts_ms": 501, "origin": "h0", "seq": 1, "success": True, "bytes": 5},
+    ]
 
 
 # -- analyze()/main() integration -----------------------------------------

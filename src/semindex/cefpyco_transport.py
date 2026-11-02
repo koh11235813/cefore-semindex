@@ -15,36 +15,46 @@ needs that an in-memory one does not:
   like that must not crash the single-threaded loop that also serves every
   other neighbor -- it is treated the same as handle_interest returning
   None: the Interest is left to expire.
-- A should_stop check both right here in poll(), immediately after its own
-  receive() returns, and inside fetch_content's own wait loop. The agent
-  loop's run() only checks its stop flag between step()s, but a single
-  receive() can itself block up to receive_timeout_ms, and fetch_content
-  can block inside a single step() for up to chunk_lifetime_ms per chunk
-  waiting on content that never arrives (a partition, or T1's
-  partition-phase probe by design) -- that chunk_lifetime_ms wait is
-  already the entire SIGTERM-to-SIGKILL budget a ReCefore host_apps
-  process gets. should_stop, when given, is polled right after every
-  receive() (poll()'s own, and both before and after each one inside
-  fetch_content's wait loop) and before every chunk's Interest, so a stop
-  request -- a real SIGTERM, or the agent's own measurement-window
-  stop_at_s deadline (semindex.agent.Agent._on_receive_boundary) -- lands
-  within one receive_timeout_ms instead of up to chunk_lifetime_ms, and
-  never leaves a packet/chunk that arrived past that point dispatched,
-  counted or acted on.
+- A should_stop check in poll(), immediately after its own receive()
+  returns. The agent loop's run() only checks its stop flag between
+  step()s, but a single receive() can itself block up to
+  receive_timeout_ms. should_stop, when given, is polled right after
+  every receive(), so a stop request -- a real SIGTERM, or the agent's
+  own measurement-window stop_at_s deadline
+  (semindex.agent.Agent._on_receive_boundary) -- never leaves a
+  packet/chunk that arrived past that point dispatched, counted or acted
+  on.
+- A non-blocking content fetch (start_fetch / take_fetch_result /
+  abort_fetch). 2026-11-02 fix: a probe's body used to be fetched by a
+  blocking fetch_content() that waited inside one agent step for every
+  chunk (up to chunk_lifetime_ms each), so the agent's engine.on_tick did
+  not run meanwhile and h2's state polls went out ~1 s late for 4-9% of
+  them (docs/wayfinder/semindex-stage2/evidence/07/README.md section 5).
+  The fetch is now a chunk-by-chunk state machine that poll() advances:
+  the chunk it waits for is consumed inside poll()'s normal receive path,
+  the next chunk's Interest is sent from there, and its per-chunk deadline
+  is judged there, so the loop keeps stepping while a body is in flight.
+  At most one fetch exists at a time: every eval probe body has the same
+  name, so two concurrent fetches' chunks could not be told apart. A chunk
+  is never retransmitted (Cefore v0.12's PIT absorbs a same-name retry
+  within lifetime + 1 s), and its deadline is kept out of the sync
+  Interest deadline table, which would report it to the engine as a
+  record fetch timeout.
 - A payload-size check before every send_data. cefpyco's send_data does
   not check payload length itself (map.md); the engine already keeps every
   Response within schema.MAX_RECORD_BYTES / holder_state.MAX_ENCODED_BYTES
   by construction, so this is a last line of defense, not the only one.
 - Byte counters. bytes_sent counts the UTF-8 length of every Interest name
-  this node sends (sync Interests here, content-chunk Interests from
-  fetch_content) plus name+payload for every Data this node sends as
-  holder. bytes_received counts the name length of every incoming Interest
-  this node serves plus name+payload for every Data this node receives as
-  a reply (sync Data here, content chunks from fetch_content). An Interest
+  this node sends (sync Interests and content-chunk Interests) plus
+  name+payload for every Data this node sends as holder. bytes_received
+  counts the name length of every incoming Interest this node serves plus
+  name+payload for every Data this node receives as a reply (sync Data and
+  content chunks, each counted once). An Interest
   Return is not specially counted or dispatched; it is left for the
   Interest's own deadline to resolve as an ordinary timeout.
 - control_bytes_sent/control_bytes_received mirror the two counters above
-  but exclude fetch_content entirely (send_interest and _serve only).
+  but exclude the content fetch entirely (send_interest, _serve and
+  _route_data's sync names only).
   2026-10-22 fix: analyze.py's control_bytes() used to read
   bytes_sent/bytes_received directly, so a probe's own content-body fetch
   (T1's own live run moved 433390 bytes this way) was reported as sync
@@ -59,16 +69,17 @@ needs that an in-memory one does not:
   a falsy payload as b"".
 
 cefpyco's receive() holds the GIL and reads into one process-wide static
-buffer (map.md), so exactly one call site may ever call it: poll() and
-fetch_content() below are the only two, and fetch_content() routes every
-packet that is not the chunk it is waiting for through the same dispatch
-path poll() uses, so a probe's one-shot body fetch never drops a sync
-Interest or Data reply that arrived while it was waiting.
+buffer (map.md; /home/lab_shared/cefpyco/src/cefpyco_c/cefpyco.c and
+cefpyco_parse.c keep the handle, receive buffer and parse position as
+statics), so exactly one call site may ever call it, from one thread:
+poll() below. That is why the content fetch is driven by poll() rather
+than by a thread or a second handle of its own.
 """
 
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Callable, Protocol
 
 from semindex import holder_state, names, schema
@@ -107,6 +118,25 @@ class CefpycoHandle(Protocol):
     def receive(self, timeout_ms: int) -> CefpycoPacket: ...
 
 
+@dataclass
+class _ContentFetch:
+    """The one in-flight content fetch: which chunk it waits for, until when, and what it has so far.
+
+    `result` stays None while the fetch is still waiting; once set, the
+    fetch is finished and only waits for the agent to take the result
+    (CefpycoTransport.take_fetch_result), so a finished fetch is never
+    advanced or judged again.
+    """
+
+    name: str
+    chunk_lifetime_ms: int
+    max_chunks: int
+    chunk_num: int = 0
+    deadline: float = 0.0
+    total: int = 0
+    result: tuple[bool, int] | None = None
+
+
 class CefpycoTransport:
     """Transport implementation SyncEngine runs against when backed by real Cefore."""
 
@@ -127,8 +157,8 @@ class CefpycoTransport:
         `engine` defaults to None because SyncEngine.__init__ itself calls
         this transport's register() while constructing -- the engine
         cannot be handed to this constructor before it exists. register()
-        never touches self._engine, only poll/fetch_content do, and those
-        are only ever called once construction has finished, so the
+        never touches self._engine, only poll does, and poll is only
+        ever called once construction has finished, so the
         agent's wiring code builds the transport, builds the engine from
         it, then sets transport.engine = engine before the loop starts.
 
@@ -143,11 +173,9 @@ class CefpycoTransport:
         also captures any counters_snapshot_at_s entry now due, but only
         ever queues it in memory for the agent's own step() to write out
         later -- never writes it from in here (see
-        Agent._on_receive_boundary's own docstring for why a write from
-        inside fetch_content's wait loop specifically would be wrong).
-        poll() and fetch_content's chunk-wait loop both call it right after
-        their own receive(), so neither can ever block a stop request --
-        real or stop_at_s -- for longer than one receive_timeout_ms.
+        Agent._on_receive_boundary's own docstring). poll() calls it right
+        after its own receive(), so a stop request -- real or stop_at_s --
+        is never acted past for longer than one receive_timeout_ms.
         """
         self._handle = handle
         self._engine = engine
@@ -155,6 +183,7 @@ class CefpycoTransport:
         self._receive_timeout_ms = receive_timeout_ms
         self._should_stop = should_stop if should_stop is not None else (lambda: False)
         self._deadlines: dict[str, float] = {}
+        self._fetch: _ContentFetch | None = None
         self.bytes_sent = 0
         self.bytes_received = 0
         self.control_bytes_sent = 0
@@ -171,10 +200,9 @@ class CefpycoTransport:
 
     @property
     def should_stop(self) -> Callable[[], bool]:
-        """The callable poll() and fetch_content both call right after their own
-        receive() returns, to notice a stop (real, or the agent's own
-        stop_at_s boundary) before acting on whatever that receive() just
-        returned; see __init__."""
+        """The callable poll() calls right after its own receive() returns, to
+        notice a stop (real, or the agent's own stop_at_s boundary) before
+        acting on whatever that receive() just returned; see __init__."""
         return self._should_stop
 
     @should_stop.setter
@@ -208,13 +236,14 @@ class CefpycoTransport:
 
     def poll(self) -> None:
         """Receive at most one packet (blocking up to receive_timeout_ms), then
-        dispatch it and check Interest deadlines -- unless should_stop()
-        reports true once that receive() call returns, in which case the
-        packet is left unprocessed and deadlines unchecked for this call.
+        dispatch it, check Interest deadlines and advance the in-flight
+        content fetch -- unless should_stop() reports true once that
+        receive() call returns, in which case the packet is left
+        unprocessed and nothing is checked or advanced for this call.
 
         This is the agent loop's one call per iteration into cefpyco's
         receive(); see the module docstring for why there can only be one
-        call site besides fetch_content's.
+        call site.
 
         2026-10-23 fix: should_stop() used to be polled only inside
         fetch_content's own wait loop, never here -- a stop request (real
@@ -228,79 +257,122 @@ class CefpycoTransport:
         tradeoff: a sync Interest whose own deadline falls inside this same
         receive_timeout_ms window reports no fetch_timeout for this life --
         a SIGTERM-driven stop already accepted that (the loop exits right
-        after), and stop_at_s now does too.
+        after), and stop_at_s now does too. The same holds for a content
+        chunk: one that only arrives on a receive() past the stop boundary
+        is never counted, and the fetch it belongs to is settled as a
+        failure by abort_fetch() at shutdown.
+
+        The fetch's chunk is consumed before its deadline is judged, so a
+        chunk returned by the very receive() whose wait reaches the deadline
+        still counts -- the rule the old blocking fetch_content had too
+        (it judged the deadline only before each receive()).
         """
         info = self._handle.receive(timeout_ms=self._receive_timeout_ms)
         if self._should_stop():
             return
         now = self._clock()
-        self._dispatch(info, now)
+        if not self._consume_fetch_chunk(info):
+            self._dispatch(info, now)
         self._check_timeouts(now)
+        self._check_fetch_deadline(now)
 
-    def fetch_content(self, name: str, *, chunk_lifetime_ms: int, max_chunks: int = 100_000) -> tuple[bool, int]:
-        """Fetch every chunk of a cefputfile-published object under `name`, chunk 0..end.
+    # -- the one content fetch, advanced by poll() ------------------------------
 
-        Mirrors cefpyco's own semindex_smoke/chunk_fetch.py: one Interest
-        per chunk_num, polling receive() for the matching Data, stopping at
-        the chunk whose end_chunk_num equals its own chunk_num. Any packet
-        received while waiting that is *not* that chunk's Data is handed to
-        _dispatch the same way poll() would -- an incoming neighbor
-        Interest or a reply to one of this node's own sync Interests must
-        not be silently discarded just because a probe is mid-fetch.
+    def start_fetch(self, name: str, *, chunk_lifetime_ms: int, max_chunks: int = 100_000) -> None:
+        """Start fetching every chunk of a cefputfile-published object under `name`, chunk 0..end.
 
-        Returns (True, total_bytes) once every chunk through end_chunk_num
-        has been collected, or (False, bytes_so_far) if any one chunk's
-        Interest lifetime elapses with no matching Data, or if max_chunks
-        is exhausted without ever seeing an end_chunk_num (a guard against
-        spinning forever on an object published without one at all), or if
-        should_stop() reports true at any point -- checked here (before
-        sending the next chunk's Interest), before every receive() in the
-        wait loop below, and again immediately after each receive()
-        returns. That second, post-receive check matters as much as the
-        first: a chunk's Data that only arrives once should_stop() has gone
-        true (e.g. the agent's own stop_at_s boundary crossed while this
-        receive() was blocked) is abandoned unprocessed and uncounted, not
-        treated as a retrieved chunk -- the returned total_bytes is exactly
-        what had already been collected strictly before that boundary. This
-        keeps a stop noticed within one receive_timeout_ms rather than after
-        up to chunk_lifetime_ms, same as poll()'s own should_stop() check.
+        Sends only chunk 0's Interest and returns; poll() then consumes
+        each chunk's Data, sends the next chunk's Interest and judges each
+        chunk's own deadline (sent-at + chunk_lifetime_ms). The fetch
+        finishes, mirroring cefpyco's own semindex_smoke/chunk_fetch.py and
+        the old blocking fetch_content exactly:
+
+        - (True, total_bytes) on the chunk whose end_chunk_num equals its
+          own chunk_num;
+        - (False, bytes_so_far) once a chunk's deadline passes with no
+          matching Data (no retransmit, see the module docstring), once
+          max_chunks chunks have been consumed without an end_chunk_num (a
+          guard against spinning forever on an object published without
+          one; max_chunks must be >= 1), or once abort_fetch() ends it.
+
+        Raises RuntimeError if a previous fetch has not been settled yet
+        (still in flight, or finished but its result not taken): there is
+        at most one fetch at a time (module docstring).
         """
-        total = 0
-        chunk_num = 0
-        while chunk_num < max_chunks:
-            if self._should_stop():
-                return False, total
-            self._handle.send_interest(name, chunk_num=chunk_num, lifetime=chunk_lifetime_ms)
-            self.bytes_sent += len(name.encode("utf-8"))
-            deadline = self._clock() + chunk_lifetime_ms / 1000.0
-            got: CefpycoPacket | None = None
-            while self._clock() < deadline:
-                if self._should_stop():
-                    return False, total
-                info = self._handle.receive(timeout_ms=self._receive_timeout_ms)
-                # 2026-10-23 fix: re-check right here too, not only before this
-                # receive() -- a matching chunk that only arrived because this
-                # one receive() call blocked past the stop boundary must be
-                # abandoned the same as a chunk that never arrived at all, not
-                # counted into total just because it happened to be the packet
-                # this receive() returned.
-                if self._should_stop():
-                    return False, total
-                now = self._clock()
-                if info.is_data and info.name == name and info.chunk_num == chunk_num:
-                    got = info
-                    break
-                self._dispatch(info, now)
-                self._check_timeouts(now)
-            if got is None:
-                return False, total
-            payload = got.payload or b""
-            self.bytes_received += len(name.encode("utf-8")) + len(payload)
-            total += len(payload)
-            if got.end_chunk_num is not None and got.end_chunk_num == chunk_num:
-                return True, total
-            chunk_num += 1
-        return False, total
+        if self._fetch is not None:
+            raise RuntimeError("a content fetch is still unsettled")
+        self._fetch = _ContentFetch(name=name, chunk_lifetime_ms=chunk_lifetime_ms, max_chunks=max_chunks)
+        self._send_chunk_interest(self._fetch)
+
+    def fetch_in_flight(self) -> bool:
+        """Whether a fetch has been started and is still waiting for a chunk."""
+        return self._fetch is not None and self._fetch.result is None
+
+    def take_fetch_result(self) -> tuple[bool, int] | None:
+        """The finished fetch's (success, total_bytes), handed out once; None while
+        idle or still waiting. Taking it frees the slot for the next start_fetch."""
+        if self._fetch is None or self._fetch.result is None:
+            return None
+        result = self._fetch.result
+        self._fetch = None
+        return result
+
+    def abort_fetch(self) -> None:
+        """End a still-waiting fetch as (False, bytes collected so far), for the
+        agent's stop path; a fetch that already finished keeps its own result,
+        and with no fetch this does nothing."""
+        if self.fetch_in_flight():
+            self._fetch.result = (False, self._fetch.total)
+
+    def _send_chunk_interest(self, fetch: _ContentFetch) -> None:
+        """Send the Interest for `fetch`'s current chunk and start that chunk's deadline.
+
+        The deadline lives on the fetch itself, never in self._deadlines:
+        _check_timeouts would hand it to engine.on_fetch_timeout, which
+        reads it as a sync record fetch that timed out. Only bytes_sent
+        moves, never control_bytes_sent (module docstring "Byte counters").
+        """
+        self._handle.send_interest(fetch.name, chunk_num=fetch.chunk_num, lifetime=fetch.chunk_lifetime_ms)
+        self.bytes_sent += len(fetch.name.encode("utf-8"))
+        fetch.deadline = self._clock() + fetch.chunk_lifetime_ms / 1000.0
+
+    def _consume_fetch_chunk(self, info: CefpycoPacket) -> bool:
+        """Take `info` as the in-flight fetch's awaited chunk if it is one; True if it was.
+
+        Intercepted here, ahead of _dispatch, so the chunk's bytes are
+        counted exactly once and only into bytes_received: _route_data
+        would count them a second time. Any other content Data (a chunk
+        number this fetch is not waiting for, or one arriving after the
+        fetch already gave up) still goes through _dispatch, which counts
+        it in bytes_received and, failing names.parse, never in the control
+        counters -- unchanged from before.
+        """
+        fetch = self._fetch
+        if fetch is None or fetch.result is not None:
+            return False
+        if not (info.is_data and info.name == fetch.name and info.chunk_num == fetch.chunk_num):
+            return False
+        payload = info.payload or b""
+        self.bytes_received += len(fetch.name.encode("utf-8")) + len(payload)
+        fetch.total += len(payload)
+        if info.end_chunk_num is not None and info.end_chunk_num == fetch.chunk_num:
+            fetch.result = (True, fetch.total)
+            return True
+        fetch.chunk_num += 1
+        if fetch.chunk_num >= fetch.max_chunks:
+            fetch.result = (False, fetch.total)
+        else:
+            self._send_chunk_interest(fetch)
+        return True
+
+    def _check_fetch_deadline(self, now: float) -> None:
+        """Fail a still-waiting fetch whose current chunk's deadline has been reached.
+
+        `>=`, matching the old fetch_content's `while clock < deadline` wait.
+        """
+        fetch = self._fetch
+        if fetch is not None and fetch.result is None and now >= fetch.deadline:
+            fetch.result = (False, fetch.total)
 
     # -- packet dispatch ---------------------------------------------------------
 
@@ -326,9 +398,9 @@ class CefpycoTransport:
         """Answer an incoming Interest addressed to this node, as holder."""
         self.bytes_received += len(name.encode("utf-8"))
         # Every Interest _serve answers is sync protocol traffic (state or
-        # record fetch from a neighbor) -- fetch_content's own content-chunk
+        # record fetch from a neighbor) -- the content fetch's own chunk
         # Interests never reach this method, since they are a requester-side
-        # call that this node's own dispatch loop never routes back into
+        # send that this node's own dispatch loop never routes back into
         # _serve. See the module docstring's "Byte counters" entry.
         self.control_bytes_received += len(name.encode("utf-8"))
         try:
@@ -373,8 +445,8 @@ class CefpycoTransport:
         except names.MalformedNameError:
             return  # this node never sent an Interest for a name it cannot parse
         # Only a sync name (state or record) ever reaches this point: a
-        # stray content-chunk Data that fetch_content's own wait loop did
-        # not consume (e.g. it arrived after that fetch already gave up)
+        # stray content-chunk Data that _consume_fetch_chunk did not take
+        # (e.g. it arrived after that fetch already gave up)
         # fails the parse above and returns before this line, so it is
         # never misclassified as control traffic either.
         self.control_bytes_received += len(name.encode("utf-8")) + len(payload)

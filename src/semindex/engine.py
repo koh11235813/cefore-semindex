@@ -303,10 +303,13 @@ class SyncEngine:
         the caller (on_tick/on_state/_fail_fetch, all driven by the
         transport's own clock) was already holding -- rather than left for
         EventWriter.write to stamp at flush time. A decision made while this
-        node's Agent is blocked inside a probe's synchronous content fetch
-        (agent.py's _run_probe) is still queued, not flushed, until that probe
-        returns, so the write-time stamp used to run however many seconds
-        behind the decision itself the probe wait happened to take. The same
+        node's Agent was blocked inside a probe's synchronous content fetch
+        (agent.py's _run_probe, until 2026-11-02 when that fetch stopped
+        blocking the loop) stayed queued, not flushed, until that probe
+        returned, so the write-time stamp used to run however many seconds
+        behind the decision itself the probe wait happened to take. Events
+        are still flushed later than they are made (once per step), so the
+        stamp stays here. The same
         epoch-ms formula EventWriter uses (round(clock_reading * 1000)) is
         reused here so a pre-set ts_ms and a stamp-at-write-time one are
         never computed two different ways.
@@ -547,10 +550,11 @@ class SyncEngine:
         # 2026-10-23 fix: ts_ms is stamped here from `now` -- the engine's
         # own processing time for this store/conflict -- rather than left for
         # EventWriter.write to stamp whenever this queued event is actually
-        # flushed. A record that lands while this node's Agent.step() is
+        # flushed. A record that landed while this node's Agent.step() was
         # blocked inside a probe's synchronous content fetch (agent.py's
-        # _run_probe) is still stored and queued right here, but not
-        # drained to events.jsonl until that probe returns; without a
+        # _run_probe, until 2026-11-02 when that fetch stopped blocking) was
+        # stored and queued right here, but not drained to events.jsonl
+        # until that probe returned; without a
         # pre-set ts_ms, evalagg's own discovery-latency/consistency metrics
         # (semindex.evalagg._analyze_run_metrics) would read a ts_ms up to
         # one probe-wait's worth of seconds later than this store actually

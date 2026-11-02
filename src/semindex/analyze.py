@@ -17,12 +17,14 @@ reads) and prints one JSON object to stdout with:
   not the last one, since a restarted node's events.jsonl holds one
   `counters` line per life (agent.py's EventWriter is opened in append
   mode across a restart).
-- `probes`: every probe_discovered this run logged, paired with the
-  probe_retrieved that followed it when it found a match (agent.py's
-  _run_probe writes exactly one of these, back to back, for a probe with
-  a non-empty discovery, and writes nothing else to events.jsonl in
-  between -- see that module's _run_probe for why the two always land as
-  adjacent lines).
+- `probes`: every probe_discovered this run logged, paired with its
+  probe_retrieved when it found a match. agent.py writes exactly one
+  probe_retrieved per probe with a non-empty discovery, but not
+  necessarily as the next line: since 2026-11-02 the body fetch runs while
+  the loop keeps stepping, so other rows can land in between. Both events
+  carry probe_idx and are paired by it; a log from before probe_idx
+  existed (when the two were written back to back) is paired in file
+  order instead.
 
 Nothing here is written back into ReCefore's own results.json (map.md:
 "ReCefore の results.json には何も足さない") -- this module only reads
@@ -189,11 +191,19 @@ def control_bytes(nodes: dict[str, list[dict]]) -> dict:
 
 
 def node_probe_pairs(node: str, events: list[dict]) -> list[dict]:
-    """One node's probe_discovered events, each paired with the probe_retrieved that followed it, in FILE order.
+    """One node's probe_discovered events, each paired with its probe_retrieved, in FILE order.
 
     File order is the agent's own firing order; ts_ms is wall clock and
     can step backwards, so lining events up with a config's probe list
     needs this order, not `probe_pairs`' ts-sorted one.
+
+    A discovery carrying probe_idx is paired with the first later
+    probe_retrieved of the same probe_idx (2026-11-02: the two are no
+    longer adjacent, and a life killed mid-fetch leaves a discovery with
+    no retrieval at all, which file-order pairing would hand the next
+    probe's). Without probe_idx (older logs) the k-th matched discovery
+    takes the k-th retrieval in file order: the agent ran one probe at a
+    time, so retrievals came in discovery order.
     """
     pairs = []
     discovered_idxs = [i for i, e in enumerate(events) if e.get("event") == "probe_discovered"]
@@ -202,9 +212,19 @@ def node_probe_pairs(node: str, events: list[dict]) -> list[dict]:
         discovered = events[idx]
         retrieved = None
         if discovered.get("matches"):
-            retrieved_idx = next(retrieved_iter, None)
-            if retrieved_idx is not None:
-                retrieved = events[retrieved_idx]
+            if "probe_idx" in discovered:
+                retrieved = next(
+                    (
+                        e
+                        for e in events[idx + 1 :]
+                        if e.get("event") == "probe_retrieved" and e.get("probe_idx") == discovered["probe_idx"]
+                    ),
+                    None,
+                )
+            else:
+                retrieved_idx = next(retrieved_iter, None)
+                if retrieved_idx is not None:
+                    retrieved = events[retrieved_idx]
         pairs.append(
             {
                 "node": node,
@@ -227,7 +247,7 @@ def node_probe_pairs(node: str, events: list[dict]) -> list[dict]:
 
 
 def probe_pairs(nodes: dict[str, list[dict]]) -> list[dict]:
-    """Every probe_discovered, paired with the probe_retrieved that followed it (None if no match), sorted by (node, ts)."""
+    """Every probe_discovered, paired with its probe_retrieved (None if no match or none written), sorted by (node, ts)."""
     pairs = [pair for node, events in nodes.items() for pair in node_probe_pairs(node, events)]
     pairs.sort(key=lambda p: (p["node"], p["discovered_ts_ms"]))
     return pairs
