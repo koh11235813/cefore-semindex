@@ -303,10 +303,13 @@ class SyncEngine:
         the caller (on_tick/on_state/_fail_fetch, all driven by the
         transport's own clock) was already holding -- rather than left for
         EventWriter.write to stamp at flush time. A decision made while this
-        node's Agent is blocked inside a probe's synchronous content fetch
-        (agent.py's _run_probe) is still queued, not flushed, until that probe
-        returns, so the write-time stamp used to run however many seconds
-        behind the decision itself the probe wait happened to take. The same
+        node's Agent was blocked inside a probe's synchronous content fetch
+        (agent.py's _run_probe, until 2026-11-02 when that fetch stopped
+        blocking the loop) stayed queued, not flushed, until that probe
+        returned, so the write-time stamp used to run however many seconds
+        behind the decision itself the probe wait happened to take. Events
+        are still flushed later than they are made (once per step), so the
+        stamp stays here. The same
         epoch-ms formula EventWriter uses (round(clock_reading * 1000)) is
         reused here so a pre-set ts_ms and a stamp-at-write-time one are
         never computed two different ways.
@@ -359,10 +362,12 @@ class SyncEngine:
         # round(now * 1000) from the same processing `now` this record was
         # actually created at, so reusing it here needs no separate clock
         # reading and guarantees the two can never read differently for the
-        # same record. Without this, a record created in the same step()
-        # that then blocks inside a probe's synchronous fetch (drained only
-        # after that probe returns) would log a ts_ms seconds later than it
-        # was actually created.
+        # same record. Without this, a record created in a step() that then
+        # blocked inside a probe's synchronous fetch (drained only after that
+        # probe returned) logged a ts_ms seconds later than it was actually
+        # created. 2026-11-02: the probe fetch no longer blocks the step, but
+        # events are still drained after the step's other work, so the stamp
+        # stays here rather than at write time.
         self._emit({"event": "record_created", "ts_ms": observed_at, "origin": record.origin, "seq": record.seq})
         return record
 
@@ -547,10 +552,11 @@ class SyncEngine:
         # 2026-10-23 fix: ts_ms is stamped here from `now` -- the engine's
         # own processing time for this store/conflict -- rather than left for
         # EventWriter.write to stamp whenever this queued event is actually
-        # flushed. A record that lands while this node's Agent.step() is
+        # flushed. A record that landed while this node's Agent.step() was
         # blocked inside a probe's synchronous content fetch (agent.py's
-        # _run_probe) is still stored and queued right here, but not
-        # drained to events.jsonl until that probe returns; without a
+        # _run_probe, until 2026-11-02 when that fetch stopped blocking) was
+        # stored and queued right here, but not drained to events.jsonl
+        # until that probe returned; without a
         # pre-set ts_ms, evalagg's own discovery-latency/consistency metrics
         # (semindex.evalagg._analyze_run_metrics) would read a ts_ms up to
         # one probe-wait's worth of seconds later than this store actually

@@ -465,6 +465,38 @@ def test_fault_drop_rec_withholds_exactly_n_replies_then_answers(tmp_path: Path)
     assert handle.sent_data[0][0] == name
 
 
+def _read_events(config) -> list[dict]:
+    """Every line this agent's events.jsonl holds so far, parsed."""
+    events_path = Path(config.state_dir) / "events.jsonl"
+    return [json.loads(line) for line in events_path.read_text().splitlines()]
+
+
+def _step_until(agent, config, predicate, *, max_steps: int = 100) -> list[dict]:
+    """step() the agent until `predicate(events)` holds, returning those events.
+
+    2026-11-02: a probe's body fetch now spans many step()s (the loop keeps
+    ticking while it is in flight), so tests that used to get the whole
+    fetch out of one step() drive it to a condition instead. Bounded so a
+    fetch that never settles fails the test rather than hanging it.
+    """
+    for _ in range(max_steps):
+        events = _read_events(config)
+        if predicate(events):
+            return events
+        agent.step()
+    raise AssertionError(f"condition not reached within {max_steps} steps: {[e['event'] for e in events]}")
+
+
+def _has_retrieved(events: list[dict]) -> bool:
+    """Whether any probe_retrieved line has been written yet."""
+    return any(e["event"] == "probe_retrieved" for e in events)
+
+
+def _without_ts(event: dict) -> dict:
+    """`event` minus its wall-clock ts_ms, for exact comparison of every other field."""
+    return {k: v for k, v in event.items() if k != "ts_ms"}
+
+
 def test_probe_discovers_and_retrieves_the_first_matching_record(tmp_path: Path):
     """A probe emits probe_discovered with every match, then fetches the first match's
     content body in full, emitting probe_retrieved with success=True and the byte count.
@@ -474,11 +506,16 @@ def test_probe_discovers_and_retrieves_the_first_matching_record(tmp_path: Path)
     its module-level defaults: both are given distinguishing values below (not equal
     to either default), and every receive() call and the fetch's own Interest must
     carry them.
+
+    2026-11-02: the fetch no longer completes inside the step that discovers --
+    that step only sends chunk 0's Interest, and the next step's poll() consumes
+    the chunk. Both events carry probe_idx, this probe's 0-based index in the
+    node's schedule, so a reader can pair them without relying on adjacency.
     """
     content_name = "ccnx:/content/h0/body"
     handle = _FakeHandle(
         [
-            _FakePacket(),  # absorbed by step()'s own poll() before the probe's own fetch runs
+            _FakePacket(),  # absorbed by the first step()'s poll(), before the probe fires
             _FakePacket(is_data=True, name=content_name, payload=b"hello", chunk_num=0, end_chunk_num=0),
         ]
     )
@@ -492,21 +529,35 @@ def test_probe_discovers_and_retrieves_the_first_matching_record(tmp_path: Path)
         chunk_lifetime_ms=777,
     )
     agent = build_agent(config, handle, clock=_FakeClock(0.0))
-    agent.step()
+    agent.step()  # discovers, sends chunk 0's Interest, returns without receiving again
+    assert not _has_retrieved(_read_events(config))
+    agent.step()  # its poll() consumes the chunk; the probe's retrieval is written
 
-    events_path = Path(config.state_dir) / "events.jsonl"
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    lines = _read_events(config)
     discovered = next(e for e in lines if e["event"] == "probe_discovered")
-    assert discovered["matches"] == [{"origin": "h0", "seq": 1, "content_name": content_name}]
+    assert _without_ts(discovered) == {
+        "event": "probe_discovered",
+        "matches": [{"origin": "h0", "seq": 1, "content_name": content_name}],
+        "probe_idx": 0,
+    }
     retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
-    assert (retrieved["success"], retrieved["bytes"]) == (True, 5)
+    assert _without_ts(retrieved) == {
+        "event": "probe_retrieved",
+        "origin": "h0",
+        "seq": 1,
+        "content_name": content_name,
+        "success": True,
+        "bytes": 5,
+        "probe_idx": 0,
+    }
     assert handle.sent_interests[-1] == (content_name, 0, 777)
     assert handle.receive_timeout_calls == [55, 55]
 
 
 def test_probe_retrieval_failure_does_not_block_the_loop(tmp_path: Path):
     """A probe whose match's content never arrives still emits probe_retrieved with
-    success=False and bytes=0, and the loop keeps running afterward.
+    success=False and bytes=0 once the chunk's lifetime elapses, and the loop keeps
+    running afterward.
     """
     content_name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
@@ -520,14 +571,58 @@ def test_probe_retrieval_failure_does_not_block_the_loop(tmp_path: Path):
         chunk_lifetime_ms=300,
     )
     agent = build_agent(config, handle, clock=clock)
-    agent.step()
+    lines = _step_until(agent, config, _has_retrieved)
 
-    events_path = Path(config.state_dir) / "events.jsonl"
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
     retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
-    assert (retrieved["success"], retrieved["bytes"]) == (False, 0)
+    assert _without_ts(retrieved) == {
+        "event": "probe_retrieved",
+        "origin": "h0",
+        "seq": 1,
+        "content_name": content_name,
+        "success": False,
+        "bytes": 0,
+        "probe_idx": 0,
+    }
+    # Sent at 0.2 (the first step's post-poll clock), so its 0.3 s lifetime ends
+    # at 0.5; the step whose receive returns at 0.6 is the first to see it.
+    assert retrieved["ts_ms"] == 600
+    # Exactly one chunk Interest: a timed-out chunk is never retransmitted.
+    assert [i for i in handle.sent_interests if i[0] == content_name] == [(content_name, 0, 300)]
 
     agent.step()  # the loop is still usable afterward; this must not raise
+
+
+def test_the_loop_keeps_ticking_and_polling_state_while_a_probe_fetch_is_in_flight(tmp_path: Path):
+    """2026-11-02 fix (evidence/07 section 5): while a probe's body is in flight,
+    step() still runs engine.on_tick, so a state poll that falls due during the
+    fetch goes out on schedule instead of after the fetch ends. With the old
+    blocking fetch_content, the 0.4 s poll below went out only once the 2 s
+    chunk wait had ended."""
+    content_name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        state_poll_interval_s=0.3,
+        state_poll_jitter_frac=0.0,
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+        chunk_lifetime_ms=2000,
+    )
+    agent = build_agent(config, handle, clock=clock)
+    for _ in range(5):  # post-poll clock 0.1 .. 0.5
+        agent.step()
+
+    assert agent._transport.fetch_in_flight() is True
+    lines = _read_events(config)
+    assert not _has_retrieved(lines)
+    polls = [e["ts_ms"] for e in lines if e["event"] == "decision" and e["kind"] == "state_poll"]
+    assert polls == [100, 400]
+    state_names = [n for (n, _chunk, _lifetime) in handle.sent_interests if n.startswith("ccnx:/semidx/")]
+    assert state_names == [names.build_state_name("g", "h1", "h0", ms) for ms in (100, 400)]
 
 
 def test_probe_targets_the_lowest_origin_seq_match_not_the_highest(tmp_path: Path):
@@ -541,14 +636,13 @@ def test_probe_targets_the_lowest_origin_seq_match_not_the_highest(tmp_path: Pat
     clock = _FakeClock(0.0)
     handle = _FakeHandle(
         [
-            _FakePacket(),  # absorbed by step()'s own poll()
+            _FakePacket(),  # absorbed by the first step()'s poll()
             _FakePacket(is_data=True, name=content_name_h0, payload=b"from-h0", chunk_num=0, end_chunk_num=0),
         ],
         # Correct code resolves the fetch on the second packet above without ever
         # waiting out a deadline; a clock is still wired here (ticking, not frozen)
         # so that IF a regression picked matches[-1] (h1's unreachable content) the
-        # fetch would time out cleanly instead of spinning forever against a clock
-        # that can never reach its own deadline.
+        # fetch would time out cleanly instead of never reaching its own deadline.
         clock=clock,
         step_s=0.2,
     )
@@ -569,10 +663,9 @@ def test_probe_targets_the_lowest_origin_seq_match_not_the_highest(tmp_path: Pat
     payload_h1 = schema.encode(record_h1)
     agent._store.append_received("h1", 1, payload_h1, schema.content_hash(payload_h1))
 
-    agent.step()  # fires the h0 schedule entry (creating ("h0", 1)) and then the probe
+    # Fires the h0 schedule entry (creating ("h0", 1)), then the probe, then its fetch.
+    lines = _step_until(agent, config, _has_retrieved)
 
-    events_path = Path(config.state_dir) / "events.jsonl"
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
     discovered = next(e for e in lines if e["event"] == "probe_discovered")
     assert [(m["origin"], m["seq"]) for m in discovered["matches"]] == [("h0", 1), ("h1", 1)]
     retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
@@ -582,18 +675,95 @@ def test_probe_targets_the_lowest_origin_seq_match_not_the_highest(tmp_path: Pat
     assert retrieved["success"] is True
 
 
-def test_a_stop_request_mid_probe_fetch_ends_the_wait_promptly_and_still_shuts_down(tmp_path: Path):
-    """request_stop() landing while a probe's fetch_content is mid-wait for an
-    unreachable chunk must not block that one step() for the full
-    chunk_lifetime_ms -- a real SIGTERM can land at exactly that point (a signal
-    handler calls request_stop() between bytecode instructions, same as here),
-    and host_apps only gives a process 2s between SIGTERM and SIGKILL. run()
-    must then also exit and shut down (flush events, close the store) rather
-    than needing a second, separate SIGTERM.
-    """
+def test_a_probe_due_while_another_is_in_flight_waits_for_it_to_finish(tmp_path: Path):
+    """2026-11-02: at most one body fetch is in flight (every eval probe body has the
+    same name, so two concurrent fetches' chunks could not be told apart). A probe
+    that falls due mid-fetch waits, FIFO, and is discovered only once the earlier
+    fetch has settled -- so each probe_idx keeps the order discovered(k),
+    retrieved(k), discovered(k+1)."""
     content_name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
     handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}, {"at_s": 0.2, "zone": "zone1"}],
+        chunk_lifetime_ms=500,
+    )
+    agent = build_agent(config, handle, clock=clock)
+    for _ in range(4):  # post-poll clock 0.1 .. 0.4: the second probe is due, the first still in flight
+        agent.step()
+    assert [e["event"] for e in _read_events(config) if e["event"].startswith("probe_")] == ["probe_discovered"]
+
+    lines = _step_until(agent, config, _has_retrieved)  # first fetch times out (sent 0.1, deadline 0.6)
+    handle.packets.append(_FakePacket(is_data=True, name=content_name, payload=b"body", chunk_num=0, end_chunk_num=0))
+    lines = _step_until(agent, config, lambda ev: sum(e["event"] == "probe_retrieved" for e in ev) == 2)
+
+    probe_rows = [(e["event"], e["probe_idx"]) for e in lines if e["event"].startswith("probe_")]
+    assert probe_rows == [
+        ("probe_discovered", 0),
+        ("probe_retrieved", 0),
+        ("probe_discovered", 1),
+        ("probe_retrieved", 1),
+    ]
+    retrieved = [e for e in lines if e["event"] == "probe_retrieved"]
+    assert [(e["success"], e["bytes"]) for e in retrieved] == [(False, 0), (True, 4)]
+
+
+def test_a_probe_body_is_counted_once_in_bytes_and_never_in_control_bytes(tmp_path: Path):
+    """The body's chunk Interest and chunk name+payload go to bytes_sent/received only:
+    the final counters line shows them exactly once there and not at all in the
+    control counters (2026-10-22 fix; 2026-11-02: the chunk is now consumed inside
+    poll(), ahead of _route_data, which would otherwise count it a second time)."""
+    content_name = "ccnx:/content/h0/body"
+    payload = b"x" * 1000
+    handle = _FakeHandle(
+        [_FakePacket(), _FakePacket(is_data=True, name=content_name, payload=payload, chunk_num=0, end_chunk_num=0)]
+    )
+    config = _config(
+        tmp_path,
+        schedule=[
+            {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
+        ],
+        probes=[{"at_s": 0, "zone": "zone1"}],
+    )
+    agent = build_agent(config, handle, clock=_FakeClock(0.0))
+    _step_until(agent, config, _has_retrieved)
+    agent.shutdown()
+
+    counters = _read_events(config)[-1]
+    name_len = len(content_name.encode("utf-8"))
+    assert _without_ts(counters) == {
+        "event": "counters",
+        "bytes_sent": name_len,
+        "bytes_received": name_len + len(payload),
+        "control_bytes_sent": 0,
+        "control_bytes_received": 0,
+    }
+
+
+def test_a_stop_request_mid_probe_fetch_ends_the_wait_promptly_and_still_shuts_down(tmp_path: Path):
+    """request_stop() landing while a probe's body is mid-fetch must stop the loop
+    within one receive() -- a real SIGTERM can land at exactly that point, and
+    host_apps only gives a process 2s between SIGTERM and SIGKILL. run() must then
+    also exit and shut down (flush events, close the store) rather than needing a
+    second, separate SIGTERM, and the unfinished fetch is still reported:
+    probe_retrieved(success=False, bytes collected so far) right before the final
+    counters line.
+    """
+    content_name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [
+            _FakePacket(),  # step 1's poll(): then the probe fires and sends chunk 0
+            # step 2's poll(): chunk 0 of a longer body, so chunk 1 is requested next
+            _FakePacket(is_data=True, name=content_name, payload=b"abc", chunk_num=0, end_chunk_num=None),
+        ],
+        clock=clock,
+        step_s=0.1,
+    )
     config = _config(
         tmp_path,
         schedule=[
@@ -604,45 +774,38 @@ def test_a_stop_request_mid_probe_fetch_ends_the_wait_promptly_and_still_shuts_d
     )
     agent = build_agent(config, handle, clock=clock)
 
-    # Simulate a SIGTERM landing on the second receive() this step() makes:
-    # the first is step()'s own poll(), the second is inside the probe's
-    # fetch_content wait loop.
+    # Simulate a SIGTERM landing on the third receive(): step 3's poll(), while
+    # chunk 1 is awaited.
     real_receive = handle.receive
     calls = {"n": 0}
 
     def receive_then_stop(timeout_ms: int):
         calls["n"] += 1
-        if calls["n"] == 2:
+        if calls["n"] == 3:
             agent.request_stop()
         return real_receive(timeout_ms)
 
     handle.receive = receive_then_stop
 
-    agent.step()  # must return promptly, not block for chunk_lifetime_ms (2s of fake-clock ticks)
-    assert clock.value < 1.0
+    agent.run()  # must return promptly, not wait out chunk 1's 2 s lifetime
+    assert clock.value == pytest.approx(0.3)
 
-    events_path = Path(config.state_dir) / "events.jsonl"
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
-    retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
-    assert (retrieved["success"], retrieved["bytes"]) == (False, 0)
-
-    agent.run()  # _stop_requested is already True, so this exits immediately and shuts down
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
-    assert lines[-1]["event"] == "counters"
+    lines = _read_events(config)
+    assert [e["event"] for e in lines[-2:]] == ["probe_retrieved", "counters"]
+    assert (lines[-2]["success"], lines[-2]["bytes"], lines[-2]["probe_idx"]) == (False, 3, 0)
 
 
 def test_stop_at_s_abandons_an_in_progress_probe_when_the_deadline_is_crossed_mid_wait(tmp_path: Path):
-    """A probe's fetch_content waiting on content that never arrives must
-    notice stop_at_s mid-wait (via should_stop(), wired to the same boundary
-    check as stop_at_s itself -- see CefpycoTransport.fetch_content) and
-    abandon the fetch, instead of blocking for the full chunk_lifetime_ms
-    (2s of fake-clock ticks here) and only being noticed on run()'s next
-    step().
+    """A probe's body fetch waiting on content that never arrives must not hold
+    the loop past stop_at_s: the loop notices the deadline on the receive that
+    crosses it and stops (instead of only after the full chunk_lifetime_ms, 2s of
+    fake-clock ticks here).
 
-    The abandoned fetch is recorded as probe_retrieved(success=False, bytes=0)
-    -- the same representation an ordinary unreachable-content failure already
-    uses (test_probe_retrieval_failure_does_not_block_the_loop); stop_at_s
-    needs no new event shape of its own.
+    The abandoned fetch is recorded as probe_retrieved(success=False, bytes=0),
+    written at shutdown before the final counters line -- the same representation
+    an ordinary unreachable-content failure already uses
+    (test_probe_retrieval_failure_does_not_block_the_loop); stop_at_s needs no new
+    event shape of its own.
     """
     content_name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
@@ -658,35 +821,23 @@ def test_stop_at_s_abandons_an_in_progress_probe_when_the_deadline_is_crossed_mi
     )
     agent = build_agent(config, handle, clock=clock)
 
-    agent.step()  # schedule entry creates the record this step's own probe then discovers and fetches
+    agent.run()
 
-    # Abandoned promptly at the deadline (0.5), nowhere near the 2.1s this
-    # chunk's own Interest lifetime would otherwise have run to.
-    assert clock.value == 0.5
-    assert agent._stop_requested
-
-    events_path = Path(config.state_dir) / "events.jsonl"
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
-    retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
-    assert (retrieved["success"], retrieved["bytes"]) == (False, 0)
-
-    agent.run()  # _stop_requested is already True, so this exits immediately and still shuts down cleanly
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
-    assert lines[-1]["event"] == "counters"
+    # Stopped at the deadline (0.5), nowhere near the 2.1s this chunk's own
+    # Interest lifetime would otherwise have run to.
+    assert clock.value == pytest.approx(0.5)
+    lines = _read_events(config)
+    assert [e["event"] for e in lines[-2:]] == ["probe_retrieved", "counters"]
+    assert (lines[-2]["success"], lines[-2]["bytes"]) == (False, 0)
 
 
-def test_a_counters_snapshot_due_mid_probe_never_splits_its_discovery_from_its_retrieval(tmp_path: Path):
-    """should_stop (CefpycoTransport.fetch_content's own boundary check,
-    Agent._on_receive_boundary) does capture a counters_snapshot_at_s entry
-    that becomes due while a probe's fetch_content is blocked waiting on
-    content that never arrives -- but only ever queues it in memory
-    (Agent._pending_snapshots); the write itself waits for a receive
-    boundary outside that probe's own call stack. A probe's fetch_content
-    runs synchronously inside _run_probe, strictly between that probe's own
-    probe_discovered and probe_retrieved writes, and check.py's own
-    retrieval-pairing check depends on nothing else from this node being
-    logged in between (see check.py's own comment on retrieved_after) -- a
-    counters_snapshot line written from inside that wait would break it.
+def test_a_counters_snapshot_due_mid_probe_is_written_without_waiting_for_the_fetch(tmp_path: Path):
+    """2026-11-02: a counters_snapshot_at_s entry that falls due while a probe's
+    body is in flight is written in the step that captures it, so it can now
+    sit between that probe's probe_discovered and probe_retrieved. That is
+    the intended new shape: readers pair the two by probe_idx, not adjacency
+    (check.py t1, analyze.node_probe_pairs). Before, the blocking fetch held
+    the write back until the probe had returned.
     """
     content_name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
@@ -697,50 +848,39 @@ def test_a_counters_snapshot_due_mid_probe_never_splits_its_discovery_from_its_r
             {"at_s": 0, "content_name": content_name, "zone": "zone1", "disaster": "flood", "media": "image"}
         ],
         probes=[{"at_s": 0, "zone": "zone1"}],
-        counters_snapshot_at_s=[0.25],  # falls strictly inside the probe's own fetch_content wait below
+        counters_snapshot_at_s=[0.25],  # falls strictly inside the probe's fetch (sent 0.1, deadline 0.6)
         chunk_lifetime_ms=500,
     )
     agent = build_agent(config, handle, clock=clock)
 
-    agent.step()  # schedule entry, then the probe: its fetch_content's wait captures the 0.25 entry mid-call
+    lines = _step_until(agent, config, _has_retrieved)
 
-    events_path = Path(config.state_dir) / "events.jsonl"
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
     kinds = [e["event"] for e in lines]
-    discovered_i = kinds.index("probe_discovered")
-    retrieved_i = kinds.index("probe_retrieved")
-    assert retrieved_i == discovered_i + 1, f"something else was logged in between: {kinds}"
-    # Captured mid-fetch, but not lost -- written out right after
-    # drain_probes returns, still within this same step, never before the
-    # probe's own probe_retrieved.
     assert kinds.count("counters_snapshot") == 1
-    assert kinds.index("counters_snapshot") > retrieved_i
+    assert kinds.index("probe_discovered") < kinds.index("counters_snapshot") < kinds.index("probe_retrieved")
 
 
 def test_a_counters_snapshot_captured_mid_probe_excludes_that_probes_own_chunk_once_it_arrives(
     tmp_path: Path,
 ):
-    """Pins down *where exactly* inside fetch_content's wait loop the capture
-    happens: before the matching chunk is counted, not after. Two blank
-    packets (absorbed by step()'s own poll() and fetch_content's first
-    receive() call) put the chunk's own Data on the very receive() call
-    whose tick crosses elapsed 0.25 (step_s=0.1) -- the capture and the
-    chunk's own arrival happen on the *same* should_stop()/receive() call.
-    If the post-receive should_stop() check inside fetch_content's wait
-    loop were ever moved below the `bytes_received +=` line (or capture
-    happened only outside fetch_content, never from inside it), this
-    chunk's bytes would already be counted by the time the snapshot
-    captures, and the first assert below would fail.
+    """Pins down *where exactly* the capture happens relative to the fetch's chunk:
+    before the chunk is counted, not after. Two blank packets (absorbed by steps 1
+    and 2's poll()) put the chunk's own Data on the very receive() whose tick
+    crosses elapsed 0.25 (step_s=0.1) -- the capture and the chunk's own arrival
+    happen on the *same* should_stop()/receive() call inside poll(). If poll()'s
+    post-receive should_stop() check were ever moved below the chunk's
+    `bytes_received +=`, this chunk's bytes would already be counted by the time
+    the snapshot captures, and the first assert below would fail.
     """
     content_name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
     payload = b"a probe's own chunk 0 payload"
     handle = _FakeHandle(
         [
-            _FakePacket(),  # absorbed by step()'s own poll()
-            _FakePacket(),  # fetch_content's receive() #1
-            # fetch_content's receive() #2 -- this tick (0.2 -> 0.3) crosses
-            # elapsed 0.25, on the exact same call that delivers this chunk.
+            _FakePacket(),  # step 1's poll(), before the probe fires
+            _FakePacket(),  # step 2's poll()
+            # step 3's poll() -- this tick (0.2 -> 0.3) crosses elapsed 0.25, on
+            # the exact same call that delivers this chunk.
             _FakePacket(is_data=True, name=content_name, payload=payload, chunk_num=0, end_chunk_num=0),
         ],
         clock=clock,
@@ -757,17 +897,10 @@ def test_a_counters_snapshot_captured_mid_probe_excludes_that_probes_own_chunk_o
     )
     agent = build_agent(config, handle, clock=clock)
 
-    agent.step()
+    lines = _step_until(agent, config, _has_retrieved)
 
-    events_path = Path(config.state_dir) / "events.jsonl"
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
-    kinds = [e["event"] for e in lines]
-    discovered_i = kinds.index("probe_discovered")
-    retrieved_i = kinds.index("probe_retrieved")
-    assert retrieved_i == discovered_i + 1
-    retrieved = lines[retrieved_i]
+    retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
     assert retrieved["success"] is True
-
     snapshot = next(e for e in lines if e["event"] == "counters_snapshot")
     assert snapshot["bytes_received"] == 0  # the chunk hadn't arrived yet when this was captured
     assert agent._transport.bytes_received > 0  # but it has, by the time this step ends
@@ -777,12 +910,12 @@ def test_a_counters_snapshot_captured_mid_probe_is_not_lost_when_that_probe_is_w
     tmp_path: Path,
 ):
     """The scenario that defeats a naive 'defer the write to the next step'
-    fix: when the very probe whose fetch_content captured a due
-    counters_snapshot is also what notices stop_at_s has been reached
-    (should_stop, Agent._on_receive_boundary, sets the flag mid-wait), there
-    is no next step -- run() sees _stop_requested and goes straight to
-    shutdown(). The captured entry must still be written before shutdown's
-    own `counters` line, not dropped for want of a later step to flush it.
+    fix: when the very receive() that captures a due counters_snapshot while a
+    probe's body is in flight is also what notices stop_at_s has been reached
+    (should_stop, Agent._on_receive_boundary, sets the flag), there is no next
+    step -- run() sees _stop_requested and goes straight to shutdown(). The
+    captured entry must still be written before shutdown's own `counters`
+    line, not dropped for want of a later step to flush it.
     """
     content_name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
@@ -794,15 +927,14 @@ def test_a_counters_snapshot_captured_mid_probe_is_not_lost_when_that_probe_is_w
         ],
         probes=[{"at_s": 0, "zone": "zone1"}],
         counters_snapshot_at_s=[0.5],
-        stop_at_s=0.5,  # same instant: the probe's own should_stop check is what notices both
+        stop_at_s=0.5,  # same instant: one receive boundary notices both
         chunk_lifetime_ms=2000,
     )
     agent = build_agent(config, handle, clock=clock)
 
-    agent.run()  # the probe's fetch_content both captures the snapshot and triggers the stop, mid-wait
+    agent.run()
 
-    events_path = Path(config.state_dir) / "events.jsonl"
-    lines = [json.loads(line) for line in events_path.read_text().splitlines()]
+    lines = _read_events(config)
     kinds = [e["event"] for e in lines]
     assert kinds.count("counters_snapshot") == 1, f"the entry was lost: {kinds}"
     assert kinds.index("counters_snapshot") < kinds.index("counters")
@@ -1163,9 +1295,8 @@ def test_a_second_life_on_the_same_state_dir_creates_no_duplicate_records_and_re
 
     # First life: elapsed reaches 3s, so only the at_s=1 and at_s=2 schedule entries
     # and the at_s=1 probe are due; at_s=10 entries are not reached yet. The probe's
-    # own fetch_content has nothing to retrieve (no Data queued), so the handle's
-    # clock must auto-tick (as in the probe-failure tests above) or that wait loop's
-    # deadline, compared against an otherwise-frozen clock, would never be crossed.
+    # body fetch has nothing to retrieve (no Data queued) and is still in flight
+    # when this life shuts down, so shutdown() settles it as a failure.
     handle1 = _FakeHandle([], clock=clock, step_s=0.2)
     agent1 = build_agent(config, handle1, clock=clock)
     clock.value = 3.0
@@ -1179,6 +1310,9 @@ def test_a_second_life_on_the_same_state_dir_creates_no_duplicate_records_and_re
         ("h0", 2),
     ]
     assert len([e for e in first_life if e["event"] == "probe_discovered"]) == 1
+    # 2026-11-02: the in-flight fetch is reported before this life's counters line.
+    assert [e["event"] for e in first_life[-2:]] == ["probe_retrieved", "counters"]
+    assert (first_life[-2]["success"], first_life[-2]["probe_idx"]) == (False, 0)
 
     # Second life: a fresh Agent/CefpycoTransport/EventWriter (a real relaunch would
     # reopen events.jsonl too) built against the *same* state_dir, with elapsed
@@ -1198,6 +1332,9 @@ def test_a_second_life_on_the_same_state_dir_creates_no_duplicate_records_and_re
     discovered_second = [e for e in second_life if e["event"] == "probe_discovered"]
     # Only the at_s=10 probe is new; the at_s=1 probe must not re-fire.
     assert len(discovered_second) == 1
+    # probe_idx is the probe's index in the node's whole schedule, read from the
+    # store's persisted cursor, so it stays stable across the restart.
+    assert discovered_second[0]["probe_idx"] == 1
 
 
 def test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_step(tmp_path: Path):
@@ -1549,19 +1686,25 @@ def test_build_agent_fails_at_startup_when_the_schedule_is_shorter_than_the_pers
 
 
 def _run_store_during_probe_wait(tmp_path: Path):
-    """Build and run one step() of a real h0 agent that, mid-probe-fetch_content wait,
-    receives and stores a record fetched from neighbor h1 -- the exact shape the
-    external review's repro used (SyncEngine.on_record queues record_stored while
-    this node's own probe is blocked in a synchronous content fetch, and that queued
-    event is not flushed to events.jsonl until the probe returns).
+    """Run a real h0 agent that, while its probe's body fetch is in flight, receives
+    and stores a record fetched from neighbor h1 -- the shape the external review's
+    repro used (SyncEngine.on_record queued record_stored while this node's probe
+    was blocked in what was then a synchronous content fetch, and that queued event
+    was not flushed to events.jsonl until the probe returned). 2026-11-02: the fetch
+    no longer blocks, so the record is now flushed in the same step that stored it,
+    before the fake clock moves; the two tests below still pin the outcome but no
+    longer tell a processing-time stamp from a write-time one.
+    test_record_stored_still_queued_when_stop_at_s_passes_keeps_its_processing_time
+    is the one that does.
 
     The clock starts at 129.7s (chosen so the in-flight record's own processing time
     lands at 129.9s -- inside evalgen's stage-1 [10s, 130s] measurement window -- while
-    the probe's own wait only gives up once the clock reaches 130.3s, past the window's
-    close) specifically so the two tests built on this scenario (ts_ms correctness, and
-    evalagg non-censoring) both exercise the exact boundary the review's repro crossed.
+    the probe's fetch only gives up once its 0.4 s chunk lifetime has run out, past
+    the window's close) specifically so the two tests built on this scenario (ts_ms
+    correctness, and evalagg non-censoring) both exercise the exact boundary the
+    review's repro crossed.
 
-    Returns (config, agent) after exactly one agent.step() call.
+    Returns (config, agent) once the probe's probe_retrieved has been written.
     """
     content_name = "ccnx:/content/h0/body"
     clock = _FakeClock(129.7)
@@ -1573,14 +1716,10 @@ def _run_store_during_probe_wait(tmp_path: Path):
     fetch_name = names.build_record_name("g", "h1", "h1", 1)
     handle = _FakeHandle(
         [
-            _FakePacket(),  # absorbed by step()'s own poll()
-            # Arrives on fetch_content's own first receive() call, strictly
-            # inside the probe's wait, at clock 129.9s: this is the record
-            # this test is about.
+            _FakePacket(),  # absorbed by the first step()'s poll(); then the probe fires
+            # Arrives on the next step()'s poll(), strictly inside the probe's
+            # fetch, at clock 129.9s: this is the record this test is about.
             _FakePacket(is_data=True, name=fetch_name, payload=payload),
-            _FakePacket(),  # fetch_content receive() #2 -- nothing
-            _FakePacket(),  # fetch_content receive() #3 -- nothing
-            _FakePacket(),  # fetch_content receive() #4 -- the chunk_lifetime_ms deadline is reached here
         ],
         clock=clock,
         step_s=0.1,
@@ -1600,16 +1739,15 @@ def _run_store_during_probe_wait(tmp_path: Path):
     # fetch in flight without first driving a real state_rx round trip.
     agent._engine._tracker.observe_state("h1", "h1", hi=1, extra=())
 
-    agent.step()  # on_tick sends the fetch; the probe's own fetch_content blocks through it
+    _step_until(agent, config, _has_retrieved)  # on_tick sends the record fetch; the probe's body fetch spans it
     return config, agent
 
 
 def test_record_stored_during_a_probes_content_wait_gets_its_own_processing_time(tmp_path: Path):
-    """The record fetched from h1 while this node's probe is blocked in fetch_content
-    must log ts_ms = 129900 (the clock reading when SyncEngine.on_record actually ran),
-    never 130300 (the clock reading once fetch_content gives up and this step's
-    _drain_engine_events() finally flushes the queued event) -- the external review's
-    exact repro (its own numbers: a store at 125.1s logged as 127s).
+    """The record fetched from h1 while this node's probe body is in flight must log
+    ts_ms = 129900 (the clock reading when SyncEngine.on_record actually ran), never
+    the later clock reading at which the probe's fetch gives up -- the external
+    review's exact repro (its own numbers: a store at 125.1s logged as 127s).
     """
     config, _agent = _run_store_during_probe_wait(tmp_path)
     events_path = Path(config.state_dir) / "events.jsonl"
@@ -1617,7 +1755,8 @@ def test_record_stored_during_a_probes_content_wait_gets_its_own_processing_time
     stored = next(e for e in lines if e["event"] == "record_stored")
     assert stored["ts_ms"] == 129_900
     retrieved = next(e for e in lines if e["event"] == "probe_retrieved")
-    assert retrieved["ts_ms"] == 130_300  # the flush-time reading the old bug used instead
+    assert retrieved["success"] is False
+    assert retrieved["ts_ms"] > 130_000  # the fetch really did outlast the window's close
 
 
 def test_evalagg_does_not_censor_a_store_whose_processing_time_lands_before_window_end(tmp_path: Path):
@@ -1649,6 +1788,77 @@ def test_evalagg_does_not_censor_a_store_whose_processing_time_lands_before_wind
     run = evalagg.analyze_run(0.0, 1, str(run_dir))
     assert run.t0_source == "agent_start"
 
+    rows = {(r["origin"], r["seq"], r["node"]): r for r in run.discovery_rows}
+    row = rows[("h1", 1, "h0")]
+    assert row["censored"] is False, row
+    assert row["latency_ms"] == pytest.approx(69_900.0)
+
+
+def test_record_stored_still_queued_when_stop_at_s_passes_keeps_its_processing_time(tmp_path: Path):
+    """A record_stored queued at 129.9s whose flush only happens after the clock has
+    moved past stop_at_s (= evalgen.WINDOW_END_S, 130s) must log ts_ms = 129900, and
+    evalagg must judge the window/censoring rule on that, not on the flush time.
+
+    2026-11-02: once the probe fetch stopped blocking, the record_stored in
+    _run_store_during_probe_wait's scenario is flushed in the very step that
+    queued it, before the fake clock moves, so the two tests above pass even if
+    ts_ms were stamped at write time. This test keeps the event queued across a
+    clock advance instead: on_record is wrapped to let 0.3s pass after it queues
+    (standing in for the store's own write cost), the step's post-poll boundary
+    check then sees elapsed >= stop_at_s and returns without draining, and only
+    shutdown() writes the line -- at clock 130.2s, past the window's end. A
+    write-time stamp would log 130200 and evalagg would censor the row.
+    """
+    clock = _FakeClock(129.7)
+    record = schema.IndexRecord(
+        origin="h1", seq=1, content_name="ccnx:/content/h1/1", zone="zone1", disaster="flood", media="image",
+        observed_at=1,
+    )
+    fetch_name = names.build_record_name("g", "h1", "h1", 1)
+    handle = _FakeHandle(
+        [
+            _FakePacket(),  # first step: nothing arrives; on_tick then sends the record fetch
+            _FakePacket(is_data=True, name=fetch_name, payload=schema.encode(record)),  # second step, at 129.9s
+        ],
+        clock=clock,
+        step_s=0.1,
+    )
+    config = _config(tmp_path, neighbors=["h1"], stop_at_s=evalgen.WINDOW_END_S)
+    agent = build_agent(config, handle, clock=clock)
+    # Same tracker shortcut as _run_store_during_probe_wait: put (h1, 1) in flight
+    # without first driving a real state_rx round trip.
+    agent._engine._tracker.observe_state("h1", "h1", hi=1, extra=())
+
+    real_on_record = agent._engine.on_record
+
+    def on_record_then_time_passes(name, payload, now):
+        real_on_record(name, payload, now)
+        clock.tick(0.3)
+
+    agent._engine.on_record = on_record_then_time_passes
+
+    agent.step()
+    agent.step()
+    assert clock() == pytest.approx(130.2)
+    # Still queued: the step that stored it returned at the stop boundary without draining.
+    assert [e for e in _read_events(config) if e["event"] == "record_stored"] == []
+    agent.shutdown()
+
+    events = _read_events(config)
+    stored = next(e for e in events if e["event"] == "record_stored")
+    assert stored["ts_ms"] == 129_900
+
+    run_dir = tmp_path / "run"
+    for node, text in (
+        ("h0", (Path(config.state_dir) / "events.jsonl").read_text()),
+        # h1's only line evalagg needs: when it created the record h0 stores.
+        ("h1", json.dumps({"event": "record_created", "origin": "h1", "seq": 1, "ts_ms": 60_000}) + "\n"),
+    ):
+        dst = run_dir / "debug" / "node_dirs" / node / "semindex" / "events.jsonl"
+        dst.parent.mkdir(parents=True)
+        dst.write_text(text)
+
+    run = evalagg.analyze_run(0.0, 1, str(run_dir))
     rows = {(r["origin"], r["seq"], r["node"]): r for r in run.discovery_rows}
     row = rows[("h1", 1, "h0")]
     assert row["censored"] is False, row

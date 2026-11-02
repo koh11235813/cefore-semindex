@@ -679,6 +679,116 @@ def test_check_t1_precondition_fails_when_a_node_never_wrote_a_counters_line(tmp
     ) in out.splitlines()
 
 
+# -- T1 with probe_idx: pairing by index, not adjacency (2026-11-02) ----------
+
+
+def _write_t1_probe_idx_run(run_dir: Path) -> Path:
+    """The T1 happy path as the non-blocking agent logs it: both probes carry
+    probe_idx (during-outage 0, after-recovery 1), and the after-recovery body
+    fetch's probe_retrieved is no longer adjacent to its discovery -- other h2
+    rows (a counters_snapshot, a state_rx) land in between. Returns h2's file."""
+    _write_t1_happy_path(run_dir)
+    h2_path = _node_events_path(run_dir, "h2")
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    probe_rows = [e for e in events if e.get("event") in ("probe_discovered", "probe_retrieved")]
+    for event, idx in zip(probe_rows, (0, 0, 1, 1)):
+        event["probe_idx"] = idx
+    after_retrieved_i = events.index(probe_rows[3])
+    events[after_retrieved_i:after_retrieved_i] = [
+        {"ts_ms": _ts_ms(45), "event": "counters_snapshot", "bytes_sent": 1, "bytes_received": 1,
+         "control_bytes_sent": 1, "control_bytes_received": 1},
+        {"ts_ms": _ts_ms(45), "event": "state_rx", "neighbor": "h1"},
+    ]
+    _write_jsonl(h2_path, events)
+    return h2_path
+
+
+def test_check_t1_all_pass_pairing_the_after_recovery_retrieval_by_probe_idx(tmp_path: Path):
+    """With probe_idx on the discovery, the retrieval with the same probe_idx answers it
+    even with other rows in between: the agent no longer blocks the loop while a probe's
+    body is in flight, so those rows are an honest run's normal shape."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    _write_t1_probe_idx_run(run_dir)
+
+    assert run_check("t1", str(experiment_path), str(run_dir)) == 0
+
+
+def test_check_t1_protocol_fails_when_the_probe_idx_retrieval_lands_after_the_counters_line(
+    tmp_path: Path, capsys
+):
+    """The hole the 2026-10-23 review closed for the adjacency rule stays closed for the
+    probe_idx rule: a retrieval with the right probe_idx that only follows h2's own
+    shutdown `counters` line was not written by the life that ran the discovery, so
+    it does not count."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    h2_path = _write_t1_probe_idx_run(run_dir)
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    retrieved = next(e for e in events if e.get("event") == "probe_retrieved" and e["probe_idx"] == 1)
+    events.remove(retrieved)
+    events.append(retrieved)  # now follows the counters line
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: after-recovery probe retrieves the content body: "
+        "no probe_retrieved with probe_idx 1 between the after-recovery discovery and h2's next counters line"
+    ) in out.splitlines()
+
+
+def test_check_t1_protocol_fails_when_no_retrieval_has_the_discoverys_probe_idx(tmp_path: Path, capsys):
+    """A successful retrieval of the right target that names a different probe_idx (here the
+    during-outage probe's 0) is not this discovery's body fetch."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    h2_path = _write_t1_probe_idx_run(run_dir)
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "probe_retrieved" and event["probe_idx"] == 1:
+            event["probe_idx"] = 0
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: after-recovery probe retrieves the content body: "
+        "no probe_retrieved with probe_idx 1 between the after-recovery discovery and h2's next counters line"
+    ) in out.splitlines()
+
+
+def test_check_t1_protocol_fails_on_a_wrong_target_probe_idx_retrieval(tmp_path: Path, capsys):
+    """Pairing by probe_idx still checks the paired row's own fields: the same probe_idx
+    with a failed fetch is not a retrieval of the content body."""
+    experiment_path = tmp_path / "t1.json"
+    _write_experiment(experiment_path, _t1_experiment())
+    run_dir = tmp_path / "run"
+    h2_path = _write_t1_probe_idx_run(run_dir)
+    events = [json.loads(line) for line in h2_path.read_text(encoding="utf-8").splitlines()]
+    for event in events:
+        if event.get("event") == "probe_retrieved" and event["probe_idx"] == 1:
+            event["success"] = False
+    _write_jsonl(h2_path, events)
+
+    rc = run_check("t1", str(experiment_path), str(run_dir))
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert (
+        "FAIL: after-recovery probe retrieves the content body: "
+        "{'ts_ms': 1700000046000, 'event': 'probe_retrieved', 'origin': 'h0', 'seq': 1, "
+        "'content_name': 'ccnx:/content/h0/body', 'success': False, 'bytes': 433390, 'probe_idx': 1}"
+    ) in out.splitlines()
+
+
 # -- T2a --------------------------------------------------------------------
 
 

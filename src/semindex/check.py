@@ -484,15 +484,36 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
     # (e.g. h2's own shutdown `counters` line) and keeps scanning until it
     # finds one -- a real after-recovery retrieval moved past such a row
     # still satisfied this check, with nothing between it and the
-    # discovery actually required. Agent.step()'s own _run_probe writes a
-    # successful discovery's retrieval synchronously, right after it, with
-    # nothing else from this node logged in between, so the row that
-    # actually answers THIS discovery is the IMMEDIATE next row in h2's
-    # own events.jsonl -- indexed directly, never found by scanning past
-    # whatever sits in between. ts_ms is still not compared (EventWriter
+    # discovery actually required. ts_ms is never compared (EventWriter
     # rounds to whole milliseconds, so a fast in-process fetch can
     # legitimately land on the exact same ts_ms as its own discovery).
-    retrieved_after = prober_events[after_idx + 1] if after_idx + 1 < len(prober_events) else None
+    #
+    # 2026-11-02: the agent no longer blocks its loop while a probe's body
+    # is in flight, so other rows now land between a discovery and its
+    # retrieval, and both carry probe_idx. A discovery with probe_idx is
+    # answered by the probe_retrieved with the same probe_idx, searched only
+    # up to the first `counters` (or `agent_start`) row after it -- the end
+    # of the life that ran the discovery, before which the agent always
+    # writes that retrieval -- so a row moved past shutdown's `counters`
+    # still does not count. A discovery without probe_idx (a log from before
+    # this change) keeps the old rule: its retrieval was written
+    # synchronously right after it, so it must be the IMMEDIATE next row.
+    after_probe_idx = after_discovered.get("probe_idx")
+    if after_probe_idx is None:
+        retrieved_after = prober_events[after_idx + 1] if after_idx + 1 < len(prober_events) else None
+        missing_detail = "no row followed the after-recovery discovery"
+    else:
+        retrieved_after = None
+        for e in prober_events[after_idx + 1 :]:
+            if e.get("event") in ("counters", "agent_start"):
+                break
+            if e.get("event") == "probe_retrieved" and e.get("probe_idx") == after_probe_idx:
+                retrieved_after = e
+                break
+        missing_detail = (
+            f"no probe_retrieved with probe_idx {after_probe_idx} between the after-recovery discovery "
+            f"and {prober}'s next counters line"
+        )
     after_match_tuples = [(mm["origin"], mm["seq"]) for mm in after_discovered["matches"]]
     if not after_match_tuples:
         # An empty discovery is already flagged above ("discovers all N+M
@@ -509,10 +530,7 @@ def check_t1(spec: ExperimentSpec, run_dir: str) -> _Checker:
             and retrieved_after.get("content_name") == spec.publisher.uri
             and retrieved_after.get("success") is True
         )
-        detail = (
-            f"{retrieved_after!r}" if retrieved_after is not None
-            else "no row followed the after-recovery discovery"
-        )
+        detail = f"{retrieved_after!r}" if retrieved_after is not None else missing_detail
     c.protocol("after-recovery probe retrieves the content body", retrieval_ok, detail)
 
     for node in [origin] + non_origin_nodes:

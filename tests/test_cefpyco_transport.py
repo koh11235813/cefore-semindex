@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from semindex import holder_state, schema
 from semindex.cefpyco_transport import CefpycoTransport
 from semindex.transport import Response
@@ -52,8 +54,8 @@ class _FakeHandle:
     further receive() returns _NOTHING, matching a real handle when
     nothing arrives within its own timeout_ms. If `clock` is given,
     receive() advances it by `step_s` on every call, so a test that waits
-    out a deadline via CefpycoTransport's own internal polling loop
-    (fetch_content) terminates without an actual sleep.
+    out a deadline by calling poll() repeatedly (each call one receive())
+    terminates without an actual sleep.
     """
 
     def __init__(self, packets=None, *, clock: _FakeClock | None = None, step_s: float = 0.1) -> None:
@@ -349,8 +351,23 @@ def test_on_time_data_pops_the_deadline_so_a_later_poll_reports_no_timeout():
     assert engine.on_fetch_timeout_calls == []
 
 
-def test_fetch_content_reassembles_every_chunk_and_stops_at_end_chunk_num():
-    """Fetches chunk 0..end one Interest at a time and counts bytes both ways."""
+def _poll_until_fetch_done(transport: CefpycoTransport, max_polls: int = 100) -> tuple[bool, int]:
+    """Drive poll() the way the agent loop does until the in-flight fetch has a result.
+
+    Bounded so a regression that never finishes a fetch fails the test
+    instead of hanging it.
+    """
+    for _ in range(max_polls):
+        transport.poll()
+        result = transport.take_fetch_result()
+        if result is not None:
+            return result
+    raise AssertionError(f"fetch still unfinished after {max_polls} polls")
+
+
+def test_start_fetch_reassembles_every_chunk_and_stops_at_end_chunk_num():
+    """Fetches chunk 0..end one Interest at a time, each next Interest sent only once
+    the previous chunk has been consumed by poll()."""
     name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
     handle = _FakeHandle(
@@ -361,15 +378,51 @@ def test_fetch_content_reassembles_every_chunk_and_stops_at_end_chunk_num():
         clock=clock,
     )
     transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
-    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
-    assert (ok, total) == (True, len(b"hello-world!"))
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    # start_fetch only sends chunk 0; it never receives, so it cannot block the loop.
+    assert handle.sent_interests == [(name, 0, 2000)]
+    assert handle.receive_timeout_calls == []
+    assert transport.fetch_in_flight() is True
+    assert _poll_until_fetch_done(transport) == (True, len(b"hello-world!"))
     assert [chunk_num for (_name, chunk_num, _lifetime) in handle.sent_interests] == [0, 1]
+    assert transport.fetch_in_flight() is False
 
 
-def test_fetch_content_does_not_move_the_control_byte_counters():
-    """2026-10-22 fix: fetch_content's own Interests/payloads count toward
+def test_take_fetch_result_returns_a_finished_result_exactly_once():
+    """A result is handed out once and then cleared, so the agent can never write
+    the same probe_retrieved twice; while a fetch is still waiting there is none."""
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [_FakePacket(), _FakePacket(is_data=True, name=name, payload=b"x", chunk_num=0, end_chunk_num=0)],
+        clock=clock,
+    )
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
+    assert transport.take_fetch_result() is None  # idle
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    transport.poll()  # nothing arrives
+    assert transport.take_fetch_result() is None  # still waiting
+    transport.poll()  # the chunk
+    assert transport.take_fetch_result() == (True, 1)
+    assert transport.take_fetch_result() is None
+
+
+def test_start_fetch_refuses_a_second_fetch_while_one_is_unsettled():
+    """At most one fetch at a time: every probe body shares one name, so a second
+    concurrent fetch's chunks could not be told apart from the first's."""
+    name = "ccnx:/content/h0/body"
+    transport = CefpycoTransport(_FakeHandle(), _StubEngine(), clock=_FakeClock(0.0))
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    with pytest.raises(RuntimeError) as exc_info:
+        transport.start_fetch(name, chunk_lifetime_ms=2000)
+    assert str(exc_info.value) == "a content fetch is still unsettled"
+
+
+def test_start_fetch_does_not_move_the_control_byte_counters():
+    """2026-10-22 fix: the fetch's own Interests/payloads count toward
     bytes_sent/received but never toward control_bytes_sent/received -- a large probe body must not
-    inflate what a reader treats as sync-protocol overhead."""
+    inflate what a reader treats as sync-protocol overhead. The chunk is counted exactly once
+    (2026-11-02: poll() intercepts it before _route_data, which would count it again)."""
     name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
     large_payload = b"x" * 433390  # T1's own live retrieval was this size
@@ -378,15 +431,15 @@ def test_fetch_content_does_not_move_the_control_byte_counters():
         clock=clock,
     )
     transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
-    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
-    assert (ok, total) == (True, len(large_payload))
-    assert transport.bytes_sent > 0
-    assert transport.bytes_received > len(large_payload)
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    assert _poll_until_fetch_done(transport) == (True, len(large_payload))
+    assert transport.bytes_sent == len(name.encode("utf-8"))
+    assert transport.bytes_received == len(name.encode("utf-8")) + len(large_payload)
     assert transport.control_bytes_sent == 0
     assert transport.control_bytes_received == 0
 
 
-def test_fetch_content_does_not_stop_early_when_a_later_chunk_advertises_the_end():
+def test_start_fetch_does_not_stop_early_when_a_later_chunk_advertises_the_end():
     """end_chunk_num == chunk_num (equality, not merely `is not None`) is what decides
     the fetch is complete. cefputfile only sets end_chunk_num on the last chunk, so
     this is latent today, but chunk 0 advertising end_chunk_num=1 (the real end is
@@ -404,22 +457,66 @@ def test_fetch_content_does_not_stop_early_when_a_later_chunk_advertises_the_end
         clock=clock,
     )
     transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
-    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
-    assert (ok, total) == (True, len(b"hello-world!"))
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    assert _poll_until_fetch_done(transport) == (True, len(b"hello-world!"))
     assert [chunk_num for (_name, chunk_num, _lifetime) in handle.sent_interests] == [0, 1]
 
 
-def test_fetch_content_fails_if_a_chunk_never_arrives_within_its_lifetime():
-    """A chunk whose Interest lifetime elapses with no matching Data fails the fetch."""
+def test_start_fetch_fails_if_a_chunk_never_arrives_within_its_lifetime():
+    """A chunk whose Interest lifetime elapses with no matching Data fails the fetch,
+    with the bytes already collected from earlier chunks -- and is never retransmitted
+    (Cefore v0.12's PIT would absorb a same-name retry within lifetime + 1 s)."""
     name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
-    handle = _FakeHandle([], clock=clock, step_s=0.2)
+    handle = _FakeHandle(
+        [_FakePacket(is_data=True, name=name, payload=b"abc", chunk_num=0, end_chunk_num=None)],
+        clock=clock,
+        step_s=0.2,
+    )
+    engine = _StubEngine()
+    transport = CefpycoTransport(handle, engine, clock=clock)
+    transport.start_fetch(name, chunk_lifetime_ms=500)
+    assert _poll_until_fetch_done(transport) == (False, 3)
+    assert [chunk_num for (_name, chunk_num, _lifetime) in handle.sent_interests] == [0, 1]
+    # chunk 1 was sent at clock 0.2, so its deadline is 0.7; the poll whose
+    # receive returns at 0.8 is the first to find it past due.
+    assert clock.value == pytest.approx(0.8)
+    # A per-chunk deadline is not a sync Interest deadline: the engine is never told.
+    assert engine.on_fetch_timeout_calls == []
+
+
+def test_start_fetch_still_accepts_a_chunk_on_the_receive_that_crosses_its_deadline():
+    """A chunk returned by the very receive() whose tick reaches the deadline is
+    consumed before the deadline is judged -- the same rule the old blocking
+    fetch_content had (it only checked the deadline before each receive)."""
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [_FakePacket(), _FakePacket(is_data=True, name=name, payload=b"late", chunk_num=0, end_chunk_num=0)],
+        clock=clock,
+        step_s=0.25,
+    )
     transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
-    ok, total = transport.fetch_content(name, chunk_lifetime_ms=500)
-    assert (ok, total) == (False, 0)
+    transport.start_fetch(name, chunk_lifetime_ms=500)
+    assert _poll_until_fetch_done(transport) == (True, 4)
+    assert clock.value == 0.5
 
 
-def test_fetch_content_dispatches_sync_traffic_seen_while_waiting_for_a_chunk():
+def test_start_fetch_gives_up_after_max_chunks_without_an_end_chunk_num():
+    """A guard against spinning forever on an object published with no end_chunk_num."""
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [_FakePacket(is_data=True, name=name, payload=b"ab", chunk_num=n, end_chunk_num=None) for n in range(5)],
+        clock=clock,
+    )
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
+    transport.start_fetch(name, chunk_lifetime_ms=2000, max_chunks=2)
+    assert _poll_until_fetch_done(transport) == (False, 4)
+    assert [chunk_num for (_name, chunk_num, _lifetime) in handle.sent_interests] == [0, 1]
+
+
+def test_poll_dispatches_sync_traffic_while_a_fetch_is_in_flight():
     """A neighbor Interest arriving mid-fetch is still served, not dropped: cefpyco's
     receive buffer is a single process-wide static one, so a packet not read here is
     gone, not merely delayed (module docstring).
@@ -437,15 +534,32 @@ def test_fetch_content_dispatches_sync_traffic_seen_while_waiting_for_a_chunk():
     engine = _StubEngine()
     engine.handle_interest_result = Response(payload=b"{}", expiry_s=1.0, cache_time_s=0.0)
     transport = CefpycoTransport(handle, engine, clock=clock)
-    ok, total = transport.fetch_content(content_name, chunk_lifetime_ms=2000)
-    assert (ok, total) == (True, 1)
+    transport.start_fetch(content_name, chunk_lifetime_ms=2000)
+    assert _poll_until_fetch_done(transport) == (True, 1)
     assert engine.handle_interest_calls == [sync_name]
     assert handle.sent_data == [(sync_name, b"{}", -1, 1000, 0)]
 
 
-def test_fetch_content_treats_a_chunk_with_no_payload_tlv_as_empty_not_a_crash():
+def test_poll_still_times_out_sync_interests_while_a_fetch_is_in_flight():
+    """A sync Interest's own deadline keeps being judged by poll() during a fetch,
+    exactly as it was inside the old blocking fetch_content's wait loop."""
+    content_name = "ccnx:/content/h0/body"
+    sync_name = "ccnx:/semidx/g/h1/rec/h1/1"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.2)
+    engine = _StubEngine()
+    transport = CefpycoTransport(handle, engine, clock=clock)
+    transport.send_interest(sync_name, 300)
+    transport.start_fetch(content_name, chunk_lifetime_ms=2000)
+    transport.poll()  # 0.2
+    transport.poll()  # 0.4: past the sync Interest's 0.3 deadline
+    assert engine.on_fetch_timeout_calls == [(sync_name, 0.4)]
+    assert transport.fetch_in_flight() is True
+
+
+def test_start_fetch_treats_a_chunk_with_no_payload_tlv_as_empty_not_a_crash():
     """The same payload=None case as the poll()/on_record test above, but on
-    fetch_content's own chunk-matching path: a chunk Data with no payload TLV
+    the fetch's own chunk-matching path: a chunk Data with no payload TLV
     (chunk_num present, payload None) must count as 0 bytes, not raise.
     """
     name = "ccnx:/content/h0/body"
@@ -455,29 +569,53 @@ def test_fetch_content_treats_a_chunk_with_no_payload_tlv_as_empty_not_a_crash()
         clock=clock,
     )
     transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
-    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
-    assert (ok, total) == (True, 0)
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    assert _poll_until_fetch_done(transport) == (True, 0)
 
 
-def test_fetch_content_stops_promptly_when_should_stop_becomes_true_mid_wait():
-    """A chunk wait that would otherwise burn its full chunk_lifetime_ms exits as
-    soon as should_stop() reports true, instead of only being noticed on the agent
-    loop's next step() -- the SIGTERM-while-mid-fetch case this well-under-2s
-    shutdown budget depends on: the 2 s SIGTERM-to-SIGKILL budget a ReCefore
-    host_apps process gets (map.md's T1 partition-phase probe is exactly this:
-    content that is unreachable by design).
-    """
+def test_poll_leaves_a_chunk_that_arrives_past_should_stop_unconsumed():
+    """A chunk returned by the receive() after which should_stop() reports true is
+    abandoned unprocessed and uncounted, the same as any other packet that receive
+    returned past the stop boundary."""
     name = "ccnx:/content/h0/body"
     clock = _FakeClock(0.0)
-    handle = _FakeHandle([], clock=clock, step_s=0.1)
-    calls = {"n": 0}
+    handle = _FakeHandle(
+        [_FakePacket(is_data=True, name=name, payload=b"x", chunk_num=0, end_chunk_num=0)], clock=clock
+    )
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock, should_stop=lambda: True)
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    transport.poll()
+    assert transport.take_fetch_result() is None
+    assert transport.fetch_in_flight() is True
+    assert transport.bytes_received == 0
 
-    def should_stop() -> bool:
-        calls["n"] += 1
-        return calls["n"] >= 3  # let one receive() happen first, then stop mid-wait
 
-    transport = CefpycoTransport(handle, _StubEngine(), clock=clock, should_stop=should_stop)
-    ok, total = transport.fetch_content(name, chunk_lifetime_ms=2000)
-    assert (ok, total) == (False, 0)
-    # Stopped after one 0.1s receive tick, nowhere near the 2s chunk_lifetime_ms deadline.
-    assert clock.value < 1.0
+def test_abort_fetch_ends_an_in_flight_fetch_as_a_failure_with_the_bytes_so_far():
+    """The stop path: an in-flight fetch is settled as (False, bytes collected so far),
+    so the agent can still write its probe_retrieved before the final counters line."""
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [_FakePacket(is_data=True, name=name, payload=b"abc", chunk_num=0, end_chunk_num=None)], clock=clock
+    )
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    transport.poll()  # chunk 0 consumed, chunk 1 requested
+    transport.abort_fetch()
+    assert transport.fetch_in_flight() is False
+    assert transport.take_fetch_result() == (False, 3)
+
+
+def test_abort_fetch_keeps_a_fetch_that_already_finished():
+    """A fetch that finished before the stop is reported as it finished, not
+    overwritten as a failure just because nobody collected it yet."""
+    name = "ccnx:/content/h0/body"
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle(
+        [_FakePacket(is_data=True, name=name, payload=b"abc", chunk_num=0, end_chunk_num=0)], clock=clock
+    )
+    transport = CefpycoTransport(handle, _StubEngine(), clock=clock)
+    transport.start_fetch(name, chunk_lifetime_ms=2000)
+    transport.poll()
+    transport.abort_fetch()
+    assert transport.take_fetch_result() == (True, 3)
