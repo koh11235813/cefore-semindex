@@ -786,7 +786,10 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
     # the config stays byte for byte what it was before this key existed.
     if spec.max_in_flight_per_neighbor is not None:
         config["max_in_flight_per_neighbor"] = spec.max_in_flight_per_neighbor
-    # Same rule: left out, no PRAGMA is issued and SQLite's default applies.
+    # Same rule: left out, the config stays byte for byte what it was, and the
+    # agent opens index.db with its own default mode. 2026-10-29: that default
+    # changed from SQLite's FULL to NORMAL, so an unchanged config now runs
+    # NORMAL; "FULL" must be given to reproduce runs from before then.
     if spec.store_synchronous is not None:
         config["store_synchronous"] = spec.store_synchronous
 

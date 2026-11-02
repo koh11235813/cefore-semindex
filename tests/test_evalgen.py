@@ -723,8 +723,8 @@ def test_cli_rejects_a_zero_max_in_flight(tmp_path: Path, capsys):
 
 
 def test_no_store_synchronous_writes_nothing():
-    """Not given: no key in the experiment or any agent config, so the agents issue
-    no PRAGMA synchronous and the files stay what they were before the key."""
+    """Not given: no key in the experiment or any agent config, so the files stay what
+    they were before the key (the agents then use their own default, NORMAL)."""
     raw = evalgen.build_experiment(0.2, 7, "s2", "/out")
     assert "store_synchronous" not in raw
     for config in gen.generate(parse_experiment(raw), "/cfg").agent_configs.values():
@@ -776,15 +776,32 @@ def test_cli_store_synchronous_reaches_the_written_agent_configs(tmp_path: Path)
     config, and each written config loads as an agent config carrying that mode."""
     outdir = tmp_path / "run"
     rc = evalgen.main(
-        ["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(outdir), "--store-synchronous", "NORMAL"]
+        ["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(outdir), "--store-synchronous", "FULL"]
     )
     assert rc == 0
     raw = json.loads((outdir / "s2_p000_seed1.experiment.json").read_text(encoding="utf-8"))
-    assert raw["store_synchronous"] == "NORMAL"
+    assert raw["store_synchronous"] == "FULL"
     for host in evalgen.AGENTS:
         path = outdir / "s2_p000_seed1" / f"h{host}.json"
-        assert json.loads(path.read_text(encoding="utf-8"))["store_synchronous"] == "NORMAL"
+        assert json.loads(path.read_text(encoding="utf-8"))["store_synchronous"] == "FULL"
+        assert load_config(str(path), t0_ms=0).store_synchronous == "FULL"
+
+
+def test_cli_without_store_synchronous_writes_configs_that_load_as_normal(tmp_path: Path):
+    """Without the flag no agent config carries the key, and each loads with the agents'
+    default mode, NORMAL."""
+    outdir = tmp_path / "run"
+    assert evalgen.main(["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(outdir)]) == 0
+    for host in evalgen.AGENTS:
+        path = outdir / "s2_p000_seed1" / f"h{host}.json"
+        assert "store_synchronous" not in json.loads(path.read_text(encoding="utf-8"))
         assert load_config(str(path), t0_ms=0).store_synchronous == "NORMAL"
+
+
+def test_resolve_store_synchronous_gives_normal_when_not_set_and_the_given_mode_otherwise():
+    """The mode a run's agents use: NORMAL for None, any given name unchanged."""
+    assert evalgen.resolve_store_synchronous(None) == "NORMAL"
+    assert [evalgen.resolve_store_synchronous(m) for m in ("FULL", "NORMAL", "OFF")] == ["FULL", "NORMAL", "OFF"]
 
 
 def test_cli_refuses_a_lower_case_store_synchronous(tmp_path: Path):

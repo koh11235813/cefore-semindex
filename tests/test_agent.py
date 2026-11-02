@@ -1676,9 +1676,15 @@ def test_validate_config_accepts_each_store_synchronous_mode(value):
     assert validate_config(raw).store_synchronous == value
 
 
-def test_validate_config_leaves_store_synchronous_unset_when_absent():
-    """Absent means None: no PRAGMA synchronous is issued at all."""
-    assert validate_config(_minimal_raw()).store_synchronous is None
+def test_validate_config_defaults_store_synchronous_to_normal_when_absent():
+    """Absent means NORMAL, the agents' default since 2026-10-29."""
+    assert validate_config(_minimal_raw()).store_synchronous == "NORMAL"
+
+
+def test_build_agent_opens_its_store_with_normal_when_no_mode_is_configured(tmp_path: Path):
+    """A config without store_synchronous opens index.db with PRAGMA synchronous = 1 (NORMAL)."""
+    agent = build_agent(_config(tmp_path), _FakeHandle(), clock=_FakeClock(0.0))
+    assert agent._store._conn.execute("PRAGMA synchronous").fetchone()[0] == 1
 
 
 @pytest.mark.parametrize(("value", "expected"), [("NORMAL", 1), ("OFF", 0), ("FULL", 2)])
