@@ -1,0 +1,5 @@
+s4b0p5 p0 1-4: n=4819 mean_fetch=2ms svc/rec=0ms | 5-8: n=5 mean_fetch=3ms svc/rec=0ms | 9-16: - | 17+: -
+s4b10p043 p0 1-4: n=40 mean_fetch=2ms svc/rec=0ms | 5-8: n=8 mean_fetch=3ms svc/rec=0ms | 9-16: n=174 mean_fetch=4ms svc/rec=0ms | 17+: n=707 mean_fetch=5ms svc/rec=0ms
+s4a p0 1-4: n=1424 mean_fetch=2ms svc/rec=0ms | 5-8: n=1403 mean_fetch=2ms svc/rec=0ms | 9-16: n=926 mean_fetch=4ms svc/rec=0ms | 17+: n=2733 mean_fetch=6ms svc/rec=0ms
+t2k4 p0.4 1-4: n=128 mean_fetch=396ms svc/rec=45ms | 5-8: n=38 mean_fetch=293ms svc/rec=43ms | 9-16: n=43 mean_fetch=724ms svc/rec=67ms | 17+: n=40 mean_fetch=2088ms svc/rec=70ms
+t2c32k4 p0.4 1-4: n=101 mean_fetch=609ms svc/rec=33ms | 5-8: n=44 mean_fetch=668ms svc/rec=30ms | 9-16: n=28 mean_fetch=467ms svc/rec=50ms | 17+: n=46 mean_fetch=803ms svc/rec=35ms

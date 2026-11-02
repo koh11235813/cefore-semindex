@@ -4,7 +4,8 @@ Batch = records newly covered by one state_rx (hi only); fetch = n's record_stor
 Prints one line per stage/p: per batch-size bucket, count, mean fetch and median per-record service.
 Read-only over the store.
 
-Usage: capbind.py [--store DIR]   (default /home/lab_shared/semindex-eval)
+Usage: capbind.py [--store DIR] [--prefix s2]   (store default /home/lab_shared/semindex-eval;
+  --prefix picks the A/B stage family; the FULL trial rows t2k4/t2c32k4 are printed regardless)
 """
 import argparse, json, sys, statistics, collections
 from multiprocessing import Pool
@@ -68,9 +69,11 @@ def report(label, jobs):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--store", default=ST)
+    # 2026-11-02: stage names come from --prefix so the same code reads the NORMAL re-collection (s4*).
+    ap.add_argument("--prefix", default="s2", help="stage-name family (s2 = FULL main run, s4 = NORMAL)")
     a = ap.parse_args()
-    for stage in ["s2b0p5", "s2b10p043", "s2a"]:
-        seeds = range(1, 101) if stage == "s2a" else range(1, 21)
+    for stage in [a.prefix + "b0p5", a.prefix + "b10p043", a.prefix + "a"]:
+        seeds = range(1, 101) if stage == a.prefix + "a" else range(1, 21)
         report(f"{stage} p0", [(a.store, stage, 0, s) for s in seeds])
     for stage in ["t2k4", "t2c32k4"]:
         report(f"{stage} p0.4", [(a.store, stage, 0.4, s) for s in range(1, 4)])

@@ -1,0 +1,12 @@
+== s4b0p5
+  commit-in-step (N1-N0): n=19005 p10=0 median=0 p90=1 p99=1
+  then wait for next Data from same holder: n=19005 p10=0 median=0 p90=1 p99=1
+  commit hist (4ms bins): 0:18998 4:2 56:1 120:4
+== s4b10p043
+  commit-in-step (N1-N0): n=67643 p10=0 median=0 p90=1 p99=1
+  then wait for next Data from same holder: n=67641 p10=0 median=0 p90=1 p99=1
+  commit hist (4ms bins): 0:67642 4:1
+== s4a
+  commit-in-step (N1-N0): n=297057 p10=0 median=0 p90=1 p99=1
+  then wait for next Data from same holder: n=297055 p10=0 median=0 p90=1 p99=1
+  commit hist (4ms bins): 0:297037 4:1 120:19

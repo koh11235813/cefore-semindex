@@ -51,11 +51,12 @@ def _add(acc, key, **vals):
         d[k] = d.get(k, 0) + v
 
 
-def attribute_run(stage, p, seed, run_dir, disc=None):
+def attribute_run(stage, p, seed, run_dir, disc=None, c_stage=False):
     """Attribute one valid run; returns {'hop': {...}, 'dec': {...}, 'chk': {...}, 'pair': {...}}.
 
     `disc` is this run's {(origin, seq, node): latency_ms or None} from main-agg discovery.csv,
     used only for the exactness check (None -> check skipped for this run, counted).
+    `c_stage` marks a run of the stage-1 default policy (the C stage), whose poll arm is relabelled 2.0.
     """
     meta = json.load(open(f"{run_dir}/meta.json"))
     chk = defaultdict(float)
@@ -111,8 +112,9 @@ def attribute_run(stage, p, seed, run_dir, disc=None):
         v.sort(key=lambda x: x[0])
     for v in dec_ts.values():
         v.sort(key=lambda x: x[0])
-    s2c_like = stage == "s2c"
-    if s2c_like:
+    # 2026-11-02: the caller says which stage is C (was `stage == "s2c"`), so the same code
+    # reads the NORMAL re-collection (s4*) without the stage name deciding the arm labels.
+    if c_stage:
         # stage-1 policy: interval_s is the jittered value itself, not one of 4 arms; label the arm "2.0".
         for key, lst in polls.items():
             polls[key] = [(t, 2.0, ap, st, c, f) for (t, _a, ap, st, c, f) in lst]

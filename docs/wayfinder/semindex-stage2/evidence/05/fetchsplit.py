@@ -6,7 +6,10 @@ learned: time spent waiting for room under the per-neighbour in-flight cap. roun
 that fetch_plan: the Interest's time out and back through the upstream. The round trip is also
 split by how many fetches toward m were outstanding when that Interest went out (fetch_plan
 state.in_flight + its position in the plan), which shows whether the upstream answers queued
-Interests one after another. Read-only over the store. Usage: fetchsplit.py [--store DIR]
+Interests one after another. Read-only over the store.
+
+Usage: fetchsplit.py [--store DIR] [--prefix s2]   (--prefix picks the A/B stage family; the FULL
+trial rows t2k4/t2c32k4 are printed regardless)
 """
 import argparse, json, statistics, collections
 from multiprocessing import Pool
@@ -51,9 +54,12 @@ def bucket(k):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--store", default="/home/lab_shared/semindex-eval")
+    # 2026-11-02: stage names come from --prefix so the same code reads the NORMAL re-collection (s4*).
+    ap.add_argument("--prefix", default="s2", help="stage-name family (s2 = FULL main run, s4 = NORMAL)")
     a = ap.parse_args()
-    for stage, p, seeds in [("s2b0p5", 0, 20), ("s2b1p359", 0, 20), ("s2b3p695", 0, 20), ("s2b10p043", 0, 20),
-                            ("s2a", 0, 100), ("t2k4", 0.4, 3), ("t2c32k4", 0.4, 3)]:
+    P = a.prefix
+    for stage, p, seeds in [(P + "b0p5", 0, 20), (P + "b1p359", 0, 20), (P + "b3p695", 0, 20), (P + "b10p043", 0, 20),
+                            (P + "a", 0, 100), ("t2k4", 0.4, 3), ("t2c32k4", 0.4, 3)]:
         with Pool(6) as pool:
             rows = [r for rs in pool.map(one, [(a.store, stage, p, s) for s in range(1, seeds + 1)]) for r in rs]
         q = statistics.mean(r[0] for r in rows); t = statistics.mean(r[1] for r in rows)

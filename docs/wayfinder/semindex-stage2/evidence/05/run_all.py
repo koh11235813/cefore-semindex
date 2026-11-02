@@ -1,6 +1,9 @@
 """Run attrib.attribute_run over every run of the given stages and write the ope05 CSVs.
 
-Usage: run_all.py [--stages s2b0p5,...] [--out DIR] [--store DIR] [--agg DIR] [--workers N]
+Usage: run_all.py [--prefix s2] [--stages s2b0p5,...] [--out DIR] [--store DIR] [--agg DIR] [--workers N]
+  --prefix: stage-name family; stages are {prefix}c, {prefix}b0p5, {prefix}b1p359, {prefix}b3p695,
+            {prefix}b10p043, {prefix}a (s2 = FULL main run, s4 = NORMAL re-collection).
+  --stages: subset of that family to read (default: all six).
   --store: evalrun store holding <stage>/p<p>/<seed>/ run dirs (read-only).
   --agg:   evalagg output dir holding <stage>/discovery.csv (used for the exactness check).
 Outputs (in --out): per_hop_B.csv, predicted_vs_B.csv, state_buckets.csv, checks.csv, fetch_by_inflight.csv,
@@ -24,7 +27,10 @@ from semindex import evalagg
 # Defaults for --store / --agg: where the committed CSVs were produced from.
 STORE = "/home/lab_shared/semindex-eval"
 AGG = "/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/main-agg"
-B_STAGES = {"s2b0p5": 0.5, "s2b1p359": 1.359, "s2b3p695": 3.695, "s2b10p043": 10.043, "s2c": 2.0}
+# 2026-11-02: stage names come from --prefix so the same code reads the NORMAL re-collection (s4*).
+# Suffix -> chosen interval (s); "c" is the stage-1 policy, labelled 2.0 by attrib (no fixed arm).
+B_SUFFIXES = {"b0p5": 0.5, "b1p359": 1.359, "b3p695": 3.695, "b10p043": 10.043, "c": 2.0}
+STAGE_SUFFIXES = ["b0p5", "b1p359", "b3p695", "b10p043", "c", "a"]
 ARMS = [0.5, 1.359, 3.695, 10.043]
 PS = [0.0, 0.1, 0.2, 0.3, 0.4]
 CENSOR_FLAG = 0.02  # a side whose censored share of pairs/hops exceeds this is flagged unreliable
@@ -46,8 +52,8 @@ def work(args):
 
     Needs no paths of its own: the run dir travels in `args` and DISC is inherited through fork.
     """
-    stage, p, seed, run_dir = args
-    return stage, p, attrib.attribute_run(stage, p, seed, run_dir, DISC.get((stage, p, seed)))
+    stage, p, seed, run_dir, c_stage = args
+    return stage, p, attrib.attribute_run(stage, p, seed, run_dir, DISC.get((stage, p, seed)), c_stage=c_stage)
 
 
 def merge(dst, src, maxkeys=("exact_maxerr",)):
@@ -162,19 +168,23 @@ def hop_metrics(h, d):
 def main():
     """Attribute every run of the requested stages, merge, and write the ope05 CSVs plus raw sums."""
     ap = argparse.ArgumentParser()
-    ap.add_argument("--stages", default="s2b0p5,s2b1p359,s2b3p695,s2b10p043,s2c,s2a")
+    ap.add_argument("--prefix", default="s2", help="stage-name family (s2 = FULL main run, s4 = NORMAL)")
+    ap.add_argument("--stages", default=None, help="comma list; default: every stage of --prefix")
     ap.add_argument("--out", default=os.path.dirname(os.path.abspath(__file__)))
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--store", default=STORE)
     ap.add_argument("--agg", default=AGG)
     a = ap.parse_args()
-    stages = a.stages.split(",")
+    P = a.prefix
+    B_STAGES = {P + sfx: v for sfx, v in B_SUFFIXES.items()}
+    A_STAGE, C_STAGE = P + "a", P + "c"
+    stages = a.stages.split(",") if a.stages else [P + sfx for sfx in STAGE_SUFFIXES]
     t_start = time.time()
     jobs = []
     for st in stages:
         load_disc(st, a.agg)
         for r in evalagg.discover_runs(a.store, st):
-            jobs.append((st, r.p, r.seed, r.run_dir))
+            jobs.append((st, r.p, r.seed, r.run_dir, st == C_STAGE))
     hop, dec, pair, gapdiff = {}, {}, defaultdict(dict), defaultdict(lambda: [0, 0.0, 0.0])
     chk = defaultdict(dict)
     perrun = {tag: defaultdict(dict) for tag, _k, _f in RUNSE}  # tag -> key -> {run_idx: (W, N)}
@@ -240,7 +250,7 @@ def main():
         rows.append(dict(stage=st, p="all", check=f"gap_minus_applied_maxabs_ms|arm={arm}", value=mx))
     write_csv(f"{a.out}/checks.csv", rows)
 
-    # ---- per_hop_B.csv (B stages + s2c), per p x hop ---------------------------------
+    # ---- per_hop_B.csv (B stages + the C stage), per p x hop ---------------------------------
     hB = collapse(hop, (0, 1, 2, 3))
     dB = collapse(dec, (0, 1, 2, 3))
     rows = []
@@ -262,17 +272,17 @@ def main():
         write_csv(f"{a.out}/per_hop_B.csv", rows)
 
     # ---- predicted_vs_B.csv ----------------------------------------------------------
-    if "s2a" in stages:
+    if A_STAGE in stages:
         hA = collapse(hop, (0, 1, 2, 3))
         dA = collapse(dec, (0, 1, 2, 3))
-        bstage = {v: k for k, v in B_STAGES.items() if k != "s2c"}
+        bstage = {v: k for k, v in B_STAGES.items() if k != C_STAGE}
         rows = []
         for arm in ARMS:
             for pp in PS:
                 cum_a = cum_b = 0.0
                 cens = {"a": [0, 0], "b": [0, 0]}
                 for hp in range(1, 5):
-                    ka, kb = ("s2a", pp, arm, hp), (bstage[arm], pp, arm, hp)
+                    ka, kb = (A_STAGE, pp, arm, hp), (bstage[arm], pp, arm, hp)
                     ma = hop_metrics(hA.get(ka, {}), dA.get(ka, {}))
                     mb = hop_metrics(hB.get(kb, {}), dB.get(kb, {}))
                     cum_a += ma["wait_fetch_ms"]
@@ -285,8 +295,8 @@ def main():
                     # this hop distance (a record that never reached the upstream drops out of the
                     # downstream hops' counts), so the end-to-end cell is also judged by the share of
                     # (origin, seq, node) pairs at exactly this distance that were censored.
-                    ea = ratio(pair[("s2a", pp)].get(("c", hp), 0),
-                               pair[("s2a", pp)].get(("n", hp), 0) + pair[("s2a", pp)].get(("c", hp), 0))
+                    ea = ratio(pair[(A_STAGE, pp)].get(("c", hp), 0),
+                               pair[(A_STAGE, pp)].get(("n", hp), 0) + pair[(A_STAGE, pp)].get(("c", hp), 0))
                     eb = ratio(pair[(bstage[arm], pp)].get(("c", hp), 0),
                                pair[(bstage[arm], pp)].get(("n", hp), 0) + pair[(bstage[arm], pp)].get(("c", hp), 0))
                     rows.append(dict(
@@ -315,7 +325,7 @@ def main():
                         relerr_poll_B=ratio(ma["poll_B_per_recordhop"] - mb["poll_B_per_recordhop"],
                                             mb["poll_B_per_recordhop"]),
                         pred_e2e_ms=cum_a,
-                        pred_e2e_se=e2e_se([perrun["hop_wf"].get(("s2a", pp, arm, x), {}) for x in range(1, hp + 1)]),
+                        pred_e2e_se=e2e_se([perrun["hop_wf"].get((A_STAGE, pp, arm, x), {}) for x in range(1, hp + 1)]),
                         b_e2e_sum_se=e2e_se([perrun["hop_wf"].get((bstage[arm], pp, arm, x), {})
                                              for x in range(1, hp + 1)]), b_e2e_sum_of_hop_means_ms=cum_b,
                         b_e2e_direct_ms=ratio(pair[(bstage[arm], pp)].get(("lat", hp), 0),
@@ -330,8 +340,8 @@ def main():
                         cum_censored_share_a=ca, cum_censored_share_b=cb,
                         unreliable=int(ca > CENSOR_FLAG or cb > CENSOR_FLAG
                                        or ea > CENSOR_FLAG or eb > CENSOR_FLAG),
-                        a_e2e_pairs=int(pair[("s2a", pp)].get(("n", hp), 0)),
-                        a_e2e_pairs_censored=int(pair[("s2a", pp)].get(("c", hp), 0)),
+                        a_e2e_pairs=int(pair[(A_STAGE, pp)].get(("n", hp), 0)),
+                        a_e2e_pairs_censored=int(pair[(A_STAGE, pp)].get(("c", hp), 0)),
                         e2e_censored_share_a=ea, e2e_censored_share_b=eb,
                     ))
         write_csv(f"{a.out}/predicted_vs_B.csv", rows)
@@ -344,20 +354,20 @@ def main():
         dSp = collapse(dec, (0, 4, 5, 2))
         dPrevp = collapse(dec, (0, 4, 5, 6))
         rows = []
-        buckets = sorted({(k[2], k[3]) for k in dS if k[0] == "s2a"})
+        buckets = sorted({(k[2], k[3]) for k in dS if k[0] == A_STAGE})
         for pp in PS + ["all"]:
             for (stt, cb) in buckets:
                 ms = {}
                 for arm in ARMS:
                     if pp == "all":
-                        h, d = hSp.get(("s2a", stt, cb, arm), {}), dSp.get(("s2a", stt, cb, arm), {})
+                        h, d = hSp.get((A_STAGE, stt, cb, arm), {}), dSp.get((A_STAGE, stt, cb, arm), {})
                     else:
-                        h, d = hS.get(("s2a", pp, stt, cb, arm), {}), dS.get(("s2a", pp, stt, cb, arm), {})
+                        h, d = hS.get((A_STAGE, pp, stt, cb, arm), {}), dS.get((A_STAGE, pp, stt, cb, arm), {})
                     ms[arm] = hop_metrics(h, d)
                 if pp == "all":
-                    prev = {pa: dPrevp.get(("s2a", stt, cb, pa), {}).get("n_gap", 0) for pa in ARMS + ["none"]}
+                    prev = {pa: dPrevp.get((A_STAGE, stt, cb, pa), {}).get("n_gap", 0) for pa in ARMS + ["none"]}
                 else:
-                    prev = {pa: dPrev.get(("s2a", pp, stt, cb, pa), {}).get("n_gap", 0) for pa in ARMS + ["none"]}
+                    prev = {pa: dPrev.get((A_STAGE, pp, stt, cb, pa), {}).get("n_gap", 0) for pa in ARMS + ["none"]}
                 tot_prev = sum(prev.values())
                 ranks = {}
                 for lam in (0.0, 1.0, 10.0):
@@ -372,7 +382,7 @@ def main():
                         n_recordhops_censored=m["n_recordhops_censored"],
                         wait_ms=m["wait_ms"],
                         wait_se=ratio_se(perrun["bucket_wait_pooled" if pp == "all" else "bucket_wait"].get(
-                            ("s2a", stt, cb, arm) if pp == "all" else ("s2a", pp, stt, cb, arm), {})),
+                            (A_STAGE, stt, cb, arm) if pp == "all" else (A_STAGE, pp, stt, cb, arm), {})),
                         fetch_ms=m["fetch_ms"], spill_share_of_wait=m["spill_share_of_wait"],
                         poll_B_per_recordhop=m["poll_B_per_recordhop"], backlog_rate=m["backlog_rate"], gaps_per_s=m["gaps_per_s"],
                         noreply_share=m["noreply_share"],
@@ -381,7 +391,7 @@ def main():
                     ))
         write_csv(f"{a.out}/state_buckets.csv", rows)
 
-        # fetch split by in_flight at decision (confound check), s2a + B, per arm x p
+        # fetch split by in_flight at decision (confound check), A stage + B, per arm x p
         hF = collapse(hop, (0, 1, 2, 7))
         rows = []
         for (st, pp, arm, infl0), h in sorted(hF.items(), key=lambda kv: str(kv[0])):

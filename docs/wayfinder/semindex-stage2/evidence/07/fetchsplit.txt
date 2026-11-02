@@ -1,0 +1,7 @@
+s4b0p5 p0 n=19200 slot_wait_mean=0ms round_trip_mean=2ms slot_wait_share=0.00 | round trip median by outstanding at send: 1: 1ms (n=4824) | 2-4: 2ms (n=14356) | 5-8: 3ms (n=20) | 9+: -
+s4b1p359 p0 n=19200 slot_wait_mean=0ms round_trip_mean=2ms slot_wait_share=0.00 | round trip median by outstanding at send: 1: 1ms (n=4658) | 2-4: 2ms (n=13921) | 5-8: 3ms (n=621) | 9+: -
+s4b3p695 p0 n=19200 slot_wait_mean=0ms round_trip_mean=2ms slot_wait_share=0.07 | round trip median by outstanding at send: 1: 1ms (n=2419) | 2-4: 2ms (n=7255) | 5-8: 3ms (n=9526) | 9+: -
+s4b10p043 p0 n=19200 slot_wait_mean=3ms round_trip_mean=3ms slot_wait_share=0.52 | round trip median by outstanding at send: 1: 1ms (n=929) | 2-4: 2ms (n=2786) | 5-8: 3ms (n=15485) | 9+: -
+s4a p0 n=96000 slot_wait_mean=3ms round_trip_mean=3ms slot_wait_share=0.50 | round trip median by outstanding at send: 1: 1ms (n=6490) | 2-4: 2ms (n=19459) | 5-8: 3ms (n=70051) | 9+: -
+t2k4 p0.4 n=2854 slot_wait_mean=807ms round_trip_mean=723ms slot_wait_share=0.53 | round trip median by outstanding at send: 1: 1ms (n=235) | 2-4: 119ms (n=718) | 5-8: 372ms (n=1901) | 9+: -
+t2c32k4 p0.4 n=2676 slot_wait_mean=112ms round_trip_mean=740ms slot_wait_share=0.13 | round trip median by outstanding at send: 1: 1ms (n=216) | 2-4: 88ms (n=648) | 5-8: 229ms (n=464) | 9+: 905ms (n=1348)

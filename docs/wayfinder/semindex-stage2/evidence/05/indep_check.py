@@ -4,13 +4,17 @@
 (b) hop-1 poll wait / chosen interval from raw events; (c) fetch_plan sizes at h2/h3, B 0.5 s
 vs the mixed stage. Reads the store and the evalagg dir read-only.
 
-Usage: indep_check.py --agg DIR [--store DIR]   (store default /home/lab_shared/semindex-eval)
+Usage: indep_check.py --agg DIR [--store DIR] [--prefix s2]   (store default /home/lab_shared/semindex-eval;
+  --prefix: stage-name family, s2 = FULL main run, s4 = NORMAL re-collection)
 """
 import argparse, csv, json, os, statistics, collections, sys
 ap = argparse.ArgumentParser()
 ap.add_argument("--agg", required=True, help="evalagg output dir holding <stage>/runs.csv and discovery.csv")
 ap.add_argument("--store", default="/home/lab_shared/semindex-eval")
+# 2026-11-02: stage names come from --prefix so the same code reads the NORMAL re-collection (s4*).
+ap.add_argument("--prefix", default="s2", help="stage-name family (s2 = FULL main run, s4 = NORMAL)")
 _a = ap.parse_args()
+P = _a.prefix
 ST = _a.store
 AGG = _a.agg
 def ev(stage, p, seed, node):
@@ -21,13 +25,13 @@ def valid(stage, p, seed):
     """Whether evalrun judged the run valid (invalid runs are excluded from every check)."""
     return json.load(open(f"{ST}/{stage}/p{p}/{seed}/meta.json"))["validity"]["valid"]
 # (a) hop-4 mean latency, uncensored, valid runs, from discovery.csv
-for stage in ["s2b0p5", "s2b1p359", "s2b3p695", "s2b10p043"]:
+for stage in [P + "b0p5", P + "b1p359", P + "b3p695", P + "b10p043"]:
     vs = {r["seed"] for r in csv.DictReader(open(f"{AGG}/{stage}/runs.csv")) if r["p"] in ("0.0", "0") and r["valid"] == "valid"}
     lat = [float(r["latency_ms"]) for r in csv.DictReader(open(f"{AGG}/{stage}/discovery.csv"))
            if r["p"] in ("0.0", "0") and r["seed"] in vs and r["hop_distance"] == "4" and r["censored"] in ("False", "false", "0", "")]
     print("(a)", stage, "p0 hop4 mean", round(statistics.mean(lat)), "n", len(lat))
-# (b) hop-1 wait / interval, s2b1p359 p0, hi-only (origin holdings are contiguous)
-for stage, iv in [("s2b1p359", 1.359), ("s2b0p5", 0.5)]:
+# (b) hop-1 wait / interval, B 1.359 s and 0.5 s at p0, hi-only (origin holdings are contiguous)
+for stage, iv in [(P + "b1p359", 1.359), (P + "b0p5", 0.5)]:
     waits = []
     for seed in range(1, 21):
         if not valid(stage, 0, seed): continue
@@ -40,8 +44,8 @@ for stage, iv in [("s2b1p359", 1.359), ("s2b0p5", 0.5)]:
                 l = next((t for t, h in rx if t > a and h >= s), None)
                 if l is not None: waits.append(l - a)
     print("(b)", stage, "hop1 wait/interval", round(statistics.mean(waits) / 1000 / iv, 3), "n", len(waits))
-# (c) fetch_plan sizes at hops 2-4 (n=h2,h3 toward h1/h2...), p0: s2a vs s2b0p5
-for stage, seeds in [("s2b0p5", range(1, 21)), ("s2a", range(1, 41))]:
+# (c) fetch_plan sizes at hops 2-4 (n=h2,h3 toward h1/h2...), p0: A stage vs B 0.5 s
+for stage, seeds in [(P + "b0p5", range(1, 21)), (P + "a", range(1, 41))]:
     sizes = []
     for seed in seeds:
         if not valid(stage, 0, seed): continue
