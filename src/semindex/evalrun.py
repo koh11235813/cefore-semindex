@@ -20,14 +20,17 @@ Run as:
         --seeds 1-100 --store /home/lab_shared/semindex-eval \\
         --recefore /home/lab_shared/cefore-emu-sslab \\
         [--k 4] [--interval-choices 1 2 4] [--choice-jitter 0.1] \
-        [--max-in-flight 32] [--store-synchronous FULL]
+        [--max-in-flight 32] [--store-synchronous FULL] \
+        [--poll-policy '{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}']
 
-`--k`, `--interval-choices`, `--choice-jitter`, `--max-in-flight` and
-`--store-synchronous` (stage-2 map "生成器と集計") go straight to
-semindex.evalgen and are recorded in each run's meta.json. They are not part
-of the store path, so a sweep with different values -- a different
-`--max-in-flight` or `--store-synchronous` included -- needs its own
-`--stage` label.
+`--k`, `--interval-choices`, `--choice-jitter`, `--max-in-flight`,
+`--store-synchronous` (stage-2 map "生成器と集計") and `--poll-policy`
+(2026-11-03, the failure-reactive state-poll table; not with choices or j) go
+straight to semindex.evalgen and are recorded in each run's meta.json. They are
+not part of the store path, so a sweep with different values -- a different
+`--max-in-flight`, `--store-synchronous` or `--poll-policy` included -- needs
+its own `--stage` label. Resuming a stage checks only each run's DONE marker,
+never these settings, so that label is the one thing keeping two settings apart.
 """
 
 from __future__ import annotations
@@ -574,6 +577,7 @@ def _build_meta(
     state_poll_choice_jitter_frac: float | None,
     max_in_flight_per_neighbor: int | None,
     store_synchronous: str | None,
+    state_poll_policy: dict | None,
     recefore: str,
     recefore_rc: int,
     start_s: float,
@@ -587,8 +591,9 @@ def _build_meta(
     and `state_poll_choice_jitter_frac` (the j actually applied with choices,
     None without) and `max_in_flight_per_neighbor` (None = not set, so the
     agents ran with their own default cap of 8) and `store_synchronous` (None =
-    not set; recorded resolved, see below) are the generator settings this run
-    was made with, so the aggregate can tell runs apart by them (runs.csv)
+    not set; recorded resolved, see below) and `state_poll_policy` (None = not
+    set, so the agents ran stage 1's or the choices' poll scheduling) are the
+    generator settings this run was made with, so the aggregate can tell runs apart by them (runs.csv)
     without re-reading the generated schedule.
 
     2026-10-29: `store_synchronous` is written as the mode the agents actually
@@ -612,6 +617,9 @@ def _build_meta(
         # Resolved like j, not recorded as given: the agents always issue the
         # PRAGMA now, so the effective mode is known even when not set.
         "store_synchronous": evalgen.resolve_store_synchronous(store_synchronous),
+        # 2026-11-03: recorded as given, null included, like the in-flight cap:
+        # nothing is written into the agent configs without it.
+        "state_poll_policy": state_poll_policy,
         "semindex_git_commit": _git_commit(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "semindex_git_dirty": _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "recefore_git_commit": _git_commit(recefore, capture_subprocess),
@@ -658,6 +666,7 @@ def run_one(
     state_poll_choice_jitter_frac: float | None = None,
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
+    state_poll_policy: dict | None = None,
 ) -> RunOutcome:
     """Generate, run, store and validate one (p, seed) run; or skip it if already DONE.
 
@@ -701,6 +710,7 @@ def run_one(
             state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
             max_in_flight_per_neighbor=max_in_flight_per_neighbor,
             store_synchronous=store_synchronous,
+            state_poll_policy=state_poll_policy,
         )
         yaml_path = next(path for path in generated_paths if path.endswith(".yaml"))
 
@@ -776,6 +786,7 @@ def run_one(
             state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
             max_in_flight_per_neighbor=max_in_flight_per_neighbor,
             store_synchronous=store_synchronous,
+            state_poll_policy=state_poll_policy,
             recefore=recefore,
             recefore_rc=recefore_rc,
             start_s=start_s,
@@ -856,6 +867,7 @@ def run_all(
     state_poll_choice_jitter_frac: float | None = None,
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
+    state_poll_policy: dict | None = None,
 ) -> list[RunOutcome]:
     """Run every (p, seed) pair in `build_run_order`'s order, logging one line per run to `out`.
 
@@ -896,6 +908,7 @@ def run_all(
         state_poll_choice_jitter_frac,
         max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
+        state_poll_policy=state_poll_policy,
     )
     if not allow_dirty:
         dirty = _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess)
@@ -946,6 +959,7 @@ def run_all(
                 state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
                 max_in_flight_per_neighbor=max_in_flight_per_neighbor,
                 store_synchronous=store_synchronous,
+                state_poll_policy=state_poll_policy,
             )
         except Exception as exc:  # noqa: BLE001 -- see docstring: one run's crash must not stop the sweep
             print(f"p={p} seed={seed} status=error error={exc!r}", file=out)
@@ -999,6 +1013,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="store_synchronous",
         help=f"PRAGMA synchronous for every agent's index.db; omit for the agent default ({DEFAULT_STORE_SYNCHRONOUS})",
     )
+    parser.add_argument(
+        "--poll-policy",
+        default=None,
+        dest="poll_policy",
+        help='state-poll table as JSON, e.g. \'{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}\'; '
+        "not with --interval-choices/--choice-jitter",
+    )
     return parser.parse_args(argv)
 
 
@@ -1021,6 +1042,9 @@ def main(argv: list[str] | None = None) -> int:
             state_poll_choice_jitter_frac=args.choice_jitter,
             max_in_flight_per_neighbor=args.max_in_flight,
             store_synchronous=args.store_synchronous,
+            # Parsed inside this try, so invalid JSON exits 2 with the same
+            # prefix as every other refused setting.
+            state_poll_policy=evalgen.parse_poll_policy_arg(args.poll_policy),
         )
     except (DirtySemindexError, gen.ExperimentError) as exc:
         print(f"semindex.evalrun: {exc}", file=sys.stderr)

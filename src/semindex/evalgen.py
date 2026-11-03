@@ -243,24 +243,51 @@ def resolve_store_synchronous(store_synchronous: str | None) -> str:
     return DEFAULT_STORE_SYNCHRONOUS if store_synchronous is None else store_synchronous
 
 
+def parse_poll_policy_arg(text: str | None) -> dict | None:
+    """Parse the `--poll-policy` CLI string as JSON, or None when the flag was not given.
+
+    Only the JSON itself is checked here; its shape (an object with intervals_s
+    and jitter_frac, the agent's rules) is gen.parse_state_poll_policy's to
+    check, reached through validate_settings. Public so every CLI that takes the
+    flag parses it the same way. A fixed message rather than the decoder's:
+    the decoder's wording and offsets are not this module's to promise.
+    """
+    if text is None:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        raise gen.ExperimentError("--poll-policy must be valid JSON") from None
+
+
 def validate_settings(
     k: int,
     state_poll_interval_choices_s: list[float] | None,
     state_poll_choice_jitter_frac: float | None = None,
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
+    state_poll_policy: dict | None = None,
 ) -> None:
     """Reject a records-per-generation count that is not an integer >= 1, or interval
-    choices / a choice jitter / a per-neighbor in-flight cap / a store synchronous
-    mode semindex.gen would refuse (see gen.parse_state_poll_interval_choices_s,
-    gen.parse_state_poll_choice_jitter_frac, gen.parse_max_in_flight_per_neighbor
-    and gen.parse_store_synchronous).
+    choices / a choice jitter / a poll policy table / a per-neighbor in-flight cap /
+    a store synchronous mode semindex.gen would refuse (see
+    gen.parse_state_poll_interval_choices_s, gen.parse_state_poll_choice_jitter_frac,
+    gen.parse_state_poll_policy, gen.parse_max_in_flight_per_neighbor and
+    gen.parse_store_synchronous), a poll policy given together with choices or j
+    included.
 
     Public so a sweep can refuse bad settings once, up front, instead of failing
     every (p, seed) run of it the same way.
     """
     if not isinstance(k, int) or isinstance(k, bool) or k < 1:
         raise gen.ExperimentError(f"k must be an integer >= 1, got {k!r}")
+    # 2026-11-03: before the choices keys, in gen.parse_experiment's order, so a
+    # policy with j but no choices reports the combination, not "requires choices".
+    gen.parse_state_poll_policy(
+        state_poll_policy,
+        have_choices=state_poll_interval_choices_s is not None,
+        have_choice_jitter=state_poll_choice_jitter_frac is not None,
+    )
     gen.parse_state_poll_interval_choices_s(state_poll_interval_choices_s)
     gen.parse_state_poll_choice_jitter_frac(
         state_poll_choice_jitter_frac, have_choices=state_poll_interval_choices_s is not None
@@ -377,6 +404,7 @@ def build_experiment(
     state_poll_choice_jitter_frac: float | None = None,
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
+    state_poll_policy: dict | None = None,
 ) -> dict:
     """Build the one `semindex.gen` experiment description this (p, seed, stage) run needs.
 
@@ -400,8 +428,11 @@ def build_experiment(
     fetch Interests per neighbor; None writes nothing, so the agents keep their
     own default (8). `store_synchronous`, likewise only when given, is passed
     through as the agents' index.db `PRAGMA synchronous` mode; None writes
-    nothing, so the agents use their own default. The defaults give stage 1's
-    schedule and agent configs, byte for byte.
+    nothing, so the agents use their own default. `state_poll_policy` (2026-11-03),
+    the failure-reactive poll table {"intervals_s": [...], "jitter_frac": [...]},
+    is passed through as given, with the run seed, to every agent config; it
+    cannot be combined with choices or j, and None writes nothing. The defaults
+    give stage 1's schedule and agent configs, byte for byte.
 
     2026-10-29: the agents' own synchronous default changed from SQLite's FULL
     (no PRAGMA issued) to NORMAL. Files generated without `store_synchronous`
@@ -416,6 +447,7 @@ def build_experiment(
         state_poll_choice_jitter_frac,
         max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
+        state_poll_policy=state_poll_policy,
     )
     name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
     schedule = {str(host): _record_schedule(host, seed, k) for host in RECORD_ORIGIN_HOSTS}
@@ -460,6 +492,10 @@ def build_experiment(
     # (the agents' own default, NORMAL since 2026-10-29, then applies).
     if store_synchronous is not None:
         raw["store_synchronous"] = store_synchronous
+    # Same reasoning (2026-11-03): absent, the files stay what they were before
+    # the key, so stages A/B/C re-collected on this code generate main's bytes.
+    if state_poll_policy is not None:
+        raw["state_poll_policy"] = state_poll_policy
     return raw
 
 
@@ -474,6 +510,7 @@ def generate_run(
     state_poll_choice_jitter_frac: float | None = None,
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
+    state_poll_policy: dict | None = None,
 ) -> list[str]:
     """Build and write one run's experiment description, ReCefore YAML and agent configs.
 
@@ -496,8 +533,8 @@ def generate_run(
     disk, or outside it.
 
     `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac`,
-    `max_in_flight_per_neighbor` and `store_synchronous` are passed straight
-    to `build_experiment`.
+    `max_in_flight_per_neighbor`, `store_synchronous` and `state_poll_policy` are
+    passed straight to `build_experiment`.
 
     Returns every path written, experiment description first.
     """
@@ -511,6 +548,7 @@ def generate_run(
         state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
         max_in_flight_per_neighbor=max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
+        state_poll_policy=state_poll_policy,
     )
     gen.parse_experiment(raw)  # raises gen.ExperimentError before any filesystem write
 
@@ -563,6 +601,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="store_synchronous",
         help=f"PRAGMA synchronous for every agent's index.db; omit for the agent default ({DEFAULT_STORE_SYNCHRONOUS})",
     )
+    parser.add_argument(
+        "--poll-policy",
+        default=None,
+        dest="poll_policy",
+        help='state-poll table as JSON, e.g. \'{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}\'; '
+        "not with --interval-choices/--choice-jitter",
+    )
     return parser.parse_args(argv)
 
 
@@ -580,6 +625,7 @@ def main(argv: list[str] | None = None) -> int:
             state_poll_choice_jitter_frac=args.choice_jitter,
             max_in_flight_per_neighbor=args.max_in_flight,
             store_synchronous=args.store_synchronous,
+            state_poll_policy=parse_poll_policy_arg(args.poll_policy),
         )
     except gen.ExperimentError as exc:
         print(f"semindex.evalgen: {exc}", file=sys.stderr)

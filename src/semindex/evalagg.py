@@ -1,9 +1,9 @@
 """semindex.evalagg: aggregate stage-1 evaluation runs into map.md's metrics.
 
 Reads every (p, seed) run stored under `<store>/<stage>/p<p>/<seed>/`
-(semindex.evalgen's own layout, map.md "データの置き場所") and writes seven
+(semindex.evalgen's own layout, map.md "データの置き場所") and writes eight
 CSV files into --out: runs.csv, discovery.csv, survival.csv,
-consistency.csv, summary.csv, decisions.csv, probes.csv. Nothing here duplicates
+consistency.csv, summary.csv, decisions.csv, probes.csv, polls.csv. Nothing here duplicates
 semindex.analyze's event discovery or pairing -- this module calls into
 it for event-reading, (origin, seq) creation times, control-byte summing
 and probe pairing, and only adds the window cut, censoring, and the
@@ -66,6 +66,16 @@ plotting tool can read a table directly, no reshaping:
   any node, from the run's stored agent configs) and `probe_class`
   (none/fresh/established, see `classify_probe`). Re-threshold from
   `oldest_match_age_s` here rather than from summary.csv.
+- polls.csv (2026-11-03): one row per (run, node, neighbor) that has any
+  of these events inside the window, every run regardless of status (like
+  discovery.csv) -- `polls_sent` (`decision` lines of kind `state_poll`,
+  one per state-poll Interest sent), `state_rx` (state replies accepted
+  from that neighbor), `reschedule_answered`/`reschedule_timed_out` (the
+  `state_poll_reschedule` lines by `trigger`) and `reschedule_clamped`
+  (those with `clamped` true), and `late_replies`
+  (`state_poll_late_reply` events). The last four stay 0 for a run without
+  a state_poll_policy, whose agents never log them. Same inclusive window
+  cut on each line's ts_ms as decisions.csv (see `_poll_rows`).
 
 t0 (map.md "計測の窓"): every agent's own `elapsed_s` is `now -
 t0_ms/1000`, and `t0_ms` only ever reaches the agent as a CLI override
@@ -286,10 +296,10 @@ def read_meta(run_dir: str) -> tuple[str, list[str]]:
 
 def read_meta_generation(
     run_dir: str,
-) -> tuple[int | None, list[float] | None, float | None, int | None, str | None]:
+) -> tuple[int | None, list[float] | None, float | None, int | None, str | None, dict | None]:
     """This run's generator settings from `<run_dir>/meta.json`: (k, state-poll
     interval choices, choices-mode jitter j, per-neighbor in-flight cap, store
-    synchronous mode).
+    synchronous mode, state-poll policy table).
 
     2026-10-26 (stage-2 map "生成器と集計"): semindex.evalrun records all four
     from then on. k is None when meta.json does not record it (every stage-1 run, or no
@@ -304,27 +314,31 @@ def read_meta_generation(
     PRAGMA and so ran index.db with SQLite's default, FULL. From then on
     semindex.evalrun always records the effective mode (NORMAL when not set).
     None is kept as None (an empty runs.csv cell), not rewritten to "FULL",
-    so the cell shows what was recorded.
+    so the cell shows what was recorded. The state-poll policy (2026-11-03) is
+    None when the run did not set one -- and for every run recorded before it
+    could be set, whose meta.json has no key; such files are never rewritten.
     """
     path = os.path.join(run_dir, "meta.json")
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     if not isinstance(data, dict):
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     k = data.get("k")
     choices = data.get("state_poll_interval_choices_s")
     jitter = data.get("state_poll_choice_jitter_frac")
     max_in_flight = data.get("max_in_flight_per_neighbor")
     store_synchronous = data.get("store_synchronous")
+    policy = data.get("state_poll_policy")
     return (
         k if isinstance(k, int) else None,
         choices if isinstance(choices, list) else None,
         jitter if isinstance(jitter, (int, float)) and not isinstance(jitter, bool) else None,
         max_in_flight if isinstance(max_in_flight, int) and not isinstance(max_in_flight, bool) else None,
         store_synchronous if isinstance(store_synchronous, str) else None,
+        policy if isinstance(policy, dict) else None,
     )
 
 
@@ -628,6 +642,8 @@ class RunAnalysis:
     probe_established: int | None = None
     probe_established_discovered: int | None = None
     decision_rows: list[dict] = field(default_factory=list)  # kind, in_flight, missing (list), wait_s
+    # One dict per (node, neighbor) with in-window state-poll counts (see `_poll_rows`).
+    poll_rows: list[dict] = field(default_factory=list)
     # Generator settings from meta.json (see `read_meta_generation`); None when
     # this run's meta.json does not record them (every stage-1 run).
     k: int | None = None
@@ -635,6 +651,7 @@ class RunAnalysis:
     state_poll_choice_jitter_frac: float | None = None
     max_in_flight_per_neighbor: int | None = None
     store_synchronous: str | None = None
+    state_poll_policy: dict | None = None
 
 
 def _split_lives(events: list[dict]) -> list[list[dict]]:
@@ -933,6 +950,58 @@ def _probe_rows(
     return rows, error
 
 
+# polls.csv's count columns, in column order, each starting at 0 for a new (node, neighbor).
+_POLL_COUNT_FIELDS = (
+    "polls_sent",
+    "state_rx",
+    "reschedule_answered",
+    "reschedule_timed_out",
+    "reschedule_clamped",
+    "late_replies",
+)
+
+
+def _poll_rows(nodes: dict[str, list[dict]], window_start_ms: float, window_end_ms: float) -> list[dict]:
+    """One row per (node, neighbor) with that pair's state-poll counts inside the window (polls.csv).
+
+    2026-11-03: no agent counter records how many state polls were sent (the
+    counters hold bytes only), so `polls_sent` counts `state_poll` decision
+    lines: the engine logs exactly one per Interest sent, which is why a
+    re-decision under a state_poll_policy is logged as its own kind,
+    `state_poll_reschedule`, never as another `state_poll`. The window cut is
+    decisions.csv's, applied to each line's own ts_ms with both edges
+    inclusive, not control bytes' life-aware snapshot difference: these are
+    individual events, not a cumulative counter. A pair appears only when it
+    has at least one counted event in the window, in host-index order.
+    """
+    counts: dict[tuple[str, str], dict[str, int]] = {}
+    for node, events in nodes.items():
+        for event in events:
+            name = event.get("event")
+            if name == "decision" and event.get("kind") in ("state_poll", "state_poll_reschedule"):
+                neighbor = event["action"]["neighbor"]
+            elif name in ("state_rx", "state_poll_late_reply"):
+                neighbor = event["neighbor"]
+            else:
+                continue
+            if not (window_start_ms <= event["ts_ms"] <= window_end_ms):
+                continue
+            row = counts.setdefault((node, neighbor), dict.fromkeys(_POLL_COUNT_FIELDS, 0))
+            if name == "state_rx":
+                row["state_rx"] += 1
+            elif name == "state_poll_late_reply":
+                row["late_replies"] += 1
+            elif event["kind"] == "state_poll":
+                row["polls_sent"] += 1
+            else:
+                action = event["action"]
+                row["reschedule_answered" if action["trigger"] == "answered" else "reschedule_timed_out"] += 1
+                if action["clamped"]:
+                    row["reschedule_clamped"] += 1
+    ordered = sorted(counts, key=lambda pair: (_node_sort_key(pair[0]), pair[0], _node_sort_key(pair[1]), pair[1]))
+    return [{"node": node, "neighbor": neighbor, **counts[(node, neighbor)]} for node, neighbor in ordered]
+
+
 def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
     """Build one run's full RunAnalysis: window cut, discovery/consistency pairs, control bytes, probes, decisions.
 
@@ -963,6 +1032,7 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
         analysis.state_poll_choice_jitter_frac,
         analysis.max_in_flight_per_neighbor,
         analysis.store_synchronous,
+        analysis.state_poll_policy,
     ) = read_meta_generation(run_dir)
     return analysis
 
@@ -1162,6 +1232,7 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
         probe_established=class_counts["established"],
         probe_established_discovered=probe_established_discovered,
         decision_rows=decision_rows,
+        poll_rows=_poll_rows(nodes, window_start_ms, window_end_ms),
     )
 
 
@@ -1218,6 +1289,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                     "state_poll_choice_jitter_frac": run.state_poll_choice_jitter_frac,
                     "max_in_flight_per_neighbor": run.max_in_flight_per_neighbor,
                     "store_synchronous": run.store_synchronous,
+                    "state_poll_policy": _policy_cell(run.state_poll_policy),
                 }
             )
             continue
@@ -1274,6 +1346,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "state_poll_choice_jitter_frac": run.state_poll_choice_jitter_frac,
                 "max_in_flight_per_neighbor": run.max_in_flight_per_neighbor,
                 "store_synchronous": run.store_synchronous,
+                "state_poll_policy": _policy_cell(run.state_poll_policy),
             }
         )
     return rows
@@ -1282,6 +1355,12 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
 def _choices_cell(choices: list[float] | None) -> str | None:
     """The interval choices as a compact JSON list cell (e.g. "[1.0,2.0]"), or None (empty)."""
     return None if choices is None else json.dumps(choices, separators=(",", ":"))
+
+
+def _policy_cell(policy: dict | None) -> str | None:
+    """The state-poll policy as one compact, key-sorted JSON object cell (e.g.
+    '{"intervals_s":[10.043,3.695],"jitter_frac":[0.1,0.1]}'), or None (empty)."""
+    return None if policy is None else json.dumps(policy, sort_keys=True, separators=(",", ":"))
 
 
 RUNS_FIELDS = [
@@ -1319,6 +1398,10 @@ RUNS_FIELDS = [
     "state_poll_choice_jitter_frac",
     "max_in_flight_per_neighbor",
     "store_synchronous",
+    # 2026-11-03: last, by the same rule. The policy table as compact,
+    # key-sorted JSON, '{"intervals_s":[...],"jitter_frac":[...]}' (see
+    # `_policy_cell`, the choices cell's format); empty when not set or not recorded.
+    "state_poll_policy",
 ]
 
 
@@ -1390,6 +1473,14 @@ PROBES_FIELDS = [
     "oldest_match_age_s",
     "probe_class",
 ]
+
+
+def build_polls_rows(analyses: list[RunAnalysis]) -> list[dict]:
+    """polls.csv: one row per (run, node, neighbor) with in-window poll counts, every run regardless of status."""
+    return [{"p": run.p, "seed": run.seed, **row} for run in analyses for row in run.poll_rows]
+
+
+POLLS_FIELDS = ["p", "seed", "node", "neighbor", *_POLL_COUNT_FIELDS]
 
 
 def _included(analyses: list[RunAnalysis], include_unknown: bool) -> list[RunAnalysis]:
@@ -1661,8 +1752,10 @@ _STATE_NUMERIC_FIELDS = (
 # Which action field each kind's own `action` shape carries (map.md
 # "action は種類ごとに違う"): state_poll -> interval_s, fetch_plan ->
 # how many records that tick's fetch sent (len(fetched)), fetch_backoff
-# -> wait_s. A kind not in this map (there is none today) would simply
-# report no action-field row at all.
+# -> wait_s. A kind not in this map reports no action-field row at all:
+# since 2026-11-03 that is state_poll_reschedule (logged only under a
+# state_poll_policy), whose re-decided interval follows from its table and
+# trigger, both already known per stage.
 _ACTION_FIELD_BY_KIND = {
     "state_poll": "interval_s",
     "fetch_plan": "fetched_count",
@@ -1786,7 +1879,7 @@ _POLL_STATUS_VALUES = (None, "answered", "timed_out", "pending")
 def aggregate(
     store: str, stage: str, outdir: str, include_undone: bool, include_unknown: bool = False
 ) -> list[RunAnalysis]:
-    """Discover every run, analyze the ones this call will process, write all seven CSVs (plus figures) into `outdir`.
+    """Discover every run, analyze the ones this call will process, write all eight CSVs (plus figures) into `outdir`.
 
     Returns every run's RunAnalysis -- every discovered run gets one now,
     including a run missing its DONE marker. `analyze_run` itself no
@@ -1860,6 +1953,7 @@ def aggregate(
         os.path.join(outdir, "decisions.csv"), DECISIONS_FIELDS, build_decisions_rows(analyses, include_unknown)
     )
     _write_csv(os.path.join(outdir, "probes.csv"), PROBES_FIELDS, build_probes_rows(analyses))
+    _write_csv(os.path.join(outdir, "polls.csv"), POLLS_FIELDS, build_polls_rows(analyses))
     if FIGURES_AVAILABLE:
         # Imported here, not at module top: evalfig imports from this
         # module, and an interpreter without matplotlib must never reach it.
@@ -1888,7 +1982,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--store", required=True, help="Root directory holding <store>/<stage>/p<p>/<seed>/ runs")
     parser.add_argument("--stage", required=True, help="Stage label (the <stage> path component under --store)")
-    parser.add_argument("--out", required=True, dest="outdir", help="Directory to write the seven CSV files (and, with matplotlib, the four figures) into")
+    parser.add_argument("--out", required=True, dest="outdir", help="Directory to write the eight CSV files (and, with matplotlib, the four figures) into")
     parser.add_argument(
         "--include-undone",
         action="store_true",

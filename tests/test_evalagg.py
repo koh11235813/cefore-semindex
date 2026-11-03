@@ -28,6 +28,7 @@ from semindex.evalagg import (
     aggregate,
     analyze_run,
     build_decisions_rows,
+    build_polls_rows,
     build_runs_rows,
     classify_probe,
     derive_t0_ms,
@@ -255,6 +256,7 @@ def test_read_meta_reads_evalruns_own_meta_json_shape(tmp_path: Path):
         state_poll_choice_jitter_frac=None,
         max_in_flight_per_neighbor=None,
         store_synchronous=None,
+        state_poll_policy=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -277,6 +279,7 @@ def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tm
         state_poll_choice_jitter_frac=None,
         max_in_flight_per_neighbor=None,
         store_synchronous=None,
+        state_poll_policy=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -286,14 +289,14 @@ def test_read_meta_generation_reads_k_and_choices_from_evalruns_own_meta_json(tm
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
     # No j and no synchronous mode given: the defaults the run actually applied are recorded.
-    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0], 0.1, None, "NORMAL")
+    assert read_meta_generation(str(tmp_path)) == (4, [1.0, 2.0], 0.1, None, "NORMAL", None)
 
 
 def test_read_meta_generation_is_none_for_a_stage_1_meta_json_or_none_at_all(tmp_path: Path):
     """A stage-1 meta.json (no k key) and a missing meta.json both give all None."""
-    assert read_meta_generation(str(tmp_path)) == (None, None, None, None, None)
+    assert read_meta_generation(str(tmp_path)) == (None, None, None, None, None, None)
     (tmp_path / "meta.json").write_text(json.dumps({"p": 0.2, "validity": {"valid": True, "flags": []}}))
-    assert read_meta_generation(str(tmp_path)) == (None, None, None, None, None)
+    assert read_meta_generation(str(tmp_path)) == (None, None, None, None, None, None)
 
 
 def test_read_meta_generation_reads_the_in_flight_cap_from_evalruns_own_meta_json(tmp_path: Path):
@@ -307,6 +310,7 @@ def test_read_meta_generation_reads_the_in_flight_cap_from_evalruns_own_meta_jso
         state_poll_choice_jitter_frac=None,
         max_in_flight_per_neighbor=32,
         store_synchronous=None,
+        state_poll_policy=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -315,13 +319,13 @@ def test_read_meta_generation_reads_the_in_flight_cap_from_evalruns_own_meta_jso
         capture_subprocess=lambda argv, cwd=None: "",
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
-    assert read_meta_generation(str(tmp_path)) == (8, None, None, 32, "NORMAL")
+    assert read_meta_generation(str(tmp_path)) == (8, None, None, 32, "NORMAL", None)
 
 
 def test_read_meta_generation_ignores_a_bool_in_flight_cap(tmp_path: Path):
     """A JSON true is not taken as the integer 1."""
     (tmp_path / "meta.json").write_text(json.dumps({"k": 1, "max_in_flight_per_neighbor": True}))
-    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, None)
+    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, None, None)
 
 
 def test_read_meta_generation_reads_the_store_synchronous_mode_from_evalruns_own_meta_json(tmp_path: Path):
@@ -335,6 +339,7 @@ def test_read_meta_generation_reads_the_store_synchronous_mode_from_evalruns_own
         state_poll_choice_jitter_frac=None,
         max_in_flight_per_neighbor=None,
         store_synchronous="NORMAL",
+        state_poll_policy=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -344,13 +349,13 @@ def test_read_meta_generation_reads_the_store_synchronous_mode_from_evalruns_own
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
     assert meta["store_synchronous"] == "NORMAL"
-    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, "NORMAL")
+    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, "NORMAL", None)
 
 
 def test_read_meta_generation_ignores_a_non_string_store_synchronous(tmp_path: Path):
     """A JSON number (SQLite's own spelling of a mode) is not taken as a recorded mode."""
     (tmp_path / "meta.json").write_text(json.dumps({"k": 1, "store_synchronous": 1}))
-    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, None)
+    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, None, None)
 
 
 # -- numeric helpers ------------------------------------------------------
@@ -1043,8 +1048,8 @@ def test_analyze_run_run_c_derives_t0_via_scheduler_and_hop_distance_two(synthet
     assert rows["h2"]["censored"] is True  # stored after window end
 
 
-def test_aggregate_writes_all_seven_csvs_with_expected_rows(synthetic_store: Path, tmp_path: Path):
-    """Aggregate writes all seven csvs with expected rows (--include-unknown, so the synthetic
+def test_aggregate_writes_all_eight_csvs_with_expected_rows(synthetic_store: Path, tmp_path: Path):
+    """Aggregate writes all eight csvs with expected rows (--include-unknown, so the synthetic
 
     tree's two unknown runs are pooled -- see the sibling test below for
     the default, exclude-unknown behaviour).
@@ -1060,6 +1065,7 @@ def test_aggregate_writes_all_seven_csvs_with_expected_rows(synthetic_store: Pat
         "summary.csv",
         "decisions.csv",
         "probes.csv",
+        "polls.csv",
     ):
         assert (outdir / name).is_file()
 
@@ -1869,6 +1875,7 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
         "summary.csv",
         "decisions.csv",
         "probes.csv",
+        "polls.csv",
     ):
         assert (outdir / name).is_file()
     runs = _read_csv(outdir / "runs.csv")
@@ -1888,8 +1895,8 @@ def test_real_trial_manual_sample_aggregates_without_crashing(tmp_path: Path):
 
 def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():
     """runs.csv gets k, the choices (compact JSON), the choice jitter j, the
-    per-neighbor in-flight cap and the store synchronous mode as its last five
-    columns; a run whose meta.json does not record them gets empty cells, an
+    per-neighbor in-flight cap and the store synchronous mode as its five
+    columns just before state_poll_policy; a run whose meta.json does not record them gets empty cells, an
     analysis_error run included."""
     recorded = RunAnalysis(
         p=0.4,
@@ -1928,7 +1935,7 @@ def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():
         (None, None, None, None, None),
         (1, None, None, 16, "OFF"),
     ]
-    assert evalagg.RUNS_FIELDS[-5:] == [
+    assert evalagg.RUNS_FIELDS[-6:-1] == [
         "k",
         "state_poll_interval_choices_s",
         "state_poll_choice_jitter_frac",
@@ -2044,6 +2051,7 @@ def test_irrational_choices_and_j_round_trip_through_meta_json_and_runs_csv(tmp_
         state_poll_choice_jitter_frac=0.05,
         max_in_flight_per_neighbor=None,
         store_synchronous=None,
+        state_poll_policy=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -2052,7 +2060,7 @@ def test_irrational_choices_and_j_round_trip_through_meta_json_and_runs_csv(tmp_
         capture_subprocess=lambda argv, cwd=None: "",
     )
     evalrun._write_json(str(tmp_path / "meta.json"), meta)
-    k, read_choices, jitter, _max_in_flight, _store_synchronous = read_meta_generation(str(tmp_path))
+    k, read_choices, jitter, _max_in_flight, _store_synchronous, _policy = read_meta_generation(str(tmp_path))
     assert (k, read_choices, jitter) == (1, choices, 0.05)
     row = build_runs_rows(
         [RunAnalysis(p=0.0, seed=1, status="valid", flags=[], k=k, state_poll_interval_choices_s=read_choices,
@@ -2086,6 +2094,7 @@ def test_store_synchronous_round_trips_from_the_cli_to_runs_csv(tmp_path: Path):
         state_poll_choice_jitter_frac=None,
         max_in_flight_per_neighbor=None,
         store_synchronous=config.store_synchronous,
+        state_poll_policy=None,
         recefore="/fake/recefore",
         recefore_rc=0,
         start_s=0.0,
@@ -2108,12 +2117,238 @@ def test_store_synchronous_round_trips_from_the_cli_to_runs_csv(tmp_path: Path):
 
     analyses = []
     for seed, directory in ((1, run_dir), (2, old_dir), (3, null_dir)):
-        *_, store_synchronous = read_meta_generation(str(directory))
+        _k, _choices, _jitter, _max_in_flight, store_synchronous, _policy = read_meta_generation(str(directory))
         analyses.append(
             RunAnalysis(p=0.0, seed=seed, status="valid", flags=[], k=1, store_synchronous=store_synchronous)
         )
     csv_path = tmp_path / "runs.csv"
     evalagg._write_csv(str(csv_path), evalagg.RUNS_FIELDS, build_runs_rows(analyses))
     rows = _read_csv(csv_path)
-    assert list(rows[0])[-1] == "store_synchronous"
+    assert list(rows[0])[-2] == "store_synchronous"
     assert [row["store_synchronous"] for row in rows] == ["FULL", "", ""]
+
+
+# -- failure-reactive poll table (agent key state_poll_policy, 2026-11-03) --
+
+_SHORTEN = {"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}
+
+
+def _meta_with_policy(policy):
+    """evalrun's own meta.json for one run made with `policy` (None = not set)."""
+    return evalrun._build_meta(
+        p=0.0,
+        seed=1,
+        stage="s5",
+        k=4,
+        state_poll_interval_choices_s=None,
+        state_poll_choice_jitter_frac=None,
+        max_in_flight_per_neighbor=None,
+        store_synchronous=None,
+        state_poll_policy=policy,
+        recefore="/fake/recefore",
+        recefore_rc=0,
+        start_s=0.0,
+        end_s=1.0,
+        verdict={"valid": True, "flags": []},
+        capture_subprocess=lambda argv, cwd=None: "",
+    )
+
+
+def test_read_meta_generation_reads_the_poll_policy_from_evalruns_own_meta_json(tmp_path: Path):
+    """A policy given to evalrun comes back as the sixth element; null as None."""
+    evalrun._write_json(str(tmp_path / "meta.json"), _meta_with_policy(_SHORTEN))
+    assert read_meta_generation(str(tmp_path)) == (4, None, None, None, "NORMAL", _SHORTEN)
+    evalrun._write_json(str(tmp_path / "meta.json"), _meta_with_policy(None))
+    assert read_meta_generation(str(tmp_path)) == (4, None, None, None, "NORMAL", None)
+
+
+def test_read_meta_generation_ignores_a_non_object_poll_policy(tmp_path: Path):
+    """Only a JSON object is taken as a recorded policy."""
+    (tmp_path / "meta.json").write_text(json.dumps({"k": 1, "state_poll_policy": [10.043, 3.695]}))
+    assert read_meta_generation(str(tmp_path)) == (1, None, None, None, None, None)
+
+
+def test_runs_rows_carry_the_poll_policy_last_as_compact_json_and_empty_when_absent(tmp_path: Path):
+    """runs.csv's last column is the policy as compact, key-sorted JSON; empty for a run
+    without one (an old meta.json, or null), an analysis_error run included."""
+    with_policy = RunAnalysis(p=0.0, seed=1, status="valid", flags=[], k=4, state_poll_policy=_SHORTEN)
+    without = RunAnalysis(p=0.0, seed=2, status="valid", flags=[], k=4)
+    broken = RunAnalysis(
+        p=0.0, seed=3, status="valid", flags=[], analysis_error="no t0", state_poll_policy={"jitter_frac": [0.0], "intervals_s": [5.0]}
+    )
+    rows = build_runs_rows([with_policy, without, broken])
+    assert [r["state_poll_policy"] for r in rows] == [
+        '{"intervals_s":[10.043,3.695],"jitter_frac":[0.1,0.1]}',
+        None,
+        '{"intervals_s":[5.0],"jitter_frac":[0.0]}',
+    ]
+    assert evalagg.RUNS_FIELDS[-1] == "state_poll_policy"
+    csv_path = tmp_path / "runs.csv"
+    evalagg._write_csv(str(csv_path), evalagg.RUNS_FIELDS, rows)
+    read = _read_csv(csv_path)
+    assert [json.loads(r["state_poll_policy"]) if r["state_poll_policy"] else None for r in read] == [
+        _SHORTEN,
+        None,
+        {"intervals_s": [5.0], "jitter_frac": [0.0]},
+    ]
+
+
+def test_the_poll_policy_round_trips_from_evalruns_meta_json_to_runs_csv(tmp_path: Path):
+    """analyze_run reads the policy off meta.json into the runs.csv cell."""
+    t0 = 1_000_000_000_000.0
+    run_dir = tmp_path / "store" / "s5" / "p0" / "1"
+    _write_run(run_dir, {"h0": [{"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0}]})
+    evalrun._write_json(str(run_dir / "meta.json"), _meta_with_policy(_SHORTEN))
+    run = analyze_run(0.0, 1, str(run_dir))
+    assert run.state_poll_policy == _SHORTEN
+    [row] = build_runs_rows([run])
+    assert json.loads(row["state_poll_policy"]) == _SHORTEN
+
+
+def _poll(ts_ms, neighbor):
+    """One state_poll decision line (one Interest sent to `neighbor`)."""
+    return {
+        "event": "decision",
+        "ts_ms": ts_ms,
+        "kind": "state_poll",
+        "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
+        "action": {"neighbor": neighbor, "interval_s": 2.0},
+        "action_prob": 1.0,
+    }
+
+
+def _reschedule(ts_ms, neighbor, trigger, clamped):
+    """One state_poll_reschedule decision line, the shape engine._redecide_next_poll logs."""
+    return {
+        "event": "decision",
+        "ts_ms": ts_ms,
+        "kind": "state_poll_reschedule",
+        "state": {"last_poll_status": trigger, "consecutive_poll_timeouts": 0 if trigger == "answered" else 1},
+        "action": {
+            "neighbor": neighbor,
+            "poll_epoch_ms": ts_ms - 100,
+            "trigger": trigger,
+            "interval_s": 3.695,
+            "applied_interval_s": 3.8,
+            "clamped": clamped,
+        },
+        "action_prob": 1.0,
+    }
+
+
+def _rx(ts_ms, neighbor):
+    """One state_rx event from `neighbor`."""
+    return {"event": "state_rx", "ts_ms": ts_ms, "neighbor": neighbor, "hi": {}}
+
+
+def _late(ts_ms, neighbor):
+    """One state_poll_late_reply event from `neighbor`."""
+    return {"event": "state_poll_late_reply", "ts_ms": ts_ms, "neighbor": neighbor, "poll_epoch_ms": ts_ms - 2500}
+
+
+def test_analyze_run_counts_polls_per_node_and_neighbor_inside_the_window_only(tmp_path: Path):
+    """Each (node, neighbor) gets its in-window counts: state_poll lines as Interests sent,
+    state_rx from that neighbor, reschedules by trigger and clamped, late replies. Both
+    window edges are inclusive, as for decisions.csv; one ms outside either is dropped.
+    A fetch_plan decision and a state_rx-free neighbor do not create or bump counts."""
+    t0 = 1_000_000_000_000.0
+    start = t0 + evalgen.WINDOW_START_S * 1000.0
+    end = t0 + evalgen.WINDOW_END_S * 1000.0
+    h0 = [
+        {"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0},
+        _poll(start - 1, "h1"),
+        _rx(start - 1, "h1"),
+        _reschedule(start - 1, "h1", "answered", False),
+        _late(start - 1, "h1"),
+        _poll(start, "h1"),
+        _rx(start + 10, "h1"),
+        _reschedule(start + 10, "h1", "answered", False),
+        _poll(start + 5000, "h1"),
+        _reschedule(start + 7000, "h1", "timed_out", True),
+        _late(start + 7500, "h1"),
+        _poll(end, "h1"),
+        _reschedule(end, "h1", "timed_out", False),
+        _poll(end + 1, "h1"),
+        _rx(end + 1, "h1"),
+        _late(end + 1, "h1"),
+        {
+            "event": "decision",
+            "ts_ms": start + 20,
+            "kind": "fetch_plan",
+            "state": {"in_flight": 0, "last_timeout_s": None, "truncated": False, "origins": {}},
+            "action": {"neighbor": "h1", "fetched": [["h1", 1]]},
+            "action_prob": 1.0,
+        },
+    ]
+    h1 = [
+        {"ts_ms": t0, "event": "agent_start", "node": "h1", "t0_ms": t0},
+        _poll(start + 100, "h2"),
+        _poll(start + 200, "h0"),
+        _rx(start + 210, "h0"),
+        _rx(start + 220, "h0"),
+    ]
+    run_dir = tmp_path / "store" / "s5" / "p0" / "1"
+    _write_run(run_dir, {"h0": h0, "h1": h1})
+    run = analyze_run(0.0, 1, str(run_dir))
+    zero = {"reschedule_answered": 0, "reschedule_timed_out": 0, "reschedule_clamped": 0, "late_replies": 0}
+    assert run.poll_rows == [
+        {
+            "node": "h0",
+            "neighbor": "h1",
+            "polls_sent": 3,
+            "state_rx": 1,
+            "reschedule_answered": 1,
+            "reschedule_timed_out": 2,
+            "reschedule_clamped": 1,
+            "late_replies": 1,
+        },
+        {"node": "h1", "neighbor": "h0", "polls_sent": 1, "state_rx": 2, **zero},
+        {"node": "h1", "neighbor": "h2", "polls_sent": 1, "state_rx": 0, **zero},
+    ]
+
+
+def test_polls_rows_and_csv_carry_p_and_seed_for_every_run(tmp_path: Path):
+    """polls.csv: p and seed, then the per-(node, neighbor) counts, every run's rows
+    regardless of status; a run with no rows (incomplete, unreadable) adds none."""
+    row = {
+        "node": "h0",
+        "neighbor": "h1",
+        "polls_sent": 3,
+        "state_rx": 2,
+        "reschedule_answered": 0,
+        "reschedule_timed_out": 0,
+        "reschedule_clamped": 0,
+        "late_replies": 0,
+    }
+    runs = [
+        RunAnalysis(p=0.2, seed=1, status="flagged", flags=["x"], poll_rows=[row]),
+        RunAnalysis(p=0.2, seed=2, status="incomplete", flags=[]),
+    ]
+    assert build_polls_rows(runs) == [{"p": 0.2, "seed": 1, **row}]
+    assert evalagg.POLLS_FIELDS == [
+        "p",
+        "seed",
+        "node",
+        "neighbor",
+        "polls_sent",
+        "state_rx",
+        "reschedule_answered",
+        "reschedule_timed_out",
+        "reschedule_clamped",
+        "late_replies",
+    ]
+
+
+def test_aggregate_writes_polls_csv_from_the_synthetic_store(synthetic_store: Path, tmp_path: Path):
+    """aggregate writes polls.csv beside the other CSVs, one row per in-window (node, neighbor)."""
+    outdir = tmp_path / "out"
+    analyses = aggregate(str(synthetic_store), "test", str(outdir), include_undone=False, include_unknown=True)
+    rows = _read_csv(outdir / "polls.csv")
+    assert list(rows[0]) == evalagg.POLLS_FIELDS
+    expected = [
+        {k: evalagg._cell(v) for k, v in {"p": run.p, "seed": run.seed, **poll}.items()}
+        for run in analyses
+        for poll in run.poll_rows
+    ]
+    assert rows == expected
+    assert any(row["polls_sent"] != "0" for row in rows)
