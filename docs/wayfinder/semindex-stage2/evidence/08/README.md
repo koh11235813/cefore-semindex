@@ -63,4 +63,26 @@ sh docs/wayfinder/semindex-stage2/evidence/08/gen_identity.sh   # 各段・各�
 sh docs/wayfinder/semindex-stage2/evidence/08/agg_identity.sh t6c   # 出力は $P/agg/t6c/{main,branch}
 ```
 
-**runs.csv の末尾の列と polls.csv のほかは同じ。** consistency・decisions・discovery・probes・summary・survival の 6 つの CSV は `cmp` で同じ。runs.csv は変更後の側の最後の列を csv モジュールで落とすと main と同じで、落とした列はヘッダが `state_poll_policy`、6 行とも空だった（JSON の欄に引用符と区切りが入るので、`sed` ではなく csv で切った）。polls.csv は新しいファイルで 48 行（6 run × 有向の隣の組 8 つ）。h0→h1（p0 seed1）は窓の中で `polls_sent` 60、`state_rx` 60 で、events.jsonl 全体の `state_poll` 65 行のうち窓の外の 5 行が落ちている。方針を使っていないので決め直しと遅い返事の列はすべて 0。
+**runs.csv の末尾の列と polls.csv のほかは同じ。** consistency・decisions・discovery・probes・summary・survival の 6 つの CSV は `cmp` で同じ。runs.csv は変更後の側の最後の列を csv モジュールで落とすと main と同じで、落とした列はヘッダが `state_poll_policy`、6 行とも空だった（JSON の欄に引用符と区切りが入るので、csv モジュールで切った）。polls.csv は新しいファイルで 48 行（6 run × 有向の隣の組 8 つ）。h0→h1（p0 seed1）は窓の中で `polls_sent` 60、`state_rx` 60 で、events.jsonl 全体の `state_poll` 65 行のうち窓の外の 5 行が落ちている。方針を使っていないので決め直しと遅い返事の列はすべて 0。
+
+## 実機の試走: 二つの方針で決め直しが設計どおりに動くこと
+
+5ab0477 を誰も触らない写し（detached）に置き、`t7.sh` を root で回した（2026-11-03 12:45〜13:06）。段 `t7short`（短縮、間隔 [10.043, 3.695]、ゆらぎ [0.1, 0.1]）と `t7wait`（5 秒待ち、[10.043, 5.0]、[0.1, 0.0]）を、p 0 と 0.2、seed 1〜2、k 4、NORMAL で 8 本。8 本とも valid。meta.json の `semindex_git_dirty` は false。`recefore_git_dirty` は true で、ReCefore の作業木の README.md・README_ja.md・docs/wayfinder/arch-backlog/map.md の文書だけの変更による（`t6c` から同じ）。
+
+`t7check.py` で各ノードの events.jsonl を読んだ（出力は `t7check.out`）。
+
+```bash
+python3 -I docs/wayfinder/semindex-stage2/evidence/08/t7check.py /home/lab_shared/semindex-eval t7short t7wait
+```
+
+| 段 | p | 送った確認 | 決め直し 1 回 | 決め直し 0 回 | answered | timed_out | 丸め | 遅れた返事 |
+|---|---|---|---|---|---|---|---|---|
+| t7short | 0 | 210 | 210 | 0 | 210 | 0 | 0 | 0 |
+| t7short | 0.2 | 240 | 238 | 2 | 193 | 45 | 0 | 0 |
+| t7wait | 0 | 210 | 210 | 0 | 210 | 0 | 0 | 0 |
+| t7wait | 0.2 | 229 | 228 | 1 | 192 | 36 | 0 | 0 |
+
+- 決め直しが 0 回の確認は、どれもそのライフの最後の確認（止める前に結果が出なかったもの）。最後でない確認が決め直されなかった例、決め直しが 2 回以上の確認、対応する確認の無い決め直しは、どれも 0。
+- 表の値: 答えの後は 10.043 s（ゆらぎを掛けた値は 9.05〜11.04 s）。失敗の後は、短縮が 3.695 s（3.36〜4.06 s）、5 秒待ちがちょうど 5.000 s。
+- 次の確認を送った時刻と、決め直した時刻（解決した確認の送信時刻 + ゆらぎを掛けた値）の差は、平均 50〜53 ms（0〜100 ms、受信待ち 100 ms の刻み）。5 秒待ちの失敗の後だけは平均 23 ms（0〜72 ms）。推定: ゆらぎの無い 5.000 s が受信待ちの刻みのほぼ整数倍で、送った tick から数えた 50 番目あたりの tick とほぼ重なるため（確かめていない）。replay はループの時間を 0.05 + 0.035p s（p 0.2 で 57 ms）と置いているので、5 秒待ちの失敗後の再送は replay より 30 ms ほど早い。秒の桁の遅れへの効きは小さい。
+- evalagg の `polls.csv`（窓の中、全ノード・全隣の合計）: t7short p0.2 は polls_sent 222、state_rx 175、answered 175、timed_out 45。t7wait p0.2 は 212、175、175、36。p 0 はどちらも polls_sent = state_rx = answered（193 と 192）。

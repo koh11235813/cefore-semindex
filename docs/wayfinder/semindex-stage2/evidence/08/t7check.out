@@ -1,0 +1,20 @@
+== t7short p0 runs=2
+    {'answered': 210, 'clamped': 0, 'reschedule_without_poll': 0, 'resolved_1': 210}
+    answered: table={10.043: 210} applied: n=210 min=9.051 p50=10.066 p90=10.884 p99=11.036 max=11.040
+    answered: gap-applied (s): n=194 min=0.000 p50=0.051 p90=0.091 p99=0.099 max=0.100 mean=0.0513
+== t7short p0.2 runs=2
+    {'answered': 193, 'clamped': 0, 'reschedule_without_poll': 0, 'resolved_0': 2, 'resolved_1': 238, 'timed_out': 45}
+    answered: table={10.043: 193} applied: n=193 min=9.051 p50=10.074 p90=10.858 p99=11.036 max=11.040
+    timed_out: table={3.695: 45} applied: n=45 min=3.358 p50=3.654 p90=4.016 p99=4.062 max=4.062
+    answered: gap-applied (s): n=179 min=0.001 p50=0.056 p90=0.091 p99=0.099 max=0.099 mean=0.0533
+    timed_out: gap-applied (s): n=45 min=-0.000 p50=0.055 p90=0.088 p99=0.100 max=0.100 mean=0.0524
+== t7wait p0 runs=2
+    {'answered': 210, 'clamped': 0, 'reschedule_without_poll': 0, 'resolved_1': 210}
+    answered: table={10.043: 210} applied: n=210 min=9.051 p50=10.066 p90=10.884 p99=11.036 max=11.040
+    answered: gap-applied (s): n=194 min=0.000 p50=0.052 p90=0.090 p99=0.099 max=0.100 mean=0.0502
+== t7wait p0.2 runs=2
+    {'answered': 192, 'clamped': 0, 'reschedule_without_poll': 0, 'resolved_0': 1, 'resolved_1': 228, 'timed_out': 36}
+    answered: table={10.043: 192} applied: n=192 min=9.051 p50=10.055 p90=10.858 p99=11.036 max=11.040
+    timed_out: table={5.0: 36} applied: n=36 min=5.000 p50=5.000 p90=5.000 p99=5.000 max=5.000
+    answered: gap-applied (s): n=179 min=0.000 p50=0.050 p90=0.091 p99=0.099 max=0.100 mean=0.0510
+    timed_out: gap-applied (s): n=34 min=0.000 p50=0.018 p90=0.050 p99=0.072 max=0.072 mean=0.0228
