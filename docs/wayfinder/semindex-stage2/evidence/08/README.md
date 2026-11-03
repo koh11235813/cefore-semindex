@@ -37,3 +37,30 @@ cmp identity.base.jsonl identity.branch.jsonl && echo IDENTICAL
 **同じ。** `cmp` は差を出さず、どちらも 2082 行、sha256 `fcdda5984a266e5b803396ccfd213051742662a919a98fd91948da0d2b721050`。変更後の側を 2 回回しても同じだった（スクリプト自体が決定的）。
 
 言えるのは、この決まったシナリオで段 A・B・C の送信とイベントが main とバイト単位で同じということまで。Mininet 上では時刻が決定的でないので、同じイベント列にはならない。単体テストの側では、方針が無いときに `_PollReplies.snapshot` が送信 1 回につき 1 回しか呼ばれないこと、乱数を引く回数が変わらないことを `tests/test_engine.py` の `test_without_a_policy_nothing_new_runs` で固定している。
+
+## 実験・集計の側: キーを渡さない段 A・B・C の生成ファイルと集計が変わらないこと
+
+`state_poll_policy` を gen（実験記述のトップレベル）、evalgen／evalrun（`--poll-policy '<json>'`）、meta.json、evalagg（runs.csv の末尾 1 列と新しい polls.csv）に通した変更で、キーを渡さないときの出力が main 3d89cfe と同じかを確かめた（2026-11-03）。スクリプトはこのディレクトリの `gen_identity.sh` と `agg_identity.sh`。どちらも作業用のディレクトリを環境変数 `P` で受け取り、その下の `main/src` に置いた main のソースと、このリポジトリの `src` を比べる（2026-11-03 は scratchpad の `redecide/plumb` で回した）。
+
+### 生成ファイル
+
+段 A（`--interval-choices 0.5 1.359 3.695 10.043 --choice-jitter 0.1`）、B（`--interval-choices 0.5 --choice-jitter 0.1`）、C（選択肢なし）を `--p 0.2 --seed 1 --k 4` で evalgen にかけ、`experiments/t1.json`・`t2a.json`・`t2b.json`・`t2c.json` を gen にかけた。両側とも同じ `--out` に書いてから別の名前に移すので、YAML に入る `output_dir` と設定の置き場所の道のりは同じになる。
+
+```bash
+# リポジトリの根で
+export P=<作業用のディレクトリ>
+mkdir -p $P/main && git archive 3d89cfe src | tar -x -C $P/main
+sh docs/wayfinder/semindex-stage2/evidence/08/gen_identity.sh   # 各段・各実験を両側で生成し、diff -r
+```
+
+**同じ。** A・B・C は 7 ファイル（experiment.json、YAML、h0〜h4.json）、t1・t2b・t2c は 4 ファイル、t2a は 3 ファイルで、`diff -r` は差を出さなかった。ただし YAML の 1 行だけは比べる前に置き換えている。`host_apps` の `env.PYTHONPATH` には gen.py の場所から決まる `SEMINDEX_SRC_DIR` が入り、main の側では `git archive` したコピーの `src` を指すので、それを worktree の `src` に `sed` で置き換えた（YAML 1 つにつき 1 か所）。JSON ファイルには手を加えていない。
+
+### 集計
+
+ストア `/home/lab_shared/semindex-eval` の段 `t6c`（p0 と p0.4 が 3 seed ずつ、6 run）を、読むだけで両側の evalagg にかけた。
+
+```bash
+sh docs/wayfinder/semindex-stage2/evidence/08/agg_identity.sh t6c   # 出力は $P/agg/t6c/{main,branch}
+```
+
+**runs.csv の末尾の列と polls.csv のほかは同じ。** consistency・decisions・discovery・probes・summary・survival の 6 つの CSV は `cmp` で同じ。runs.csv は変更後の側の最後の列を csv モジュールで落とすと main と同じで、落とした列はヘッダが `state_poll_policy`、6 行とも空だった（JSON の欄に引用符と区切りが入るので、`sed` ではなく csv で切った）。polls.csv は新しいファイルで 48 行（6 run × 有向の隣の組 8 つ）。h0→h1（p0 seed1）は窓の中で `polls_sent` 60、`state_rx` 60 で、events.jsonl 全体の `state_poll` 65 行のうち窓の外の 5 行が落ちている。方針を使っていないので決め直しと遅い返事の列はすべて 0。
