@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from semindex import gen, schema
+from semindex.agent import load_config
 from semindex.gen import (
     ExperimentError,
     generate,
@@ -556,3 +557,125 @@ def test_main_exits_0_and_prints_every_written_path(tmp_path, capsys):
     assert str(outdir / "mini.yaml") in lines
     assert str(outdir / "mini" / "h0.json") in lines
     assert str(outdir / "mini" / "h1.json") in lines
+
+
+# -- state_poll_policy (agent key, 2026-11-03) -------------------------------
+
+_POLICY = {"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}
+
+
+def test_a_state_poll_policy_reaches_every_agent_config_with_the_seed():
+    """Given a policy, every agent config carries it and the run seed (its jitter rng needs both)."""
+    configs = generate(parse_experiment(_minimal_raw(seed=9, state_poll_policy=_POLICY)), "/cfg").agent_configs
+    assert sorted(configs) == ["h0", "h1"]
+    for config in configs.values():
+        assert config["seed"] == 9
+        assert config["state_poll_policy"] == _POLICY
+
+
+def test_no_state_poll_policy_writes_neither_it_nor_the_seed():
+    """Absent, neither key is written, so an existing experiment's agent configs stay byte for byte."""
+    for config in generate(parse_experiment(_minimal_raw()), "/cfg").agent_configs.values():
+        assert "state_poll_policy" not in config
+        assert "seed" not in config
+
+
+def test_a_written_state_poll_policy_passes_the_agents_own_validation(tmp_path: Path):
+    """The written agent config loads, so gen's rules are no looser than the agent's."""
+    experiment = tmp_path / "exp.json"
+    experiment.write_text(json.dumps(_minimal_raw(state_poll_policy=_POLICY)), encoding="utf-8")
+    write_experiment(str(experiment), str(tmp_path / "out"))
+    config = load_config(str(tmp_path / "out" / "mini" / "h0.json"))
+    assert config.sync_overrides["state_poll_policy"].intervals_s == (10.043, 3.695)
+
+
+@pytest.mark.parametrize(
+    ("policy", "message"),
+    [
+        ([10.0], "state_poll_policy must be an object with keys intervals_s and jitter_frac"),
+        ({"intervals_s": [10.0]}, "state_poll_policy must be an object with keys intervals_s and jitter_frac"),
+        (
+            {"intervals_s": [10.0], "jitter_frac": [0.1], "x": 1},
+            "state_poll_policy must be an object with keys intervals_s and jitter_frac",
+        ),
+        ({"intervals_s": 10.0, "jitter_frac": [0.1]}, "state_poll_policy.intervals_s must be a list of 1 to 4 numbers"),
+        ({"intervals_s": [], "jitter_frac": []}, "state_poll_policy.intervals_s must be a list of 1 to 4 numbers"),
+        (
+            {"intervals_s": [1.0] * 5, "jitter_frac": [0.1] * 5},
+            "state_poll_policy.intervals_s must be a list of 1 to 4 numbers",
+        ),
+        ({"intervals_s": [1.0, "2"], "jitter_frac": [0.1, 0.1]}, "state_poll_policy.intervals_s[1] must be a number"),
+        ({"intervals_s": [1.0, True], "jitter_frac": [0.1, 0.1]}, "state_poll_policy.intervals_s[1] must be a number"),
+        (
+            {"intervals_s": [1.0, 0.0], "jitter_frac": [0.1, 0.1]},
+            "state_poll_policy.intervals_s[1] must be a finite number > 0",
+        ),
+        (
+            {"intervals_s": [-1.0], "jitter_frac": [0.1]},
+            "state_poll_policy.intervals_s[0] must be a finite number > 0",
+        ),
+        (
+            {"intervals_s": [float("nan")], "jitter_frac": [0.1]},
+            "state_poll_policy.intervals_s[0] must be a finite number > 0",
+        ),
+        (
+            {"intervals_s": [float("inf")], "jitter_frac": [0.1]},
+            "state_poll_policy.intervals_s[0] must be a finite number > 0",
+        ),
+        (
+            {"intervals_s": [1.0, 2.0], "jitter_frac": [0.1]},
+            "state_poll_policy.jitter_frac must be a list as long as state_poll_policy.intervals_s",
+        ),
+        (
+            {"intervals_s": [1.0], "jitter_frac": 0.1},
+            "state_poll_policy.jitter_frac must be a list as long as state_poll_policy.intervals_s",
+        ),
+        ({"intervals_s": [1.0], "jitter_frac": [None]}, "state_poll_policy.jitter_frac[0] must be a number"),
+        (
+            {"intervals_s": [1.0, 2.0], "jitter_frac": [0.1, 1.0]},
+            "state_poll_policy.jitter_frac[1] must be a finite number in [0, 1)",
+        ),
+        (
+            {"intervals_s": [1.0], "jitter_frac": [-0.1]},
+            "state_poll_policy.jitter_frac[0] must be a finite number in [0, 1)",
+        ),
+        (
+            {"intervals_s": [1.0], "jitter_frac": [float("nan")]},
+            "state_poll_policy.jitter_frac[0] must be a finite number in [0, 1)",
+        ),
+    ],
+)
+def test_parse_experiment_rejects_a_bad_state_poll_policy(policy, message):
+    """Each of the agent's rules is refused at generation, with the exact diagnostic."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(state_poll_policy=policy))
+    assert str(exc_info.value) == message
+
+
+def test_parse_experiment_accepts_a_four_row_policy_with_zero_jitter():
+    """Four rows (0/1/2/3+ timeouts) and j = 0 are the edges the agent accepts."""
+    policy = {"intervals_s": [10.043, 5.0, 5.0, 5], "jitter_frac": [0.1, 0.0, 0, 0.0]}
+    spec = parse_experiment(_minimal_raw(state_poll_policy=policy))
+    assert spec.state_poll_policy == {"intervals_s": [10.043, 5.0, 5.0, 5.0], "jitter_frac": [0.1, 0.0, 0.0, 0.0]}
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (
+            {"state_poll_interval_choices_s": [1.0]},
+            "state_poll_policy cannot be combined with state_poll_interval_choices_s",
+        ),
+        (
+            {"state_poll_interval_choices_s": [1.0], "state_poll_choice_jitter_frac": 0.1},
+            "state_poll_policy cannot be combined with state_poll_interval_choices_s",
+        ),
+        # Not "requires state_poll_interval_choices_s": the policy is checked first, as in the agent.
+        ({"state_poll_choice_jitter_frac": 0.1}, "state_poll_policy cannot be combined with state_poll_choice_jitter_frac"),
+    ],
+)
+def test_parse_experiment_rejects_a_state_poll_policy_with_the_choices_keys(extra, message):
+    """The policy ignores the choices, so combining them is refused with the agent's own message."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(state_poll_policy=_POLICY, **extra))
+    assert str(exc_info.value) == message

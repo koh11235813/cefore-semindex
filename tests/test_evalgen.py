@@ -811,3 +811,113 @@ def test_cli_refuses_a_lower_case_store_synchronous(tmp_path: Path):
         evalgen.main(["--p", "0", "--seed", "1", "--stage", "s2", "--out", str(outdir), "--store-synchronous", "normal"])
     assert excinfo.value.code == 2
     assert not outdir.exists()
+
+
+# -- failure-reactive poll table (agent key state_poll_policy, 2026-11-03) --
+
+_SHORTEN = {"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}
+_WAIT_5S = {"intervals_s": [10.043, 5.0], "jitter_frac": [0.1, 0.0]}
+
+
+@pytest.mark.parametrize("p", sorted(_STAGE1_DIGESTS))
+def test_an_explicit_none_poll_policy_still_reproduces_stage_1(p: float):
+    """Passing None is the same as not passing it: stage 1's files, byte for byte."""
+    raw = evalgen.build_experiment(p, 7, "s1", "/out", state_poll_policy=None)
+    assert "state_poll_policy" not in raw
+    assert _normalized_digest(raw) == _STAGE1_DIGESTS[p]
+
+
+@pytest.mark.parametrize("policy", [_SHORTEN, _WAIT_5S])
+def test_a_given_poll_policy_reaches_every_agent_config_with_the_run_seed(policy):
+    """A given table is written, as given, into the experiment and, with the run seed,
+    every agent config; no choices or j are written beside it."""
+    raw = evalgen.build_experiment(0.2, 7, "s5", "/out", state_poll_policy=policy)
+    assert raw["state_poll_policy"] == policy
+    assert "state_poll_interval_choices_s" not in raw
+    assert "state_poll_choice_jitter_frac" not in raw
+    configs = gen.generate(parse_experiment(raw), "/cfg").agent_configs
+    assert sorted(configs) == ["h0", "h1", "h2", "h3", "h4"]
+    for config in configs.values():
+        assert config["seed"] == 7
+        assert config["state_poll_policy"] == policy
+
+
+@pytest.mark.parametrize(
+    ("choices", "j", "message"),
+    [
+        ([0.5], None, "state_poll_policy cannot be combined with state_poll_interval_choices_s"),
+        ([0.5], 0.1, "state_poll_policy cannot be combined with state_poll_interval_choices_s"),
+        (None, 0.1, "state_poll_policy cannot be combined with state_poll_choice_jitter_frac"),
+    ],
+)
+def test_validate_settings_rejects_a_poll_policy_with_choices_or_j(choices, j, message):
+    """The up-front sweep check refuses the combination, with the exact diagnostic."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(1, choices, j, state_poll_policy=_SHORTEN)
+    assert str(excinfo.value) == message
+
+
+def test_a_bad_poll_policy_is_rejected_before_anything_is_written(tmp_path: Path):
+    """A table semindex.gen would refuse fails generation before any file is written."""
+    outdir = tmp_path / "run"
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.generate_run(
+            0.2, 7, "s5", str(outdir), state_poll_policy={"intervals_s": [10.043, 0.0], "jitter_frac": [0.1, 0.1]}
+        )
+    assert str(excinfo.value) == "state_poll_policy.intervals_s[1] must be a finite number > 0"
+    assert not outdir.exists()
+
+
+def test_parse_poll_policy_arg_reads_a_json_object_and_refuses_invalid_json():
+    """The CLI string is parsed as JSON as is (its shape is semindex.gen's to check)."""
+    assert evalgen.parse_poll_policy_arg(json.dumps(_WAIT_5S)) == _WAIT_5S
+    assert evalgen.parse_poll_policy_arg(None) is None
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.parse_poll_policy_arg("{intervals_s: [1]}")
+    assert str(excinfo.value) == "--poll-policy must be valid JSON"
+
+
+def test_cli_poll_policy_reaches_the_written_agent_configs(tmp_path: Path):
+    """--poll-policy goes through the CLI into the experiment JSON and every agent config,
+    and each written config loads as an agent config carrying that table."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0", "--seed", "1", "--stage", "s5", "--out", str(outdir), "--poll-policy", json.dumps(_SHORTEN)]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s5_p000_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert raw["state_poll_policy"] == _SHORTEN
+    for host in evalgen.AGENTS:
+        path = outdir / "s5_p000_seed1" / f"h{host}.json"
+        assert json.loads(path.read_text(encoding="utf-8"))["state_poll_policy"] == _SHORTEN
+        policy = load_config(str(path), t0_ms=0).sync_overrides["state_poll_policy"]
+        assert (policy.intervals_s, policy.jitter_frac) == ((10.043, 3.695), (0.1, 0.1))
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--interval-choices", "0.5"], "state_poll_policy cannot be combined with state_poll_interval_choices_s"),
+        (["--choice-jitter", "0.1"], "state_poll_policy cannot be combined with state_poll_choice_jitter_frac"),
+    ],
+)
+def test_cli_rejects_a_poll_policy_with_choices_or_j(tmp_path: Path, capsys, extra, message):
+    """--poll-policy with --interval-choices or --choice-jitter exits 1 with the exact
+    diagnostic, before anything is written."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0", "--seed", "1", "--stage", "s5", "--out", str(outdir), "--poll-policy", json.dumps(_SHORTEN)]
+        + extra
+    )
+    assert rc == 1
+    assert capsys.readouterr().err == f"semindex.evalgen: {message}\n"
+    assert not outdir.exists()
+
+
+def test_cli_rejects_a_poll_policy_that_is_not_json(tmp_path: Path, capsys):
+    """A --poll-policy string that is not JSON exits 1 with the exact diagnostic."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(["--p", "0", "--seed", "1", "--stage", "s5", "--out", str(outdir), "--poll-policy", "[10,"])
+    assert rc == 1
+    assert capsys.readouterr().err == "semindex.evalgen: --poll-policy must be valid JSON\n"
+    assert not outdir.exists()
