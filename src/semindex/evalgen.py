@@ -248,8 +248,8 @@ def parse_poll_policy_arg(text: str | None) -> dict | None:
 
     Only the JSON itself is checked here; its shape (an object with intervals_s
     and jitter_frac, the agent's rules) is gen.parse_state_poll_policy's to
-    check, reached through validate_settings. Public so semindex.evalrun's CLI
-    parses the flag the same way. A fixed message rather than the decoder's:
+    check, reached through validate_settings. Public so every CLI that takes the
+    flag parses it the same way. A fixed message rather than the decoder's:
     the decoder's wording and offsets are not this module's to promise.
     """
     if text is None:

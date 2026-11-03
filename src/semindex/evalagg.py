@@ -1752,8 +1752,10 @@ _STATE_NUMERIC_FIELDS = (
 # Which action field each kind's own `action` shape carries (map.md
 # "action は種類ごとに違う"): state_poll -> interval_s, fetch_plan ->
 # how many records that tick's fetch sent (len(fetched)), fetch_backoff
-# -> wait_s. A kind not in this map (there is none today) would simply
-# report no action-field row at all.
+# -> wait_s. A kind not in this map reports no action-field row at all:
+# since 2026-11-03 that is state_poll_reschedule (logged only under a
+# state_poll_policy), whose re-decided interval follows from its table and
+# trigger, both already known per stage.
 _ACTION_FIELD_BY_KIND = {
     "state_poll": "interval_s",
     "fetch_plan": "fetched_count",
