@@ -25,6 +25,25 @@ from semindex.transport import Response, Transport
 
 
 @dataclass(frozen=True)
+class StatePollPolicy:
+    """A deterministic state-poll interval table (ADR 0004): row k is the interval, and
+    its jitter fraction, for a poll whose neighbor has k consecutive timed-out polls
+    behind it, the last row covering every larger count (the 0/1/2/3+ buckets).
+
+    Trusted as given: agent.py's config validation enforces equal lengths of 1 to 4,
+    positive finite intervals and finite jitter fractions in [0, 1).
+    """
+
+    intervals_s: tuple[float, ...]
+    jitter_frac: tuple[float, ...]
+
+    def row(self, consecutive_poll_timeouts: int) -> tuple[float, float]:
+        """(interval, jitter fraction) for that many consecutive timeouts."""
+        index = min(consecutive_poll_timeouts, len(self.intervals_s) - 1)
+        return self.intervals_s[index], self.jitter_frac[index]
+
+
+@dataclass(frozen=True)
 class SyncConfig:
     """Tunable values for one SyncEngine, defaulted from map.md "時間・サイズの初期値".
 
@@ -56,6 +75,14 @@ class SyncConfig:
     # 1's policy has its own state_poll_jitter_frac); 0 reproduces jitter-free
     # choices exactly.
     state_poll_choice_jitter_frac: float = 0.1
+    # 2026-11-03 (ADR 0004 "Consequences", re-decision): when set, each poll's
+    # interval comes from this table, and the pending next-poll time is decided
+    # again when the newest poll is answered or passes its lifetime -- a policy
+    # that reacts to a failed poll otherwise acts one whole interval late. None
+    # (the default) runs none of that code, so stages A, B and C (choices or
+    # stage 1's policy) keep their exact behaviour and event streams. Mutually
+    # exclusive with the choices and stage-1 interval settings (agent.py).
+    state_poll_policy: StatePollPolicy | None = None
     interest_lifetime_ms: int = 2000
     # 2026-10-23: matches tracker.DEFAULT_BACKOFF_INITIAL_S -- see that
     # constant's comment for why 1s let the first retry land inside
@@ -90,19 +117,29 @@ POLL_REPLY_GRACE_S = 1.0
 
 @dataclass
 class _Poll:
-    """One state poll sent to a neighbor: its name's epoch_ms, when it was sent, and
-    whether its own reply has arrived."""
+    """One state poll sent to a neighbor: its name's epoch_ms, when it was sent,
+    whether its own reply has arrived and, under a state_poll_policy only, its
+    send-time jitter draw and how it was resolved."""
 
     epoch_ms: int
     sent_at: float
     replied: bool = False
+    # 2026-11-03: state_poll_policy only (both stay None otherwise). The jitter
+    # draw made when this poll was sent, reused unchanged when its next-poll
+    # time is re-decided -- redrawing would make a one-row table diverge from
+    # the single-choice policy it equals, and shift every later draw -- and how
+    # this poll was resolved ("answered"/"timed_out"), so it is resolved once.
+    jitter_u: float | None = None
+    resolved: str | None = None
 
 
 @dataclass
 class _PollReplies:
     """Whether one neighbor has been answering this node's state polls (stage-2 map
-    "判断の状態に足すもの") -- read-only bookkeeping for the `state_poll` decision state,
-    never consulted by any scheduling decision.
+    "判断の状態に足すもの") -- bookkeeping for the `state_poll` decision state. Without a
+    state_poll_policy it is never consulted by any scheduling decision; with one
+    (2026-11-03), its snapshot also feeds the policy table, at send time and when
+    the newest poll is resolved (see SyncEngine._redecide_next_poll).
 
     2026-10-26 fix: replies used to be attributed to the latest poll. Each reply
     is now matched to its own poll by the epoch_ms in the reply's name: with
@@ -134,11 +171,11 @@ class _PollReplies:
     # lifetime + grace, however long a neighbor stays silent.
     expired_timeouts: int = 0
 
-    def sent(self, epoch_ms: int, now: float) -> None:
+    def sent(self, epoch_ms: int, now: float, *, jitter_u: float | None = None) -> None:
         """Record a new poll sent at `now`; it is pending until answered or expired."""
-        self.polls.append(_Poll(epoch_ms, now))
+        self.polls.append(_Poll(epoch_ms, now, jitter_u=jitter_u))
 
-    def replied(self, epoch_ms: int, now: float, lifetime_s: float) -> None:
+    def replied(self, epoch_ms: int, now: float, lifetime_s: float) -> tuple[_Poll, bool] | None:
         """Apply a reply that arrived at `now` to the poll whose name carried `epoch_ms`.
 
         2026-10-26 fix: acceptance used to depend on whether `_expire` had
@@ -148,6 +185,10 @@ class _PollReplies:
         older than any poll still held, so it also clears `expired_timeouts`. A
         reply to a poll no longer held (older than an answered one, or dropped
         as expired -- which the time rule would reject anyway) changes nothing.
+
+        2026-11-03: returns (the accepted poll, whether it is the newest poll) so
+        a state_poll_policy can re-decide on it, or None when the reply was not
+        accepted; callers without a policy ignore it, as they did the old None.
         """
         for index, poll in enumerate(self.polls):
             if poll.epoch_ms != epoch_ms:
@@ -157,7 +198,9 @@ class _PollReplies:
                 poll.replied = True
                 del self.polls[:index]
                 self.expired_timeouts = 0
-            return
+                return poll, newest
+            return None
+        return None
 
     def _expire(self, now: float, lifetime_s: float) -> None:
         """Drop the oldest polls the reported values no longer need, in one slice
@@ -238,7 +281,10 @@ class SyncEngine:
         0.0 always picks the first choice, deterministic like the jitter
         default. `poll_choice_jitter_rng` (also [0, 1)) is the separate stream
         for config.state_poll_choice_jitter_frac, drawn once per poll in
-        choices mode only; its default 0.5 maps to a factor of exactly 1.
+        choices mode; its default 0.5 maps to a factor of exactly 1. With
+        config.state_poll_policy (2026-11-03) it is the only poll rng drawn,
+        once per poll at send time, for that table row's jitter; neither
+        poll_choice_rng nor poll_jitter_rng is drawn.
 
         2026-10-22 fix: `config.group` and `config.node` already failed
         here with an exact diagnostic -- the registration_prefix call
@@ -374,8 +420,15 @@ class SyncEngine:
     # -- periodic housekeeping -----------------------------------------------------
 
     def on_tick(self, now: float) -> None:
-        """Send due state requests and due record fetches to every neighbor."""
+        """Send due state requests and due record fetches to every neighbor.
+
+        With a state_poll_policy, a newest poll whose lifetime has passed is
+        resolved first, so a re-decided next time already in the past (clamped
+        to `now`) is polled in this same tick rather than one tick late.
+        """
         for neighbor in self._config.neighbors:
+            if self._config.state_poll_policy is not None:
+                self._resolve_timed_out_poll(neighbor, now)
             due_at = self._next_state_poll.get(neighbor, now)
             if now >= due_at:
                 self._send_state_request(neighbor, now)
@@ -386,12 +439,24 @@ class SyncEngine:
         epoch_ms = round(now * 1000)
         name = names.build_state_name(self._config.group, neighbor, self._config.node, epoch_ms)
         self._transport.send_interest(name, self._config.interest_lifetime_ms)
-        action, applied_interval, action_prob = self._choose_poll_interval(neighbor)
+        replies = self._poll_replies.setdefault(neighbor, _PollReplies())
+        lifetime_s = self._config.interest_lifetime_ms / 1000.0
         # The reply status is snapshotted before this poll itself is recorded as
         # sent, so the decision shows how the *previous* poll to this neighbor
         # fared, not the trivially-pending poll being sent right now.
-        replies = self._poll_replies.setdefault(neighbor, _PollReplies())
-        last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, self._config.interest_lifetime_ms / 1000.0)
+        jitter_u = None
+        if self._config.state_poll_policy is None:
+            action, applied_interval, action_prob = self._choose_poll_interval(neighbor)
+            last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, lifetime_s)
+        else:
+            # 2026-11-03: the table is looked up with that previous poll's state,
+            # so here the snapshot has to come before the choice. Kept as its own
+            # branch so the other two policies' order stays as it was.
+            last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, lifetime_s)
+            jitter_u = self._poll_choice_jitter_rng()
+            interval, applied_interval = self._policy_interval(consecutive_poll_timeouts, jitter_u)
+            action = {"neighbor": neighbor, "interval_s": interval, "applied_interval_s": applied_interval}
+            action_prob = 1.0
         state = {
             **self._tracker.decision_state(neighbor),
             "last_poll_status": last_poll_status,
@@ -402,11 +467,72 @@ class SyncEngine:
         # (a neighbor due for a poll is always polled), so always logged
         # when log_decisions is on.
         self._emit_decision("state_poll", state, action, now, action_prob)
-        replies.sent(epoch_ms, now)
+        replies.sent(epoch_ms, now, jitter_u=jitter_u)
         # The jittered interval runs from this poll's own send time, so jitter
         # accumulates poll after poll instead of being pulled back to a grid --
-        # the point is that two agents' phases drift apart.
+        # the point is that two agents' phases drift apart. Final in stage 1 and
+        # choices mode; with a state_poll_policy only provisional, until this
+        # poll is resolved (_redecide_next_poll), which also measures from here.
         self._next_state_poll[neighbor] = now + applied_interval
+
+    def _policy_interval(self, consecutive_poll_timeouts: int, jitter_u: float) -> tuple[float, float]:
+        """(table interval, applied interval) for that many consecutive timeouts and
+        the poll's jitter draw `jitter_u`.
+
+        The same factor arithmetic as choices mode (value * (1 + j * (2u - 1))), so
+        a one-row table and the single choice it equals give bit-identical times.
+        """
+        interval, jitter_frac = self._config.state_poll_policy.row(consecutive_poll_timeouts)
+        factor = 1 + jitter_frac * (2 * jitter_u - 1)
+        return interval, interval * factor
+
+    def _resolve_timed_out_poll(self, neighbor: str, now: float) -> None:
+        """Re-decide `neighbor`'s next poll if its newest poll has just passed its
+        lifetime unresolved (state_poll_policy only).
+
+        The same clock rule as _PollReplies._status (send time + lifetime <= now),
+        not the transport's timeout callback, for the reason its docstring gives.
+        Only the newest poll is resolved: an older one's outcome no longer decides
+        when the next poll goes, since that poll has already been sent.
+        """
+        replies = self._poll_replies.get(neighbor)
+        if replies is None or not replies.polls:
+            return
+        poll = replies.polls[-1]
+        if poll.resolved is None and poll.sent_at + self._config.interest_lifetime_ms / 1000.0 <= now:
+            self._redecide_next_poll(neighbor, replies, poll, "timed_out", now)
+
+    def _redecide_next_poll(self, neighbor: str, replies: _PollReplies, poll: _Poll, trigger: str, now: float) -> None:
+        """Resolve `poll` (the newest to `neighbor`) as `trigger` and decide its next
+        poll's time again from the policy table, logging a `state_poll_reschedule`.
+
+        The state is snapshotted *after* the resolution -- the opposite of send time
+        -- since the outcome just learned is what the policy reacts to. The interval
+        runs from the poll's own send time with its own send-time jitter draw, as
+        replay.py measures it; a time already past is clamped to `now` (a table row
+        shorter than the lifetime cannot be met after a timeout). Only the pending
+        next-poll time moves: no Interest is sent or withdrawn here.
+        """
+        poll.resolved = trigger
+        last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, self._config.interest_lifetime_ms / 1000.0)
+        interval, applied_interval = self._policy_interval(consecutive_poll_timeouts, poll.jitter_u)
+        due_at = poll.sent_at + applied_interval
+        self._next_state_poll[neighbor] = max(due_at, now)
+        self._emit_decision(
+            "state_poll_reschedule",
+            # Without the tracker's per-origin state: the table does not read it,
+            # and it would make every reschedule row as large as a state_poll row.
+            {"last_poll_status": last_poll_status, "consecutive_poll_timeouts": consecutive_poll_timeouts},
+            {
+                "neighbor": neighbor,
+                "poll_epoch_ms": poll.epoch_ms,
+                "trigger": trigger,
+                "interval_s": interval,
+                "applied_interval_s": applied_interval,
+                "clamped": due_at < now,
+            },
+            now,
+        )
 
     def _choose_poll_interval(self, neighbor: str) -> tuple[dict, float, float]:
         """Draw the interval until `neighbor`'s next state poll: the decision's
@@ -492,7 +618,9 @@ class SyncEngine:
         # answering -- what the poll-reply status is there to tell the policy.
         replies = self._poll_replies.get(neighbor)
         if replies is not None:
-            replies.replied(poll_epoch_ms, now, self._config.interest_lifetime_ms / 1000.0)
+            accepted = replies.replied(poll_epoch_ms, now, self._config.interest_lifetime_ms / 1000.0)
+            if accepted is not None and self._config.state_poll_policy is not None:
+                self._on_policy_reply(neighbor, replies, *accepted, now)
         try:
             decoded = holder_state.decode(payload)
         except holder_state.HolderStateError:
@@ -504,6 +632,28 @@ class SyncEngine:
         for origin, entry in decoded.items():
             self._tracker.observe_state(origin, neighbor, entry["hi"], entry["extra"])
         self._send_fetch_plan(neighbor, now)
+
+    def _on_policy_reply(self, neighbor: str, replies: _PollReplies, poll: _Poll, newest: bool, now: float) -> None:
+        """Act on an accepted reply under a state_poll_policy (2026-11-03).
+
+        An unresolved newest poll is resolved as answered. A reply to a poll already
+        resolved as timed out does not re-decide (one resolution per poll; the
+        schedule it set stands) but is logged as `state_poll_late_reply`, so
+        analysis can count these without inferring them -- replay.py has no such
+        event. A reply to an older, unresolved poll changes nothing: the poll after
+        it has already been sent.
+        """
+        if poll.resolved == "timed_out":
+            self._emit(
+                {
+                    "event": "state_poll_late_reply",
+                    "ts_ms": round(now * 1000),
+                    "neighbor": neighbor,
+                    "poll_epoch_ms": poll.epoch_ms,
+                }
+            )
+        elif poll.resolved is None and newest:
+            self._redecide_next_poll(neighbor, replies, poll, "answered", now)
 
     def on_record(self, name: str, payload: bytes, now: float) -> None:
         """A neighbor's reply to a record-fetch Interest arrived.

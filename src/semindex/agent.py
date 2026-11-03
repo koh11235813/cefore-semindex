@@ -35,7 +35,7 @@ from typing import Callable
 
 from semindex import schema
 from semindex.cefpyco_transport import DEFAULT_RECEIVE_TIMEOUT_MS, CefpycoHandle, CefpycoTransport
-from semindex.engine import SyncConfig, SyncEngine
+from semindex.engine import StatePollPolicy, SyncConfig, SyncEngine
 from semindex.store import DEFAULT_STORE_SYNCHRONOUS, STORE_SYNCHRONOUS_MODES, Store
 
 # cefpyco_smoke's own default Interest lifetime for a chunk fetch
@@ -82,7 +82,7 @@ class AgentConfig:
     schedule: tuple[ScheduledRecord, ...]
     probes: tuple[ScheduledProbe, ...]
     fault_drop_rec: dict[tuple[str, int], int]
-    sync_overrides: dict[str, float | int | tuple[float, ...]]
+    sync_overrides: dict[str, float | int | tuple[float, ...] | StatePollPolicy]
     receive_timeout_ms: int
     chunk_lifetime_ms: int
     # t0-relative seconds; None means never stop early (run until SIGTERM/SIGINT).
@@ -90,7 +90,8 @@ class AgentConfig:
     # t0-relative seconds, strictly increasing; empty means no mid-run snapshots.
     counters_snapshot_at_s: tuple[float, ...]
     # The run's seed, or None if the config gave none. Only the
-    # state_poll_interval_choices_s policy draws from it (see _poll_choice_rng).
+    # state_poll_interval_choices_s policy (see _poll_choice_rng) and, since
+    # 2026-11-03, the state_poll_policy table (its jitter) draw from it.
     seed: int | None
     # The index.db `PRAGMA synchronous` mode; NORMAL unless the config names
     # another (see Store.__init__ and DEFAULT_STORE_SYNCHRONOUS).
@@ -143,6 +144,7 @@ _ALLOWED_KEYS = (
         "seed",
         "state_poll_interval_choices_s",
         "state_poll_choice_jitter_frac",
+        "state_poll_policy",
         # A Store setting, not a SyncConfig field, so it is not in
         # _SYNC_OVERRIDE_KEYS; nor is it numeric, so not in _AGENT_NUMERIC_KEYS.
         "store_synchronous",
@@ -367,11 +369,61 @@ def _validate_choice_jitter_frac(raw, *, have_choices: bool) -> float | None:
     return float(value)
 
 
-def _validate_seed(raw, *, required: bool) -> int | None:
-    """Validate the optional run `seed`; `required` when a policy actually draws from it."""
+def _validate_poll_policy(raw) -> StatePollPolicy | None:
+    """Validate the optional `state_poll_policy` table (ADR 0004): an object with
+    `intervals_s` and `jitter_frac`, equal-length lists of 1 to 4 numbers, row k
+    used after k consecutive poll timeouts (the last row for every larger count,
+    so a fifth row could never be told apart from the fourth).
+
+    Intervals must be positive and finite, like the choices: a non-finite one
+    would leave the next poll unreachable. Each jitter fraction is finite and in
+    [0, 1), state_poll_choice_jitter_frac's own rule. Combining the table with
+    the choices or with stage 1's interval settings is rejected: the table
+    ignores them all, and a config that sets them would silently not mean what
+    it says.
+    """
+    if "state_poll_policy" not in raw:
+        return None
+    value = raw["state_poll_policy"]
+    if not isinstance(value, dict) or set(value) != {"intervals_s", "jitter_frac"}:
+        raise ConfigError("state_poll_policy must be an object with keys intervals_s and jitter_frac")
+    intervals = value["intervals_s"]
+    if not isinstance(intervals, list) or not 1 <= len(intervals) <= 4:
+        raise ConfigError("state_poll_policy.intervals_s must be a list of 1 to 4 numbers")
+    for idx, interval in enumerate(intervals):
+        label = f"state_poll_policy.intervals_s[{idx}]"
+        _check_numeric(label, interval, float, positive=True)
+        if not math.isfinite(interval):
+            raise ConfigError(f"{label} must be finite")
+    jitters = value["jitter_frac"]
+    if not isinstance(jitters, list) or len(jitters) != len(intervals):
+        raise ConfigError("state_poll_policy.jitter_frac must be a list as long as state_poll_policy.intervals_s")
+    for idx, jitter in enumerate(jitters):
+        label = f"state_poll_policy.jitter_frac[{idx}]"
+        _check_numeric(label, jitter, float)
+        if not math.isfinite(jitter):
+            raise ConfigError(f"{label} must be finite")
+        if jitter >= 1:
+            raise ConfigError(f"{label} must be < 1")
+    for key in (
+        "state_poll_interval_choices_s",
+        "state_poll_choice_jitter_frac",
+        "state_poll_interval_s",
+        "state_poll_jitter_frac",
+    ):
+        if key in raw:
+            raise ConfigError(f"state_poll_policy cannot be combined with {key}")
+    return StatePollPolicy(
+        intervals_s=tuple(float(v) for v in intervals), jitter_frac=tuple(float(v) for v in jitters)
+    )
+
+
+def _validate_seed(raw, *, required_by: str | None) -> int | None:
+    """Validate the optional run `seed`; `required_by` names the policy key that
+    actually draws from it, when one is set."""
     if "seed" not in raw:
-        if required:
-            raise ConfigError("state_poll_interval_choices_s requires seed")
+        if required_by is not None:
+            raise ConfigError(f"{required_by} requires seed")
         return None
     value = raw["seed"]
     if not isinstance(value, int) or isinstance(value, bool):
@@ -463,7 +515,7 @@ def validate_config(raw) -> AgentConfig:
 
     counters_snapshot_at_s = _validate_counters_snapshot_at_s(raw)
 
-    sync_overrides: dict[str, float | int] = {}
+    sync_overrides: dict[str, float | int | tuple[float, ...] | StatePollPolicy] = {}
     for key, kind in _SYNC_OVERRIDE_KEYS.items():
         if key in raw:
             _check_numeric(key, raw[key], kind, positive=key in _POSITIVE_NUMERIC_KEYS)
@@ -473,13 +525,25 @@ def validate_config(raw) -> AgentConfig:
         if key in raw:
             _check_numeric(key, raw[key], kind, positive=key in _POSITIVE_NUMERIC_KEYS)
 
+    # 2026-11-03: validated before the choices keys, so a table combined with
+    # state_poll_choice_jitter_frac reports the combination rather than that
+    # key's own "requires state_poll_interval_choices_s".
+    poll_policy = _validate_poll_policy(raw)
+    if poll_policy is not None:
+        sync_overrides["state_poll_policy"] = poll_policy
     poll_interval_choices = _validate_poll_interval_choices(raw)
     if poll_interval_choices is not None:
         sync_overrides["state_poll_interval_choices_s"] = poll_interval_choices
     choice_jitter_frac = _validate_choice_jitter_frac(raw, have_choices=poll_interval_choices is not None)
     if choice_jitter_frac is not None:
         sync_overrides["state_poll_choice_jitter_frac"] = choice_jitter_frac
-    seed = _validate_seed(raw, required=poll_interval_choices is not None)
+    if poll_policy is not None:
+        seed_required_by = "state_poll_policy"
+    elif poll_interval_choices is not None:
+        seed_required_by = "state_poll_interval_choices_s"
+    else:
+        seed_required_by = None
+    seed = _validate_seed(raw, required_by=seed_required_by)
     store_synchronous = _validate_store_synchronous(raw)
 
     return AgentConfig(
@@ -566,7 +630,9 @@ def _poll_choice_jitter_rng(seed: int, node: str) -> Callable[[], float]:
 
     Seeded from (seed, node) like _poll_choice_rng but under its own prefix, so
     it is a separate stream: changing j, or the number of choices, never shifts
-    which value the choice rng picks.
+    which value the choice rng picks. A state_poll_policy table (2026-11-03)
+    draws its jitter from this same stream, once per poll, so a one-row table
+    polls exactly when the single choice it equals would under the same seed.
     """
     return random.Random(f"state_poll_interval_jitter:{seed}:{node}").random
 
@@ -1074,8 +1140,9 @@ def build_agent(config: AgentConfig, handle: CefpycoHandle, *, clock: Callable[[
     os.makedirs(config.state_dir, exist_ok=True)
     store = Store(os.path.join(config.state_dir, "index.db"), synchronous=config.store_synchronous)
     transport = CefpycoTransport(handle, clock=clock, receive_timeout_ms=config.receive_timeout_ms)
-    # validate_config guarantees a seed whenever choices are set; without
-    # choices the engine never draws either choices-mode rng, so their defaults stay.
+    # validate_config guarantees a seed whenever choices or a state_poll_policy
+    # are set; without either the engine never draws these two rngs, so their
+    # defaults stay. A policy draws only poll_choice_jitter_rng.
     choice_rng = (
         {}
         if config.seed is None

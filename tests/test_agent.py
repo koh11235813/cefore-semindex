@@ -23,6 +23,7 @@ from semindex.agent import (
     load_config,
     validate_config,
 )
+from semindex.engine import StatePollPolicy
 from semindex.store import OriginProgress, Store
 
 from test_cefpyco_transport import _FakeClock, _FakeHandle, _FakePacket
@@ -1902,3 +1903,138 @@ def test_build_agent_opens_its_store_with_the_configured_synchronous_mode(tmp_pa
     """The configured mode reaches the agent's own index.db connection."""
     agent = build_agent(_config(tmp_path, store_synchronous=value), _FakeHandle(), clock=_FakeClock(0.0))
     assert agent._store._conn.execute("PRAGMA synchronous").fetchone()[0] == expected
+
+
+# -- state_poll_policy (ADR 0004, re-decided next poll) -------------------------------
+
+
+_POLICY = {"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"state_poll_policy": [10.0]}, "state_poll_policy must be an object with keys intervals_s and jitter_frac"),
+        (
+            {"state_poll_policy": {"intervals_s": [10.0]}},
+            "state_poll_policy must be an object with keys intervals_s and jitter_frac",
+        ),
+        (
+            {"state_poll_policy": {**_POLICY, "extra": 1}},
+            "state_poll_policy must be an object with keys intervals_s and jitter_frac",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [], "jitter_frac": []}},
+            "state_poll_policy.intervals_s must be a list of 1 to 4 numbers",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [1, 2, 3, 4, 5], "jitter_frac": [0, 0, 0, 0, 0]}},
+            "state_poll_policy.intervals_s must be a list of 1 to 4 numbers",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": 10.0, "jitter_frac": [0]}},
+            "state_poll_policy.intervals_s must be a list of 1 to 4 numbers",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [10.0, 0], "jitter_frac": [0, 0]}},
+            "state_poll_policy.intervals_s[1] must be > 0",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [True], "jitter_frac": [0]}},
+            "state_poll_policy.intervals_s[0] must be a number",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [float("nan")], "jitter_frac": [0]}},
+            "state_poll_policy.intervals_s[0] must be finite",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [float("inf")], "jitter_frac": [0]}},
+            "state_poll_policy.intervals_s[0] must be finite",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [10.0, 3.0], "jitter_frac": [0.1]}},
+            "state_poll_policy.jitter_frac must be a list as long as state_poll_policy.intervals_s",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [10.0], "jitter_frac": 0.1}},
+            "state_poll_policy.jitter_frac must be a list as long as state_poll_policy.intervals_s",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [10.0], "jitter_frac": [-0.1]}},
+            "state_poll_policy.jitter_frac[0] must be >= 0",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [10.0], "jitter_frac": [1.0]}},
+            "state_poll_policy.jitter_frac[0] must be < 1",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [10.0], "jitter_frac": [float("nan")]}},
+            "state_poll_policy.jitter_frac[0] must be finite",
+        ),
+        (
+            {"state_poll_policy": {"intervals_s": [10.0], "jitter_frac": [False]}},
+            "state_poll_policy.jitter_frac[0] must be a number",
+        ),
+        (
+            {"state_poll_policy": _POLICY, "seed": 1, "state_poll_interval_choices_s": [1.0]},
+            "state_poll_policy cannot be combined with state_poll_interval_choices_s",
+        ),
+        (
+            {"state_poll_policy": _POLICY, "seed": 1, "state_poll_choice_jitter_frac": 0.1},
+            "state_poll_policy cannot be combined with state_poll_choice_jitter_frac",
+        ),
+        (
+            {"state_poll_policy": _POLICY, "seed": 1, "state_poll_interval_s": 2.0},
+            "state_poll_policy cannot be combined with state_poll_interval_s",
+        ),
+        (
+            {"state_poll_policy": _POLICY, "seed": 1, "state_poll_jitter_frac": 0.2},
+            "state_poll_policy cannot be combined with state_poll_jitter_frac",
+        ),
+        ({"state_poll_policy": _POLICY}, "state_poll_policy requires seed"),
+        ({"state_poll_policy": _POLICY, "seed": 1.0}, "seed must be an integer"),
+    ],
+)
+def test_validate_config_rejects_a_bad_state_poll_policy(overrides: dict, message: str):
+    """Each malformed table, each combination with another poll-interval setting
+    (each would silently mean nothing beside the table) and a missing seed (the jitter
+    stream is seeded from it) fails with its own exact diagnostic."""
+    raw = _minimal_raw()
+    raw.update(overrides)
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == message
+
+
+def test_validate_config_carries_the_state_poll_policy_as_float_tuples():
+    """A valid table reaches SyncConfig as a StatePollPolicy of float tuples, and the
+    seed reaches the AgentConfig; without the key SyncConfig has no policy."""
+    raw = _minimal_raw()
+    raw.update(state_poll_policy={"intervals_s": [10, 5], "jitter_frac": [0.1, 0]}, seed=3)
+    config = validate_config(raw)
+    assert config.seed == 3
+    policy = build_sync_config(config).state_poll_policy
+    assert policy == StatePollPolicy(intervals_s=(10.0, 5.0), jitter_frac=(0.1, 0.0))
+    assert [type(v) for v in (*policy.intervals_s, *policy.jitter_frac)] == [float] * 4
+    assert build_sync_config(validate_config(_minimal_raw())).state_poll_policy is None
+
+
+def test_build_agent_draws_policy_jitter_from_the_seed_and_node_jitter_stream(tmp_path: Path):
+    """End to end through build_agent: under a one-row table (x, 0.1) every state poll's
+    applied interval is x * (1 + 0.1 * (2u - 1)) for successive u of the
+    "state_poll_interval_jitter:{seed}:{node}" stream -- the choices-mode jitter
+    stream, so this table polls when the single choice x would."""
+    config = _config(
+        tmp_path, neighbors=["h1"], state_poll_policy={"intervals_s": [3.695], "jitter_frac": [0.1]}, seed=7
+    )
+    engine = build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))._engine
+    stream = random.Random("state_poll_interval_jitter:7:h0").random
+    applied = []
+    now = 0.0
+    while len(applied) < 5:
+        engine.on_tick(now)
+        for event in engine.drain_events():
+            if event["event"] == "decision" and event["kind"] == "state_poll":
+                applied.append(event["action"]["applied_interval_s"])
+                now += event["action"]["applied_interval_s"]
+    assert applied == [3.695 * (1 + 0.1 * (2 * stream() - 1)) for _ in range(5)]

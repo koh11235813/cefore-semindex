@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from semindex import holder_state, names, schema
-from semindex.engine import SyncConfig, SyncEngine, _PollReplies
+from semindex.engine import StatePollPolicy, SyncConfig, SyncEngine, _PollReplies
 from semindex.store import OriginProgress, Store
 
 
@@ -1188,3 +1188,416 @@ def test_poll_reply_status_leaves_interests_and_other_events_unchanged(tmp_path:
     assert sent_on == sent_off
     assert [e for e in events_on if e["event"] != "decision"] == [e for e in events_off if e["event"] != "decision"]
     assert not any(e["event"] == "decision" for e in events_off)
+
+
+# -- re-deciding the next poll when the newest poll resolves (ADR 0004, state_poll_policy) --
+
+
+def _policy_engine(
+    tmp_path: Path, intervals: tuple[float, ...], jitter: tuple[float, ...], u: "_Cycle", **overrides
+) -> tuple[SyncEngine, RecordingTransport, dict[str, _Cycle]]:
+    """A one-neighbor (h1) engine under a state_poll_policy table, its jitter u drawn
+    from `u`; the other two poll rngs are spies that must stay undrawn."""
+    store = Store(tmp_path / "h0.db")
+    transport = RecordingTransport()
+    spies = {"jitter": _Cycle(0.2), "choice": _Cycle(0.5)}
+    config = SyncConfig(
+        group="g",
+        node="h0",
+        neighbors=("h1",),
+        state_poll_policy=StatePollPolicy(intervals_s=intervals, jitter_frac=jitter),
+        **overrides,
+    )
+    engine = SyncEngine(
+        config,
+        store,
+        transport,
+        poll_jitter_rng=spies["jitter"],
+        poll_choice_rng=spies["choice"],
+        poll_choice_jitter_rng=u,
+    )
+    return engine, transport, spies
+
+
+def _drive(engine: SyncEngine, steps: list[tuple]) -> list[dict]:
+    """Run ("tick", now) / ("reply", now, epoch_ms) steps against h1 and return every event."""
+    events: list[dict] = []
+    for step in steps:
+        if step[0] == "tick":
+            engine.on_tick(step[1])
+        else:
+            engine.on_state("h1", _EMPTY_STATE_PAYLOAD, step[1], poll_epoch_ms=step[2])
+        events += engine.drain_events()
+    return events
+
+
+def _decisions(events: list[dict], kind: str) -> list[dict]:
+    """The `decision` events of one kind, in order."""
+    return [e for e in events if e["event"] == "decision" and e["kind"] == kind]
+
+
+def _poll_names(transport: RecordingTransport) -> list[str]:
+    """Every state-request Interest name sent, in order."""
+    return [n for n, _ in transport.sent if isinstance(names.parse(n), names.StateName)]
+
+
+def _state_name(epoch_ms: int) -> str:
+    """h0's state-request name toward h1 for the poll sent at epoch_ms."""
+    return names.build_state_name("g", "h1", "h0", epoch_ms)
+
+
+def test_policy_reschedules_on_a_timeout_from_the_poll_s_own_send_time(tmp_path: Path):
+    """Table (10, 4), j 0.1, u 0.75 -> factor 1.05. The poll at 0 is sent with the
+    after-success interval 10.5 s; at 2.0 its lifetime has passed, so the pending next
+    poll is re-decided from the after-failure row with the same u: 0 + 4 * 1.05 = 4.2.
+    The second poll draws its own u (0.25); the first poll's u is never drawn again."""
+    u = _Cycle(0.75, 0.25)
+    engine, transport, spies = _policy_engine(tmp_path, (10.0, 4.0), (0.1, 0.1), u)
+    events = _drive(engine, [("tick", 0.0), ("tick", 1.99)])
+    assert _decisions(events, "state_poll_reschedule") == []
+    events = _drive(engine, [("tick", 2.0)])
+    assert _decisions(events, "state_poll_reschedule") == [
+        {
+            "event": "decision",
+            "ts_ms": 2000,
+            "kind": "state_poll_reschedule",
+            "state": {"last_poll_status": "timed_out", "consecutive_poll_timeouts": 1},
+            "action": {
+                "neighbor": "h1",
+                "poll_epoch_ms": 0,
+                "trigger": "timed_out",
+                "interval_s": 4.0,
+                "applied_interval_s": 4.0 * 1.05,
+                "clamped": False,
+            },
+            "action_prob": 1.0,
+        }
+    ]
+    _drive(engine, [("tick", 4.0 * 1.05 - 0.01)])
+    assert _poll_names(transport) == [_state_name(0)]
+    events = _drive(engine, [("tick", 4.0 * 1.05)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(4200)]
+    # The second poll's provisional interval comes from the same table, looked up
+    # with the pre-send state (one timeout), and its own fresh u.
+    [poll] = _decisions(events, "state_poll")
+    assert poll["action"] == {"neighbor": "h1", "interval_s": 4.0, "applied_interval_s": 4.0 * 0.95}
+    assert poll["action_prob"] == 1.0
+    assert u.calls == 2
+    assert spies["jitter"].calls == 0
+    assert spies["choice"].calls == 0
+
+
+def test_policy_reschedules_on_an_answer_and_records_the_poll_it_resolved(tmp_path: Path):
+    """After a timeout the poll at 4.2 is sent with the after-failure interval (4 *
+    1.05); its reply at 4.3 re-decides the next poll from the after-success row with
+    that poll's own u: 4.2 + 10 * 1.05 = 14.7, not 8.4."""
+    engine, transport, _ = _policy_engine(tmp_path, (10.0, 4.0), (0.1, 0.1), _Cycle(0.75))
+    sent_at = 4.0 * 1.05
+    _drive(engine, [("tick", 0.0), ("tick", 2.0), ("tick", sent_at)])
+    events = _drive(engine, [("reply", 4.3, 4200)])
+    assert _decisions(events, "state_poll_reschedule") == [
+        {
+            "event": "decision",
+            "ts_ms": 4300,
+            "kind": "state_poll_reschedule",
+            "state": {"last_poll_status": "answered", "consecutive_poll_timeouts": 0},
+            "action": {
+                "neighbor": "h1",
+                "poll_epoch_ms": 4200,
+                "trigger": "answered",
+                "interval_s": 10.0,
+                "applied_interval_s": 10.0 * 1.05,
+                "clamped": False,
+            },
+            "action_prob": 1.0,
+        }
+    ]
+    _drive(engine, [("tick", 8.4), ("tick", sent_at + 10.0 * 1.05 - 0.01)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(4200)]
+    _drive(engine, [("tick", sent_at + 10.0 * 1.05)])
+    assert _poll_names(transport)[-1] == _state_name(round((sent_at + 10.0 * 1.05) * 1000))
+
+
+def test_policy_resolves_each_poll_once(tmp_path: Path):
+    """A resolved poll is not resolved again: further ticks before the next send, and a
+    duplicate reply to an answered poll, add no reschedule row."""
+    engine, _, _ = _policy_engine(tmp_path, (10.0, 4.0), (0.0, 0.0), _Cycle(0.5))
+    events = _drive(engine, [("tick", 0.0), ("tick", 2.0), ("tick", 2.5), ("tick", 3.9)])
+    assert len(_decisions(events, "state_poll_reschedule")) == 1
+    events = _drive(engine, [("tick", 4.0), ("reply", 4.1, 4000), ("reply", 4.2, 4000), ("tick", 6.5)])
+    assert [d["action"]["trigger"] for d in _decisions(events, "state_poll_reschedule")] == ["answered"]
+
+
+def test_policy_a_late_reply_to_a_timed_out_poll_does_not_re_decide(tmp_path: Path):
+    """The poll at 0 is resolved as timed out at 2.0 (next poll at 4.0). Its reply at
+    2.5 is still accepted -- the poll is answered, as before -- but the next poll stays
+    at 4.0 (an answered re-decision would have moved it to 10) and a
+    state_poll_late_reply event records the reply instead."""
+    engine, transport, _ = _policy_engine(tmp_path, (10.0, 4.0), (0.0, 0.0), _Cycle(0.5))
+    _drive(engine, [("tick", 0.0), ("tick", 2.0)])
+    events = _drive(engine, [("reply", 2.5, 0)])
+    assert _decisions(events, "state_poll_reschedule") == []
+    assert [e for e in events if e["event"] == "state_poll_late_reply"] == [
+        {"event": "state_poll_late_reply", "ts_ms": 2500, "neighbor": "h1", "poll_epoch_ms": 0}
+    ]
+    assert engine._poll_replies["h1"].snapshot(2.5, 2.0) == ("answered", 0)
+    _drive(engine, [("tick", 3.99)])
+    assert _poll_names(transport) == [_state_name(0)]
+    events = _drive(engine, [("tick", 4.0)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(4000)]
+    [poll] = _decisions(events, "state_poll")
+    assert (poll["state"]["last_poll_status"], poll["state"]["consecutive_poll_timeouts"]) == ("answered", 0)
+
+
+def test_policy_a_late_reply_to_a_timed_out_poll_no_longer_newest_is_still_counted(tmp_path: Path):
+    """Table (10, 2.5): the poll at 0 times out at 2.0, the next goes at 2.5, and the
+    reply to the poll at 0 arrives at 2.9 (within lifetime + grace, so accepted). It is
+    a late reply to a timed-out poll: counted, never re-decided."""
+    engine, transport, _ = _policy_engine(tmp_path, (10.0, 2.5), (0.0, 0.0), _Cycle(0.5))
+    _drive(engine, [("tick", 0.0), ("tick", 2.0), ("tick", 2.5)])
+    events = _drive(engine, [("reply", 2.9, 0)])
+    assert _decisions(events, "state_poll_reschedule") == []
+    assert [e for e in events if e["event"] == "state_poll_late_reply"] == [
+        {"event": "state_poll_late_reply", "ts_ms": 2900, "neighbor": "h1", "poll_epoch_ms": 0}
+    ]
+    _drive(engine, [("tick", 4.49)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(2500)]
+
+
+def test_policy_a_reply_to_a_poll_that_is_not_the_newest_does_not_re_decide(tmp_path: Path):
+    """One-row table (1.0): the reply to the poll at 0 arrives after the poll at 1.0
+    went out. It is accepted but changes no schedule (poll 0 was never resolved, so no
+    late-reply event either); the reply to the newest poll then does re-decide."""
+    engine, _, _ = _policy_engine(tmp_path, (1.0,), (0.0,), _Cycle(0.5))
+    events = _drive(engine, [("tick", 0.0), ("tick", 1.0), ("reply", 1.05, 0)])
+    assert _decisions(events, "state_poll_reschedule") == []
+    assert [e for e in events if e["event"] == "state_poll_late_reply"] == []
+    events = _drive(engine, [("reply", 1.1, 1000)])
+    assert [d["action"]["poll_epoch_ms"] for d in _decisions(events, "state_poll_reschedule")] == [1000]
+
+
+def test_policy_clamps_a_past_next_time_to_now_and_polls_in_the_same_tick(tmp_path: Path):
+    """Table (10, 1): at 2.0 the poll at 0 times out and its after-failure next time,
+    0 + 1 = 1.0, is already past. It is clamped to now and, because the timeout is
+    resolved before the due check, the next poll goes out in that same tick."""
+    engine, transport, _ = _policy_engine(tmp_path, (10.0, 1.0), (0.0, 0.0), _Cycle(0.5))
+    _drive(engine, [("tick", 0.0)])
+    events = _drive(engine, [("tick", 2.0)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(2000)]
+    assert [(e["kind"], e["ts_ms"]) for e in events if e["event"] == "decision"] == [
+        ("state_poll_reschedule", 2000),
+        ("state_poll", 2000),
+    ]
+    [reschedule] = _decisions(events, "state_poll_reschedule")
+    assert reschedule["action"] == {
+        "neighbor": "h1",
+        "poll_epoch_ms": 0,
+        "trigger": "timed_out",
+        "interval_s": 1.0,
+        "applied_interval_s": 1.0,
+        "clamped": True,
+    }
+
+
+def test_policy_clamps_an_answer_that_arrives_after_the_next_time_has_passed(tmp_path: Path):
+    """One-row table (1.0): the reply to the poll at 0 arrives at 1.5, before any tick
+    has sent the poll that was due at 1.0. The re-decided time 0 + 1.0 is past, so it
+    is recorded as clamped and held as now, 1.5."""
+    engine, _, _ = _policy_engine(tmp_path, (1.0,), (0.0,), _Cycle(0.5))
+    _drive(engine, [("tick", 0.0)])
+    [reschedule] = _decisions(_drive(engine, [("reply", 1.5, 0)]), "state_poll_reschedule")
+    assert (reschedule["action"]["trigger"], reschedule["action"]["clamped"]) == ("answered", True)
+    assert engine._next_state_poll["h1"] == 1.5
+
+
+def test_policy_resolution_never_sends_or_cancels_an_interest_itself(tmp_path: Path):
+    """Re-deciding only moves the pending next-poll time: neither the reply that
+    resolves a poll nor the tick that resolves its timeout sends anything, and every
+    Interest sent is a state poll at its own (re-decided) time, once."""
+    engine, transport, _ = _policy_engine(tmp_path, (10.0, 4.0), (0.0, 0.0), _Cycle(0.5))
+    _drive(engine, [("tick", 0.0)])
+    before = list(transport.sent)
+    _drive(engine, [("tick", 2.0)])  # resolves poll 0 as timed out; next at 4.0
+    assert transport.sent == before
+    _drive(engine, [("tick", 4.0)])
+    before = list(transport.sent)
+    _drive(engine, [("reply", 4.1, 4000)])  # resolves poll 4000 as answered; next at 14.0
+    assert transport.sent == before
+    _drive(engine, [("tick", t / 10) for t in range(41, 141)])
+    assert transport.sent == [(_state_name(ms), 2000) for ms in (0, 4000, 14000)]
+
+
+@pytest.mark.parametrize("interval", [0.5, 3.695])
+def test_a_one_row_policy_polls_exactly_like_the_same_single_choice(tmp_path: Path, interval: float):
+    """A one-row table (x, j) re-decides to the value it chose at send time with the
+    same u, so over a FakeNetwork run with replies, a partition and a heal it sends the
+    same Interests at the same times as choices mode with the one choice x, choice
+    jitter j and the same jitter stream -- for x shorter and longer than the lifetime."""
+    from fakes import FakeNetwork
+
+    class _Tap:
+        """Record every Interest name an engine sends, then pass it on."""
+
+        def __init__(self, inner) -> None:
+            """Wrap `inner`, a FakeNetwork node transport."""
+            self.inner = inner
+            self.sent: list[str] = []
+
+        def register(self, prefix: str) -> None:
+            """Pass through."""
+            self.inner.register(prefix)
+
+        def send_interest(self, name: str, lifetime_ms: int) -> None:
+            """Record and pass through."""
+            self.sent.append(name)
+            self.inner.send_interest(name, lifetime_ms)
+
+    def _run(label: str, **policy) -> tuple[list[str], list[dict]]:
+        """Run h0 polling h1 for 40 s, h1 unreachable over [10, 20); return h0's sends and events."""
+        network = FakeNetwork()
+        tap = _Tap(network.transport_for("h0"))
+        h0 = SyncEngine(
+            SyncConfig(group="g", node="h0", neighbors=("h1",), **policy),
+            Store(tmp_path / f"{label}-h0.db"),
+            tap,
+            poll_choice_rng=_Cycle(0.3, 0.9),
+            poll_choice_jitter_rng=_Cycle(0.1, 0.9, 0.35, 0.6),
+        )
+        h1 = SyncEngine(SyncConfig(group="g", node="h1", neighbors=()), Store(tmp_path / f"{label}-h1.db"), network.transport_for("h1"))
+        network.add_node("h0", h0)
+        network.add_node("h1", h1)
+        events: list[dict] = []
+        for i in range(800):
+            now = i * 0.05
+            if i == 200:
+                network.partition("h0", "h1")
+            if i == 400:
+                network.heal("h0", "h1")
+            network.pump(now)
+            h0.on_tick(now)
+            events += h0.drain_events()
+        return tap.sent, events
+
+    sent_policy, events_policy = _run(
+        "policy", state_poll_policy=StatePollPolicy(intervals_s=(interval,), jitter_frac=(0.1,))
+    )
+    sent_choice, _ = _run("choice", state_poll_interval_choices_s=(interval,), state_poll_choice_jitter_frac=0.1)
+    assert sent_policy == sent_choice
+    assert len(sent_policy) > 40 / (interval * 1.1)
+    # Every reschedule kept the time chosen at send.
+    assert {d["action"]["clamped"] for d in _decisions(events_policy, "state_poll_reschedule")} <= {False}
+
+
+def _snapshot_spy(monkeypatch) -> list[float]:
+    """Count every _PollReplies.snapshot call (the times it was called at)."""
+    calls: list[float] = []
+    original = _PollReplies.snapshot
+
+    def spy(self, now, lifetime_s):
+        calls.append(now)
+        return original(self, now, lifetime_s)
+
+    monkeypatch.setattr(_PollReplies, "snapshot", spy)
+    return calls
+
+
+@pytest.mark.parametrize("mode", ["stage1", "choices"])
+def test_without_a_policy_nothing_new_runs(tmp_path: Path, monkeypatch, mode: str):
+    """The gate: with no state_poll_policy the poll-reply history is read only when a
+    poll is sent (once per poll, as before -- never from the new timeout check in
+    on_tick nor from on_state), each rng is drawn exactly as before, and no
+    reschedule or late-reply event is emitted, through replies, a late reply after
+    the lifetime and a stretch of timeouts."""
+    calls = _snapshot_spy(monkeypatch)
+    overrides = {} if mode == "stage1" else {"state_poll_interval_choices_s": (1.0, 3.0)}
+    store = Store(tmp_path / "h0.db")
+    transport = RecordingTransport()
+    jitter, choice, choice_jitter = _Cycle(0.2, 0.8), _Cycle(0.1, 0.7), _Cycle(0.3, 0.6)
+    engine = SyncEngine(
+        SyncConfig(group="g", node="h0", neighbors=("h1",), **overrides),
+        store,
+        transport,
+        poll_jitter_rng=jitter,
+        poll_choice_rng=choice,
+        poll_choice_jitter_rng=choice_jitter,
+    )
+    steps = [("tick", i * 0.05) for i in range(400)]
+    steps.insert(3, ("reply", 0.12, 0))
+    steps.insert(60, ("reply", 2.95, 0))
+    events = _drive(engine, steps)
+    polls = len(_poll_names(transport))
+    assert polls > 5
+    assert len(calls) == polls
+    assert {e["kind"] for e in events if e["event"] == "decision"} == {"state_poll"}
+    assert {e["event"] for e in events} == {"decision", "state_rx"}
+    if mode == "stage1":
+        assert (jitter.calls, choice.calls, choice_jitter.calls) == (polls, 0, 0)
+    else:
+        assert (jitter.calls, choice.calls, choice_jitter.calls) == (0, polls, polls)
+
+
+def test_policy_logging_adds_no_behaviour(tmp_path: Path):
+    """With a policy, log_decisions True vs False sends the same Interests at the same
+    times and emits the same non-`decision` events (the late-reply event included);
+    the jitter u is drawn once per poll and the two other poll rngs never."""
+
+    def _run(label: str, log_decisions: bool):
+        """Drive one policy engine through answers, timeouts, a clamp and a late reply."""
+        (tmp_path / label).mkdir()
+        engine, transport, spies = _policy_engine(
+            tmp_path / label, (3.0, 1.0), (0.1, 0.0), _Cycle(0.1, 0.9, 0.4), log_decisions=log_decisions
+        )
+        # Poll 0 is answered; poll 2800 (sent on the first 0.05 s tick after its
+        # 2.76 s due time) times out at 4.8, which clamps the next poll to 4.8; the
+        # reply to poll 2800 at 4.9 is then a late reply to a timed-out poll.
+        replies = [("reply", 0.06, 0), ("reply", 4.9, 2800)]
+        steps = sorted([("tick", i * 0.05) for i in range(300)] + replies, key=lambda step: (step[1], step[0] == "reply"))
+        events = _drive(engine, steps)
+        return transport.sent, events, engine._poll_choice_jitter_rng.calls, spies
+
+    sent_on, events_on, u_on, spies_on = _run("on", True)
+    sent_off, events_off, u_off, spies_off = _run("off", False)
+    assert sent_on == sent_off
+    assert [e for e in events_on if e["event"] != "decision"] == [e for e in events_off if e["event"] != "decision"]
+    assert any(e["event"] == "state_poll_late_reply" for e in events_on)
+    reschedules = _decisions(events_on, "state_poll_reschedule")
+    assert {d["action"]["trigger"] for d in reschedules} == {"answered", "timed_out"}
+    assert any(d["action"]["clamped"] for d in reschedules)
+    assert not any(e["event"] == "decision" for e in events_off)
+    polls = sum(1 for n, _ in sent_on if isinstance(names.parse(n), names.StateName))
+    assert u_on == u_off == polls
+    assert [s.calls for s in (*spies_on.values(), *spies_off.values())] == [0, 0, 0, 0]
+
+
+_SHORTEN = ((10.043, 3.695), (0.1, 0.1))
+_WAIT_5S = ((10.043, 5.0), (0.1, 0.0))
+
+
+def test_shorten_policy_retries_after_3_695_and_returns_to_10_043(tmp_path: Path):
+    """The "shorten" table, measured from each resolved poll's own send time, as
+    replay.py does: poll 0 (u 0.3) times out, so the next goes at 0 + 3.695 * (1 +
+    0.1 * (2 * 0.3 - 1)); that poll (u 0.8) is answered, so the one after goes at its
+    send time + 10.043 * (1 + 0.1 * (2 * 0.8 - 1))."""
+    engine, transport, _ = _policy_engine(tmp_path, *_SHORTEN, _Cycle(0.3, 0.8))
+    retry = 0 + 3.695 * (1 + 0.1 * (2 * 0.3 - 1))
+    back = retry + 10.043 * (1 + 0.1 * (2 * 0.8 - 1))
+    _drive(engine, [("tick", 0.0), ("tick", 2.0), ("tick", retry - 0.001)])
+    assert _poll_names(transport) == [_state_name(0)]
+    _drive(engine, [("tick", retry), ("reply", retry + 0.01, round(retry * 1000)), ("tick", back - 0.001)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(round(retry * 1000))]
+    _drive(engine, [("tick", back)])
+    assert _poll_names(transport)[-1] == _state_name(round(back * 1000))
+
+
+def test_five_second_wait_policy_retries_exactly_5_s_after_a_failed_poll(tmp_path: Path):
+    """The "5 s wait" table: after a timeout the next poll goes exactly 5.0 s after the
+    failed poll's send time (no jitter on that row, whatever u = 0.9 was drawn); after
+    an answer it goes 10.043 * (1 + 0.1 * (2u - 1)) after the answered poll's send."""
+    engine, transport, _ = _policy_engine(tmp_path, *_WAIT_5S, _Cycle(0.9, 0.2))
+    _drive(engine, [("tick", 0.0), ("tick", 2.0), ("tick", 4.999)])
+    assert _poll_names(transport) == [_state_name(0)]
+    back = 5.0 + 10.043 * (1 + 0.1 * (2 * 0.2 - 1))
+    _drive(engine, [("tick", 5.0), ("reply", 5.01, 5000), ("tick", back - 0.001)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(5000)]
+    _drive(engine, [("tick", back)])
+    assert _poll_names(transport)[-1] == _state_name(round(back * 1000))
