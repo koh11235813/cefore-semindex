@@ -1328,6 +1328,73 @@ def test_policy_resolves_each_poll_once(tmp_path: Path):
     assert [d["action"]["trigger"] for d in _decisions(events, "state_poll_reschedule")] == ["answered"]
 
 
+def test_policy_table_rows_saturate_at_the_last_row_and_return_to_row_0_on_success(tmp_path: Path):
+    """A 4-row table (10, 3, 5, 7), no jitter, h1 silent: the timeouts re-decide with
+    counts 1, 2, 3, 4 -> rows 1, 2, 3, 3 (the last row covers 3+), the count still
+    growing once older polls are folded into expired_timeouts; an answer then
+    re-decides from row 0. Sends: 0, 3, 8, 15, 22, then 22 + 10 = 32."""
+    engine, transport, _ = _policy_engine(tmp_path, (10.0, 3.0, 5.0, 7.0), (0.0, 0.0, 0.0, 0.0), _Cycle(0.5))
+    steps = [("tick", t) for t in (0.0, 2.0, 3.0, 5.0, 8.0, 10.0, 15.0, 17.0, 22.0)] + [("reply", 22.1, 22000)]
+    events = _drive(engine, steps)
+    assert engine._poll_replies["h1"].polls[-1].replied
+    rows = [
+        (d["action"]["trigger"], d["state"]["consecutive_poll_timeouts"], d["action"]["interval_s"])
+        for d in _decisions(events, "state_poll_reschedule")
+    ]
+    assert rows == [
+        ("timed_out", 1, 3.0),
+        ("timed_out", 2, 5.0),
+        ("timed_out", 3, 7.0),
+        ("timed_out", 4, 7.0),
+        ("answered", 0, 10.0),
+    ]
+    assert _poll_names(transport) == [_state_name(ms) for ms in (0, 3000, 8000, 15000, 22000)]
+    _drive(engine, [("tick", 31.9), ("tick", 32.0)])
+    assert _poll_names(transport)[-1] == _state_name(32000)
+
+
+def test_policy_folded_timeouts_still_pick_the_saturated_row(tmp_path: Path):
+    """The count the table reads includes polls _expire has folded into
+    expired_timeouts: by the timeout of the poll at 15, the polls at 0, 3 and 8 are
+    past lifetime + grace and folded, and the count is still 4 (row 3)."""
+    engine, _, _ = _policy_engine(tmp_path, (10.0, 3.0, 5.0, 7.0), (0.0, 0.0, 0.0, 0.0), _Cycle(0.5))
+    events = _drive(engine, [("tick", t) for t in (0.0, 2.0, 3.0, 5.0, 8.0, 10.0, 15.0, 17.0)])
+    assert engine._poll_replies["h1"].expired_timeouts == 3
+    last = _decisions(events, "state_poll_reschedule")[-1]
+    assert (last["state"]["consecutive_poll_timeouts"], last["action"]["interval_s"]) == (4, 7.0)
+
+
+def test_policy_an_undecodable_reply_still_resolves_the_poll_as_answered(tmp_path: Path):
+    """A reply whose payload fails to decode still shows h1 answering: after a timeout
+    (next poll at 4.0 + 4 = 8.0), the undecodable reply to the poll at 4.0 re-decides
+    from row 0, moving the next poll to 4.0 + 10 = 14.0."""
+    engine, transport, _ = _policy_engine(tmp_path, (10.0, 4.0), (0.0, 0.0), _Cycle(0.5))
+    _drive(engine, [("tick", 0.0), ("tick", 2.0), ("tick", 4.0)])
+    engine.on_state("h1", b"not json", 4.1, poll_epoch_ms=4000)
+    [reschedule] = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert (reschedule["action"]["trigger"], reschedule["action"]["interval_s"]) == ("answered", 10.0)
+    _drive(engine, [("tick", 8.0), ("tick", 13.9)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(4000)]
+    _drive(engine, [("tick", 14.0)])
+    assert _poll_names(transport)[-1] == _state_name(14000)
+
+
+def test_policy_a_reply_after_the_lifetime_but_before_any_tick_resolves_as_answered(tmp_path: Path):
+    """The poll at 0 is answered at 2.05, past its 2 s lifetime but before any tick has
+    resolved it as timed out: it is resolved once, as answered (count 0, next at 0 +
+    10), with no timed-out row at the 2.1 tick and no late-reply event."""
+    engine, transport, _ = _policy_engine(tmp_path, (10.0, 4.0), (0.0, 0.0), _Cycle(0.5))
+    events = _drive(engine, [("tick", 0.0), ("reply", 2.05, 0), ("tick", 2.1), ("tick", 4.0), ("tick", 9.99)])
+    assert [
+        (d["ts_ms"], d["action"]["trigger"], d["state"]["consecutive_poll_timeouts"], d["action"]["applied_interval_s"])
+        for d in _decisions(events, "state_poll_reschedule")
+    ] == [(2050, "answered", 0, 10.0)]
+    assert [e for e in events if e["event"] == "state_poll_late_reply"] == []
+    assert _poll_names(transport) == [_state_name(0)]
+    _drive(engine, [("tick", 10.0)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(10000)]
+
+
 def test_policy_a_late_reply_to_a_timed_out_poll_does_not_re_decide(tmp_path: Path):
     """The poll at 0 is resolved as timed out at 2.0 (next poll at 4.0). Its reply at
     2.5 is still accepted -- the poll is answered, as before -- but the next poll stays
@@ -1494,6 +1561,7 @@ def _snapshot_spy(monkeypatch) -> list[float]:
     original = _PollReplies.snapshot
 
     def spy(self, now, lifetime_s):
+        """Record the call's time, then run the real snapshot."""
         calls.append(now)
         return original(self, now, lifetime_s)
 

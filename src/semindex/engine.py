@@ -100,7 +100,9 @@ class SyncConfig:
     fault_drop_rec: dict[tuple[str, int], int] = field(default_factory=dict)
     # 2026-10-23 (map.md "判断の記録"): emit a `decision` event at each of the three
     # points SyncEngine actually chooses something (state-poll target/time, fetch
-    # backoff wait, fetch-plan target/count). True in every production config; a test
+    # backoff wait, fetch-plan target/count) -- four with a state_poll_policy
+    # (2026-11-03), which also logs each re-decided next-poll time
+    # (`state_poll_reschedule`). True in every production config; a test
     # sets it False on an otherwise-identical engine to prove logging adds no
     # behavior of its own.
     log_decisions: bool = True
