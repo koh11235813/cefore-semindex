@@ -1,0 +1,4 @@
+s5short p0.2: retries 491, max retries within 100 ms 2, within 0.5 s after link_up 40 (0.081), of which timed out 0, first poll - t0 ms min/median/max 473/515/595
+s5short p0.4: retries 1270, max retries within 100 ms 3, within 0.5 s after link_up 64 (0.050), of which timed out 3, first poll - t0 ms min/median/max 457/514/583
+s5wait p0.2: retries 384, max retries within 100 ms 2, within 0.5 s after link_up 38 (0.099), of which timed out 0, first poll - t0 ms min/median/max 473/516/571
+s5wait p0.4: retries 948, max retries within 100 ms 2, within 0.5 s after link_up 73 (0.077), of which timed out 1, first poll - t0 ms min/median/max 461/516/1133

@@ -1,0 +1,4 @@
+s5short 11 h4 -> h3 10.0 ms after nominal link_up
+s5short 16 h3 -> h4 1.0 ms after nominal link_up
+s5short 5 h1 -> h0 2.0 ms after nominal link_up
+s5wait 6 h3 -> h2 4.0 ms after nominal link_up
