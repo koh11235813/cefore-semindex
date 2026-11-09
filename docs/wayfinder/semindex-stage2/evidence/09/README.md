@@ -45,15 +45,16 @@
    $PY sens4.py > sens4.md
    PYTHONPATH=$W/src $PY handcheck.py > handcheck.txt
    PYTHONPATH=$W/src $PY phase.py --agg $AGG --out . --workers 3   # sync_table.csv ほか 3 つと retry_pairs.csv
-   rm retry_pairs.csv                                        # 再試行 1 本ごとの行（330 KB）。ここには置いていない
+   gzip -n9 retry_pairs.csv                                  # 再試行 1 本ごとの行（330 KB）を retry_pairs.csv.gz に
    PYTHONPATH=$W/src $PY retry_recount.py > retry_recount.txt
    PYTHONPATH=$W/src $PY retry_offsets.py > retry_offsets.txt
+   $PY recheck.py > recheck.txt
    $PY ../07/concat_summary.py $AGG s5c s5b0p5 s5b1p359 s5b3p695 s5b10p043 s5a s5short s5wait > main4_summary.csv
    ```
 
    全部で 1 分ほど。`perrun.py`・`replay_runs.py`・`phase.py` は 3 プロセスで回す。
 
-2026-11-09 にこのディレクトリの写しで 2. を回し直し、解析を最初に回した作業用のディレクトリの出力と、CSV 10 個（`perrun.csv`、`replay_perseed.csv`、`live_main.csv`、`calibration_s5b_vs_s4b.csv`、`live_vs_replay.csv`、`front4.csv`、`sync_table.csv`、`retry_table.csv`、`retry_phase_hist.csv`、`poll_phase_hist.csv`）と `tables.md`・`sens4.md`・`handcheck.txt` の 13 個がバイト単位で同じことを確かめた。台本で変えたのは、作業用のディレクトリを指していた道のり（`AGG` と `STORE` を環境変数に、`evidence/04/`・`evidence/07/`・`replay.py` をこのリポジトリの中に）と、それで要らなくなった import だけ。
+2026-11-09 にこのディレクトリの写しで 2. を回し直し、解析を最初に回した作業用のディレクトリの出力と、CSV 10 個（`perrun.csv`、`replay_perseed.csv`、`live_main.csv`、`calibration_s5b_vs_s4b.csv`、`live_vs_replay.csv`、`front4.csv`、`sync_table.csv`、`retry_table.csv`、`retry_phase_hist.csv`、`poll_phase_hist.csv`）と `tables.md`・`sens4.md`・`handcheck.txt` の 13 個がバイト単位で同じことを確かめた。`retry_pairs.csv` も、作業用のディレクトリで最初に書いたものと同じだった。`retry_recount.txt`・`retry_offsets.txt`・`main4_summary.csv`・`recheck.txt` は、このとき初めてファイルに書いた。台本で変えたのは、作業用のディレクトリを指していた道のり（`AGG` と `STORE` を環境変数に、`evidence/04/`・`evidence/07/`・`replay.py` をこのリポジトリの中に）と、使っていなかった import、名前を変えた 2 本（元は `mycheck.py` と `offs.py`）の import だけ。出力に効く行は変えていない。
 
 ## 結果
 
@@ -101,7 +102,7 @@
 
 - p 0.4 の実測は、replay と同じく seed ごとの平均。1. の値（組をまとめた平均）とは 30 ms ほどずれる。
 - 「同じ切断の予定の replay」は、実測と同じ (p, seed) の切断とレコードの予定で `replay.py` を回した値（seed 1〜20、ゆらぎの引き直し 10 回）。「公表値」は `policy_table.csv`（`s4a` の seed 1〜100）。`replay_runs.py` で公表値と同じ設定を回し直すと、比べた方針のすべてで `policy_table.csv` の遅れ・バイト・無駄・打ち切りと同じ値になった（`tables.md` の「Replay: published ... vs our re-run」）。
-- バイト（名前の長さをそろえた値）は replay と ±1.2 % で合う。状態確認/run は実測のほうが 1.0〜1.6 % 多い。固定の腕（10.043 秒と 3.695 秒）の replay と実測は |z| ≤ 1.4。表は `live_vs_replay.csv`。
+- p 0.2・0.4 では、方針のバイト（名前の長さをそろえた値）は replay と ±1.2 % で合い、状態確認/run は実測のほうが 1.0〜1.6 % 多い。p 0 では、バイトは実測が replay より 1.6〜1.7 % 少なく、状態確認/run は 0.8〜1.0 % 多い。固定の腕（10.043 秒と 3.695 秒）の replay と実測は |z| ≤ 1.4。表は `live_vs_replay.csv`。
 
 ### 4. 固定の腕の線との差（[4] と [c]）
 
@@ -122,7 +123,7 @@
 数え方ごとの [4] は `sens4.md`。
 
 1. **p 0 のバイト。** 名前の長さをそろえないと、方針（18.6 B）が固定 10.043 秒（19.0 B、段の名前が 2 文字長い）より左に出て凸包の外になり、[4] が決まらない。そろえると [4] は −92 / +275 ms で、p 0 では方針と固定 10.043 秒は同じ（失敗が無ければ同じ動きなので、そうなるはず）。
-2. **返事のバイトは腕によって違う。** 遅い腕ほど返事に載る状態が小さく、p 0 の 10.043 秒では返事 1 本がおよそ 127.8 B（replay は p ごとに一定の `REP_B`、p 0 で 132.5 B）。このため replay は、遅い腕と方針のバイトを 1.5〜3.5 % 多く、0.5 秒と 1.359 秒の腕を 3〜8 % 少なく見積もる。p 0.2・0.4 の [4] は、バイトの数え方（そのまま、名前の長さをそろえた値、`s4a` の定数）によらず ±400 ms 以内で動き、符号は変わらない。
+2. **返事のバイトは腕によって違う。** 名前の長さをそろえた返事 1 本のバイトは、p 0 で 0.5 秒の腕が 138.4 B、10.043 秒の腕と二つの方針が 127.1〜127.3 B で、replay は p ごとに一定の `REP_B`（p 0 で 132.5 B）を使う（`recheck.txt`）。遅い腕ほど返事に載る状態が小さいためと見ている（推定）。同じ切断の予定の replay に比べた実測のバイト（`live_vs_replay.csv` の `rel`）は、0.5 秒の腕で +3.3〜+7.6 %、1.359 秒で +3.0〜+5.4 %、3.695 秒で +1.3〜+2.1 %、10.043 秒で −2.1〜−3.5 %、二つの方針で p 0 が −1.6〜−1.7 %、p 0.2 が −0.5〜−0.8 %、p 0.4 が +1.1〜+1.2 %。それでも [4] は、バイトの数え方（そのまま、名前の長さをそろえた値、`s4a` の定数）を替えても、名前の長さをそろえた値からの差が p 0.2 で 360 ms 以内、p 0.4 で 630 ms 以内に収まり、符号は変わらない（`sens4.md`）。
 3. **状態確認の数。** 実測は replay より 1.0〜1.6 % 多い（p 0.4 の 0.5 秒の腕では 1 run あたり 1746 回と 1702 回）。replay は 1 回ごとのループの遅れを 0.05 + 0.035p 秒と置くが、実測では p が上がってもループの遅れが延びていないと見ている（推定）。
 4. **無駄の割合。** seed をまとめて計算するか run ごとに平均するか（replay は run ごと）で 0.002〜0.003 違う。
 
@@ -131,16 +132,16 @@
 詳しくは `phase.md`。尺度は map の「選択肢の間隔のゆらぎ」と同じ（`evidence/04/` の `trial04.py`）。
 
 - どの方針・p でもそろわなかった。重なりは偶然の 0.9〜2.4 倍、相手とのずれの変わり方は 1 回あたり 410〜4113 ms で、ゆらぎのある `t2j*`（0.65〜2.0 倍、41〜1406 ms）と同じ帯にあり、ゆらぎの無い `t2i*`（2.8〜100 倍、1〜35 ms で位相が固定）とは違う。再試行が 100 ms の幅に 3 本以上入ったのは、全 run で 1 か所だけ（s5short p 0.4）。
-- 5 秒待ちは、停止のあいだ 5 秒の格子の上の位相を持ち越す（続く再試行の位相の差が ±50 ms に収まる割合 0.86〜0.88）。同じリンクの両端が重なったまま次の状態確認に進む割合は、p 0.4 で 0.32 と、map の「ゆらぎあり」の帯（0〜0.27）を少し超えた。ただし重なりは 2428 回のうち 66 回で、続けて重なった 6 回のうち 4 回は seed 14 の 1 run。
+- 5 秒待ちは、停止のあいだ 5 秒の格子の上の位相を持ち越す（続く再試行の位相の差が ±50 ms に収まる割合 0.86〜0.88）。同じリンクの両端が重なったまま次の状態確認に進む割合は、p 0.4 で 0.32 と、map の「ゆらぎあり」の帯（0〜0.27）を少し超えた。ただし重なりは 2428 回のうち 66 回と少ない。再試行だけで見ると、重なったまま次の再試行に進んだのは 14 回のうち 6 回で、そのうち 4 回は seed 14 の 1 run（`retry_pairs.csv.gz` の `rev_pers_num`・`rev_pers_den`）。
 - 位相は 5 秒の区切りの 0〜1.5 秒に寄る。全エージェントが t0 + 515 ms ごろに一斉に最初の状態確認を出すことと、10.043 秒がほぼ 5 秒の 2 倍なことによると見ている（推定）。固定 10.043 秒の段にも同じ寄りがあり、方針によるものではない。
-- link_up の後 0.5 秒以内に送った再試行は 215 回で、失敗は 0 回。replay はこの窓の状態確認が 2.7 % 失敗すると置くが、実測では出なかった。
+- リンクが実際に戻った時刻（results.json）から 0.5 秒以内に送った再試行は 215 回で、失敗は 0 回。replay はこの窓の状態確認が 2.7 % 失敗すると置くが、実測では出なかった。名目の link_up（t0 + `at`）から数えると 4 回が失敗しているが、どれもリンクが実際に戻る（約 9.6 ms 後）より前に送ったもの（`retry_offsets.txt`）。
 
 ### 7. `s5b*` と `s4b*`（`evidence/07/`）の比べ
 
 `calibration_s5b_vs_s4b.csv`。間には、h2 のプローブの本体を止まらずに取る変更（ADR 0004 の Consequences）と、決め直しの変更が入っている。決め直しは段 A・B・C の送信を変えない（`evidence/08/`）。
 
 - 4 ホップの遅れは、4 つの腕 × 5 つの p の 20 か所すべてで |z| ≤ 1.06。
-- バイト（レコード・ホップあたりの状態確認のバイト、ホップの平均。段の名前は同じ長さ）は、0.5 秒と 1.359 秒の腕で 10 か所すべて `s5b*` のほうが多く、p とともに +0.1 % から +2.7 % まで増える（0.5 秒・p 0.4 で 240.8 → 247.4 B）。1 か所ずつ見れば SE の 2 倍以内だが、向きがそろって p とともに増えるので、偶然の揺れとは見ていない。3.695 秒と 10.043 秒の腕は ±0.7 % 以内。
+- バイト（レコード・ホップあたりの状態確認のバイト、ホップの平均。段の名前は同じ長さ）は、0.5 秒と 1.359 秒の腕で 10 か所すべて `s5b*` のほうが多く、p とともに +0.1 % から +2.7 % まで増える（0.5 秒・p 0.4 で 240.8 → 247.4 B）。1 か所ずつでは、差は SE の 0.7〜2.1 倍ではっきりしない（`s4b*` の SE はここに無いので、`s5b*` と同じと置いた見積もり）。それでも 10 か所すべてで向きがそろい、p とともに増えるので、偶然の揺れとは見ていない。3.695 秒と 10.043 秒の腕は ±0.7 % 以内。
 - 推定: プローブの本体の取得で h2 のループが止まらなくなり、短い腕で遅れて出ていた状態確認が予定どおり出て、窓の中の状態確認が増えたぶん（確かめていない）。
 - だから `s4b*` の遅れは `s5b*` と同じに扱えるが、短い腕のバイトは最大 2.7 % 違う。
 
@@ -153,7 +154,7 @@
 ## 確かめたこと
 
 - 解析の台本は、指標（`perrun.py`〜`sens4.py`）と位相（`phase.py`）の 2 つに分けて別々に書き、書いたのとは別の場所で回し直して出力が同じことを確かめた。上の「作り直し方」の回し直しも同じ。
-- 4 ホップの遅れと打ち切りの割合を、`attrib.py` を通さずに evalagg の `discovery.csv` から直接数え直し、`live_main.csv` の 31 か所（7 つの段の全部の p）すべてで一致した。
+- 4 ホップの遅れと打ち切りの割合を、`attrib.py` を通さずに evalagg の `discovery.csv` から直接数え直し（`recheck.py`、`recheck.txt`）、`live_main.csv` の 31 か所（固定の 4 つの腕と `s5c` は p 5 つずつ、二つの方針は p 3 つずつ）すべてで一致した。
 - 名前のバイトを生のイベントから手で作り直した（`handcheck.py`、`handcheck.txt`）。s5short p 0.2 seed 1 の窓の中の状態確認 116 本の名前はどれも 54 B で、`polls.csv` と合う。
 - [4] を 1. の値から手で内挿して、p 0.2 で −3457 / −3563 ms（seed ごとの平均の値は −3481 / −3588 ms）。
 - 位相の再試行の数、復帰直後の割合、最初の状態確認の時刻を、`phase.py` とは別の台本（`retry_recount.py`、`retry_offsets.py`）で数え直した。違いは数え方の違いで説明がつく（`phase.md` の「別の台本での数え直し」）。
@@ -181,7 +182,8 @@
 - `ana.py` → `live_main.csv`（実測の表）、`calibration_s5b_vs_s4b.csv`（7.）、`live_vs_replay.csv`（3.）、`front4.csv`（4.）、`tables.md`（全部の表）。
 - `sens4.py` → `sens4.md`: [4] の数え方ごとの値（5.）。
 - `handcheck.py` → `handcheck.txt`: 名前のバイトの手計算。
-- `phase.py` → `sync_table.csv`、`retry_table.csv`、`retry_phase_hist.csv`、`poll_phase_hist.csv`。`phase.md` はその読み方と結果。
+- `phase.py` → `sync_table.csv`、`retry_table.csv`、`retry_phase_hist.csv`、`poll_phase_hist.csv`、`retry_pairs.csv.gz`（再試行の、run と送り手ごとの行）。`phase.md` はその読み方と結果。
 - `retry_recount.py` → `retry_recount.txt`、`retry_offsets.py` → `retry_offsets.txt`: 位相の数え直し。
+- `recheck.py` → `recheck.txt`: 4 ホップの遅れと打ち切りの数え直しと、返事 1 本のバイト。
 - `main4_summary.csv`: 8 つの段の evalagg の `summary.csv` をまとめたもの（`evidence/07/concat_summary.py`）。
 - `replay.py`、`policies.py`、`policy_table.csv`: replay の写し（上）。
