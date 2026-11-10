@@ -1138,8 +1138,10 @@ def test_the_outage_shape_reads_the_same_uniforms_at_every_p():
         runs[p] = rng.seen
     shorter, longer = sorted(runs.values(), key=len)
     assert longer[: len(shorter)] == shorter
-    # Start down at p 0.6 or not, the first per-cycle draw is the 5th uniform.
-    assert len(shorter) >= 6 and len(shorter) % 2 == 0
+    # Four start draws whatever the start state, then two per cycle: an even count
+    # at both p, so no state read a different number of start uniforms.
+    assert [len(seen) % 2 for seen in runs.values()] == [0, 0]
+    assert len(shorter) >= 6
 
 
 def test_the_outage_shape_and_the_slot_model_use_unrelated_streams():
