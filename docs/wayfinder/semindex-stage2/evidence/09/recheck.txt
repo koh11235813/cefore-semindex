@@ -1,0 +1,63 @@
+s5short p0: delay 20379.4 ms (live_main 20379.4), censored 0.0000 (live_main 0.0000) same
+s5short p0.2: delay 24693.4 ms (live_main 24693.4), censored 0.0000 (live_main 0.0000) same
+s5short p0.4: delay 29757.4 ms (live_main 29757.4), censored 0.0108 (live_main 0.0108) same
+s5wait p0: delay 20741.6 ms (live_main 20741.6), censored 0.0000 (live_main 0.0000) same
+s5wait p0.2: delay 24847.4 ms (live_main 24847.4), censored 0.0000 (live_main 0.0000) same
+s5wait p0.4: delay 31560.8 ms (live_main 31560.8), censored 0.0092 (live_main 0.0092) same
+s5b0p5 p0: delay 1163.7 ms (live_main 1163.7), censored 0.0000 (live_main 0.0000) same
+s5b0p5 p0.1: delay 2257.9 ms (live_main 2257.9), censored 0.0000 (live_main 0.0000) same
+s5b0p5 p0.2: delay 4096.3 ms (live_main 4096.3), censored 0.0000 (live_main 0.0000) same
+s5b0p5 p0.3: delay 7114.5 ms (live_main 7114.5), censored 0.0000 (live_main 0.0000) same
+s5b0p5 p0.4: delay 12031.2 ms (live_main 12031.2), censored 0.0008 (live_main 0.0008) same
+s5b1p359 p0: delay 2902.7 ms (live_main 2902.7), censored 0.0000 (live_main 0.0000) same
+s5b1p359 p0.1: delay 4158.1 ms (live_main 4158.1), censored 0.0000 (live_main 0.0000) same
+s5b1p359 p0.2: delay 6063.6 ms (live_main 6063.6), censored 0.0000 (live_main 0.0000) same
+s5b1p359 p0.3: delay 8997.8 ms (live_main 8997.8), censored 0.0000 (live_main 0.0000) same
+s5b1p359 p0.4: delay 13787.1 ms (live_main 13787.1), censored 0.0008 (live_main 0.0008) same
+s5b3p695 p0: delay 7523.7 ms (live_main 7523.7), censored 0.0000 (live_main 0.0000) same
+s5b3p695 p0.1: delay 9156.7 ms (live_main 9156.7), censored 0.0000 (live_main 0.0000) same
+s5b3p695 p0.2: delay 12053.2 ms (live_main 12053.2), censored 0.0000 (live_main 0.0000) same
+s5b3p695 p0.3: delay 15527.3 ms (live_main 15527.3), censored 0.0000 (live_main 0.0000) same
+s5b3p695 p0.4: delay 19701.9 ms (live_main 19701.9), censored 0.0017 (live_main 0.0017) same
+s5b10p043 p0: delay 20476.3 ms (live_main 20476.3), censored 0.0000 (live_main 0.0000) same
+s5b10p043 p0.1: delay 24529.9 ms (live_main 24529.9), censored 0.0000 (live_main 0.0000) same
+s5b10p043 p0.2: delay 29642.9 ms (live_main 29642.9), censored 0.0008 (live_main 0.0008) same
+s5b10p043 p0.3: delay 36667.6 ms (live_main 36667.6), censored 0.0100 (live_main 0.0100) same
+s5b10p043 p0.4: delay 42872.5 ms (live_main 42872.5), censored 0.0658 (live_main 0.0658) same
+s5c p0: delay 4342.9 ms (live_main 4342.9), censored 0.0000 (live_main 0.0000) same
+s5c p0.1: delay 5739.5 ms (live_main 5739.5), censored 0.0000 (live_main 0.0000) same
+s5c p0.2: delay 7684.5 ms (live_main 7684.5), censored 0.0000 (live_main 0.0000) same
+s5c p0.3: delay 10272.4 ms (live_main 10272.4), censored 0.0000 (live_main 0.0000) same
+s5c p0.4: delay 15155.1 ms (live_main 15155.1), censored 0.0008 (live_main 0.0008) same
+4-hop recount: 31/31 cells match
+s5b0p5 p0: reply bytes per answered poll (names rebased) 138.4
+s5b0p5 p0.1: reply bytes per answered poll (names rebased) 138.2
+s5b0p5 p0.2: reply bytes per answered poll (names rebased) 137.6
+s5b0p5 p0.3: reply bytes per answered poll (names rebased) 137.4
+s5b0p5 p0.4: reply bytes per answered poll (names rebased) 135.7
+s5b10p043 p0: reply bytes per answered poll (names rebased) 127.1
+s5b10p043 p0.1: reply bytes per answered poll (names rebased) 125.4
+s5b10p043 p0.2: reply bytes per answered poll (names rebased) 123.3
+s5b10p043 p0.3: reply bytes per answered poll (names rebased) 120.9
+s5b10p043 p0.4: reply bytes per answered poll (names rebased) 117.3
+s5b1p359 p0: reply bytes per answered poll (names rebased) 137.6
+s5b1p359 p0.1: reply bytes per answered poll (names rebased) 137.3
+s5b1p359 p0.2: reply bytes per answered poll (names rebased) 136.7
+s5b1p359 p0.3: reply bytes per answered poll (names rebased) 136.2
+s5b1p359 p0.4: reply bytes per answered poll (names rebased) 134.6
+s5b3p695 p0: reply bytes per answered poll (names rebased) 135.4
+s5b3p695 p0.1: reply bytes per answered poll (names rebased) 134.8
+s5b3p695 p0.2: reply bytes per answered poll (names rebased) 133.5
+s5b3p695 p0.3: reply bytes per answered poll (names rebased) 131.8
+s5b3p695 p0.4: reply bytes per answered poll (names rebased) 130.1
+s5c p0: reply bytes per answered poll (names rebased) 137.1
+s5c p0.1: reply bytes per answered poll (names rebased) 136.7
+s5c p0.2: reply bytes per answered poll (names rebased) 136.1
+s5c p0.3: reply bytes per answered poll (names rebased) 135.9
+s5c p0.4: reply bytes per answered poll (names rebased) 133.9
+s5short p0: reply bytes per answered poll (names rebased) 127.3
+s5short p0.2: reply bytes per answered poll (names rebased) 126.2
+s5short p0.4: reply bytes per answered poll (names rebased) 124.5
+s5wait p0: reply bytes per answered poll (names rebased) 127.1
+s5wait p0.2: reply bytes per answered poll (names rebased) 126.0
+s5wait p0.4: reply bytes per answered poll (names rebased) 124.5

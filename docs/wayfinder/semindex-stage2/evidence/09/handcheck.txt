@@ -1,0 +1,3 @@
+group s5short_p020_seed1 18 in-window polls 116 name bytes 6264 distinct name lengths {54}
+example ccnx:/semidx/s5short_p020_seed1/h3/sv/h4/1793846488458
+s4a equivalent ccnx:/semidx/s4a_p020_seed1/h0/sv/h1/1793846360004 50
