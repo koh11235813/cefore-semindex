@@ -342,6 +342,31 @@ def read_meta_generation(
     )
 
 
+def read_meta_disconnect_duration(run_dir: str) -> list[float] | None:
+    """This run's down-period range [lo, hi] from `<run_dir>/meta.json`, or None.
+
+    2026-11-11 (stage-2 map "ほかの切断の形"): semindex.evalrun records
+    `disconnect_duration_s` from then on, null for the 5 s slot model. None
+    means the slot model both then and for every run recorded before the key
+    existed (no key: those runs could only have used the slot model) and when
+    meta.json is unreadable. A reader of its own, not a seventh element of
+    `read_meta_generation`, so that tuple's callers stay as they are.
+    """
+    try:
+        with open(os.path.join(run_dir, "meta.json"), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = data.get("disconnect_duration_s") if isinstance(data, dict) else None
+    if (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in value)
+    ):
+        return value
+    return None
+
+
 # -- t0 derivation ---------------------------------------------------------
 
 
@@ -652,6 +677,7 @@ class RunAnalysis:
     max_in_flight_per_neighbor: int | None = None
     store_synchronous: str | None = None
     state_poll_policy: dict | None = None
+    disconnect_duration_s: list[float] | None = None  # see `read_meta_disconnect_duration`
 
 
 def _split_lives(events: list[dict]) -> list[list[dict]]:
@@ -1034,6 +1060,7 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
         analysis.store_synchronous,
         analysis.state_poll_policy,
     ) = read_meta_generation(run_dir)
+    analysis.disconnect_duration_s = read_meta_disconnect_duration(run_dir)
     return analysis
 
 
@@ -1290,6 +1317,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                     "max_in_flight_per_neighbor": run.max_in_flight_per_neighbor,
                     "store_synchronous": run.store_synchronous,
                     "state_poll_policy": _policy_cell(run.state_poll_policy),
+                    "disconnect_duration_s": _choices_cell(run.disconnect_duration_s),
                 }
             )
             continue
@@ -1347,13 +1375,15 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "max_in_flight_per_neighbor": run.max_in_flight_per_neighbor,
                 "store_synchronous": run.store_synchronous,
                 "state_poll_policy": _policy_cell(run.state_poll_policy),
+                "disconnect_duration_s": _choices_cell(run.disconnect_duration_s),
             }
         )
     return rows
 
 
 def _choices_cell(choices: list[float] | None) -> str | None:
-    """The interval choices as a compact JSON list cell (e.g. "[1.0,2.0]"), or None (empty)."""
+    """The interval choices (or the down-period range) as a compact JSON list cell
+    (e.g. "[1.0,2.0]"), or None (empty)."""
     return None if choices is None else json.dumps(choices, separators=(",", ":"))
 
 
@@ -1402,6 +1432,10 @@ RUNS_FIELDS = [
     # key-sorted JSON, '{"intervals_s":[...],"jitter_frac":[...]}' (see
     # `_policy_cell`, the choices cell's format); empty when not set or not recorded.
     "state_poll_policy",
+    # 2026-11-11: last, by the same rule. The down-period range as a compact
+    # JSON list, "[8.0,12.0]" (the choices cell's format); empty for the 5 s
+    # slot model, recorded (null) or not.
+    "disconnect_duration_s",
 ]
 
 

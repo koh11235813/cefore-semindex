@@ -6,7 +6,10 @@ creating 30 Index records (one every 2s), h2 probing every 10s, and each
 link independently going down for whole 5s slots with probability `p`
 (consecutive down slots merged into one link_down/link_up interval). The
 only thing that varies run to run is `(p, seed)`: everything else in this
-module is a fixed constant taken straight from map.md.
+module is a fixed constant taken straight from map.md. Stage 2 adds a
+second disconnect shape behind `disconnect_duration_s` (stage-2 map "ほかの
+切断の形"): down periods uniform on [LO, HI] s, exponential up periods, p
+the down-time fraction; without it the slot model above applies unchanged.
 
 This module's only job is turning `(p, seed, stage, outdir)` into the one
 `semindex.gen` experiment description that shape implies, then handing it
@@ -27,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import random
 import sys
@@ -75,6 +79,16 @@ DISCONNECT_WINDOW_S = 120.0
 assert DISCONNECT_WINDOW_S % DISCONNECT_SLOT_S == 0, "DISCONNECT_WINDOW_S must be a whole number of slots"
 NUM_SLOTS = int(DISCONNECT_WINDOW_S / DISCONNECT_SLOT_S)
 WINDOW_END_S = WINDOW_START_S + DISCONNECT_WINDOW_S
+
+# 2026-11-11 (stage-2 map "ほかの切断の形"): the second disconnect shape,
+# chosen by giving `disconnect_duration_s` (LO, HI). Each link alternates
+# down periods D ~ Uniform[LO, HI] and up periods U ~ Exponential with mean
+# E[D]*(1-p)/p, so p is the long-run down-time fraction there (the slot
+# model's p is a per-slot probability, whose down-time fraction is also p).
+# Event times are rounded to OUTAGE_AT_DECIMALS decimal places (ms): no 5 s
+# grid, and a millisecond is far below the 0.5 s on-time tolerance the
+# validator applies to every link event.
+OUTAGE_AT_DECIMALS = 3
 
 # 2026-10-23 (review r2, major) fix: an earlier version force-closed every
 # link still down at the window's end with a synthetic link_up at
@@ -260,6 +274,12 @@ def parse_poll_policy_arg(text: str | None) -> dict | None:
         raise gen.ExperimentError("--poll-policy must be valid JSON") from None
 
 
+def parse_disconnect_duration_arg(values: list[float] | None) -> tuple[float, float] | None:
+    """The `--disconnect-duration-s LO HI` pair as the (lo, hi) tuple the kwarg takes,
+    or None when the flag was not given. Range checks are `validate_disconnect_duration`'s."""
+    return None if values is None else (values[0], values[1])
+
+
 def validate_settings(
     k: int,
     state_poll_interval_choices_s: list[float] | None,
@@ -294,6 +314,37 @@ def validate_settings(
     )
     gen.parse_max_in_flight_per_neighbor(max_in_flight_per_neighbor)
     gen.parse_store_synchronous(store_synchronous)
+
+
+def validate_disconnect_duration(p: float, disconnect_duration_s: tuple[float, float] | None) -> None:
+    """Reject a down-period range (LO, HI) that is not two finite numbers with
+    0 < LO <= HI, or, with one given, a p of 1 or more; None (the slot model) passes.
+
+    p must stay below 1 with a range given because p is then the long-run
+    down-time fraction, and the mean up period E[D]*(1-p)/p is 0 at p = 1:
+    the link would never come back up, which is no outage *shape* at all.
+    (The slot model accepts p = 1 as "down for every slot"; that is its own
+    per-slot meaning of p, and left as it was.) p itself is range-checked by
+    `_validate_p` first wherever a run is built, so this only adds the < 1 rule.
+
+    Public, taking one p, so a sweep can check every p of its grid once, up
+    front (same reasoning as `validate_settings`).
+    """
+    if disconnect_duration_s is None:
+        return
+    value = disconnect_duration_s
+    shape_ok = (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in value)
+        and 0 < value[0] <= value[1]
+    )
+    if not shape_ok:
+        raise gen.ExperimentError(
+            f"disconnect_duration_s must be two finite numbers lo, hi with 0 < lo <= hi, got {value!r}"
+        )
+    if p >= 1:
+        raise gen.ExperimentError(f"p must be < 1 with disconnect_duration_s (the down-time fraction), got {p!r}")
 
 
 def _record_schedule(host: int, seed: int, k: int = 1) -> list[dict]:
@@ -347,8 +398,15 @@ def _probe_schedule(seed: int) -> list[dict]:
     return entries
 
 
-def _link_events(seed: int, p: float) -> list[dict]:
+def _link_events(seed: int, p: float, disconnect_duration_s: tuple[float, float] | None = None) -> list[dict]:
     """Build every link's link_down/link_up events for this (seed, p).
+
+    With `disconnect_duration_s` given (2026-11-11), the outage shape of
+    `_outage_link_events` instead: each link from its own rng stream under
+    the purpose "outage:{a}:{b}", deliberately not the slot model's
+    "link:{a}:{b}", so the two shapes never read as drawing one coupled
+    pattern. The rest of this docstring is the slot model, the default; its
+    output is unchanged by the option's existence.
 
     One Bernoulli(p) draw per link per DISCONNECT_SLOT_S slot (independent
     per link -- its own random.Random stream -- and per slot), with
@@ -368,9 +426,30 @@ def _link_events(seed: int, p: float) -> list[dict]:
     seed draws the exact same sequence of `rng.random()` values at every
     p, and only the `< p` comparison below changes with p. This is what
     lets a seed=7 comparison across p values isolate the disconnect rate
-    alone, instead of also redrawing an unrelated down/up pattern.
+    alone, instead of also redrawing an unrelated down/up pattern. The
+    outage shape keeps a weaker form of the same promise (2026-11-11): for
+    every p > 0 the stream is the same and is read in the same fixed order,
+    but p also scales every up period, so the pattern changes with p beyond
+    one comparison (see `_outage_link_events`); p = 0 draws nothing.
     """
     events: list[dict] = []
+    if disconnect_duration_s is not None:
+        lo, hi = disconnect_duration_s
+        for a, b in LINKS:
+            if p == 0:
+                continue  # no outages; also keeps p = 0 from dividing by p below
+            rng = _rng_for(seed, f"outage:{a}:{b}")
+            events.extend(_outage_link_events(rng, p, lo, hi, [a, b]))
+        events.sort(key=lambda e: (e["at"], e["nodes"][0], e["nodes"][1], e["type"]))
+        # 2026-11-11 trap: evalvalid._check_link_events matches results rows to
+        # events by exact `scheduled_at` and relies on one link never having two
+        # events at one `at`; and at a shared `at` the sort above (and
+        # ReCefore's scheduler, which keeps this order) would run link_down
+        # before link_up and leave the link up. `_outage_link_events` rules
+        # this out by construction; this assert keeps it ruled out.
+        keys = [(tuple(e["nodes"]), e["at"]) for e in events]
+        assert len(set(keys)) == len(keys), "two events of one link share an `at`"
+        return events
     for a, b in LINKS:
         rng = _rng_for(seed, f"link:{a}:{b}")
         down_slots = [rng.random() < p for _ in range(NUM_SLOTS)]
@@ -393,6 +472,91 @@ def _link_events(seed: int, p: float) -> list[dict]:
     return events
 
 
+def _outage_link_events(rng, p: float, lo: float, hi: float, nodes: list[int]) -> list[dict]:
+    """One link's link_down/link_up events under the outage shape, 0 < p < 1.
+
+    The link alternates down periods D ~ Uniform[lo, hi] and up periods
+    U ~ Exponential with mean E[D]*(1-p)/p, E[D] = (lo+hi)/2, so the
+    long-run share of time spent down is p. No 5 s grid, and no minimum up
+    time (by the user's choice: a floor would tune the environment to the
+    state-poll policies' intervals).
+
+    Stationary start (2026-11-11 trap): a process that always starts up
+    runs below p over its first mean up period or so (40 s at p 0.2), while
+    the stage-2 map's criterion is that the expected down fraction over the
+    window is p. Measured over 20 000 (seed, link) windows, an always-up
+    start gives 0.192 at p 0.2 and 0.390 at p 0.4 (about p(1-p)*5.067/120
+    short; small because the up periods are memoryless, but systematic).
+    So at WINDOW_START_S the link is down with probability p. If down,
+    link_down is emitted at
+    WINDOW_START_S (as the slot model does for a down slot 0) and the
+    residual down time is v * D_lb, with D_lb a length-biased draw of D,
+    sqrt(lo^2 + u*(hi^2 - lo^2)) (an observer more likely lands in a long
+    outage), and u, v fresh uniforms; for [8, 12] its mean is 5.067 s. If
+    up, the residual up time is a fresh exponential (memoryless). The
+    exponential up draw also serves as the up period that follows a
+    down start, so both branches read the same stream positions.
+
+    Draw order is fixed whatever the state: four start uniforms (state,
+    D_lb's u, v, the up period after the start), then per cycle one for the
+    down period and one for the up period. So for every p > 0 the same seed
+    reads the same uniform sequence at the same positions; p changes the
+    state comparison and scales the up periods. `rng` is anything with
+    `random()`, so a test can script the draws.
+
+    Times stay continuous while drawing; only the emitted `at` is rounded to
+    OUTAGE_AT_DECIMALS (ms). Two rules then apply to the rounded times:
+
+    - An up gap that rounds to 0 ms is merged: the two outages become one.
+      That merge exists solely so one link never gets two events at the same
+      `at` (evalvalid matches link events by exact `scheduled_at`, and at a
+      shared `at` the link_down would sort first and leave the link up). It
+      is not a floor on up time: every gap of 1 ms or more is kept.
+    - An outage whose own rounded length is 0 ms (the start's residual when
+      v is tiny, or any outage if lo < 0.5 ms) is no outage and is dropped,
+      for the same same-`at` reason. It covers no time, so nothing is lost.
+
+    As in the slot model (2026-10-23 review r2), a link still down at
+    WINDOW_END_S is left open with no closing link_up, and only events inside
+    [WINDOW_START_S, WINDOW_END_S) are emitted: a link_down that would round
+    to WINDOW_END_S or later covers no window time and is not emitted.
+    """
+    mean_up_s = (lo + hi) / 2 * (1 - p) / p
+    u_state, u_length, u_fraction, u_up = rng.random(), rng.random(), rng.random(), rng.random()
+    # Inverse CDFs on rng.random()'s [0, 1): log(1 - u) is always finite.
+    downs: list[tuple[float, float]] = []
+    t = WINDOW_START_S
+    if u_state < p:
+        residual_s = u_fraction * math.sqrt(lo * lo + u_length * (hi * hi - lo * lo))
+        downs.append((t, t + residual_s))
+        t += residual_s
+    t += -mean_up_s * math.log(1 - u_up)
+    while t < WINDOW_END_S:
+        down_s = lo + rng.random() * (hi - lo)
+        up_s = -mean_up_s * math.log(1 - rng.random())
+        downs.append((t, t + down_s))
+        t += down_s + up_s
+
+    merged: list[list[float]] = []
+    for start, end in downs:
+        start_r, end_r = round(start, OUTAGE_AT_DECIMALS), round(end, OUTAGE_AT_DECIMALS)
+        if end_r <= start_r:
+            continue
+        if merged and start_r <= merged[-1][1]:
+            merged[-1][1] = end_r
+            continue
+        merged.append([start_r, end_r])
+
+    events: list[dict] = []
+    for start_r, end_r in merged:
+        if start_r >= WINDOW_END_S:
+            break
+        events.append({"at": start_r, "type": "link_down", "nodes": list(nodes)})
+        if end_r < WINDOW_END_S:
+            events.append({"at": end_r, "type": "link_up", "nodes": list(nodes)})
+    return events
+
+
 def build_experiment(
     p: float,
     seed: int,
@@ -405,6 +569,7 @@ def build_experiment(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    disconnect_duration_s: tuple[float, float] | None = None,
 ) -> dict:
     """Build the one `semindex.gen` experiment description this (p, seed, stage) run needs.
 
@@ -431,8 +596,13 @@ def build_experiment(
     nothing, so the agents use their own default. `state_poll_policy` (2026-11-03),
     the failure-reactive poll table {"intervals_s": [...], "jitter_frac": [...]},
     is passed through as given, with the run seed, to every agent config; it
-    cannot be combined with choices or j, and None writes nothing. The defaults
-    give stage 1's schedule and agent configs, byte for byte.
+    cannot be combined with choices or j, and None writes nothing.
+    `disconnect_duration_s` (2026-11-11), a down-period range (LO, HI) in
+    seconds, switches the disconnect schedule from the 5 s slot model to the
+    outage shape (see `_outage_link_events`), where p is the down-time
+    fraction and must be < 1; it changes only `events` and writes no key of
+    its own (the events are explicit, and evalrun's meta.json records the
+    range). The defaults give stage 1's schedule and agent configs, byte for byte.
 
     2026-10-29: the agents' own synchronous default changed from SQLite's FULL
     (no PRAGMA issued) to NORMAL. Files generated without `store_synchronous`
@@ -441,6 +611,7 @@ def build_experiment(
     (null or no key), pass "FULL".
     """
     _validate_p(p)
+    validate_disconnect_duration(p, disconnect_duration_s)
     validate_settings(
         k,
         state_poll_interval_choices_s,
@@ -474,7 +645,7 @@ def build_experiment(
         },
         "schedule": schedule,
         "probes": {str(PROBE_HOST): _probe_schedule(seed)},
-        "events": _link_events(seed, p),
+        "events": _link_events(seed, p, disconnect_duration_s),
         "stop_at_s": AGENT_STOP_AT_S,
         "counters_snapshot_at_s": list(AGENT_COUNTERS_SNAPSHOT_AT_S),
     }
@@ -511,6 +682,7 @@ def generate_run(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[str]:
     """Build and write one run's experiment description, ReCefore YAML and agent configs.
 
@@ -533,8 +705,8 @@ def generate_run(
     disk, or outside it.
 
     `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac`,
-    `max_in_flight_per_neighbor`, `store_synchronous` and `state_poll_policy` are
-    passed straight to `build_experiment`.
+    `max_in_flight_per_neighbor`, `store_synchronous`, `state_poll_policy` and
+    `disconnect_duration_s` are passed straight to `build_experiment`.
 
     Returns every path written, experiment description first.
     """
@@ -549,6 +721,7 @@ def generate_run(
         max_in_flight_per_neighbor=max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
+        disconnect_duration_s=disconnect_duration_s,
     )
     gen.parse_experiment(raw)  # raises gen.ExperimentError before any filesystem write
 
@@ -567,7 +740,13 @@ def generate_run(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments for the evaluation-run generator."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--p", type=float, required=True, help="per-link, per-slot disconnect probability")
+    parser.add_argument(
+        "--p",
+        type=float,
+        required=True,
+        help="per-link disconnect probability: per 5 s slot for the slot model, "
+        "the long-run down-time fraction (< 1) with --disconnect-duration-s",
+    )
     parser.add_argument("--seed", type=int, required=True, help="seed for every random draw in this run")
     parser.add_argument("--stage", type=str, required=True, help="stage label, used only in the run's name/group")
     parser.add_argument("--out", type=str, required=True, dest="outdir", help="directory to write the run into")
@@ -608,6 +787,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='state-poll table as JSON, e.g. \'{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}\'; '
         "not with --interval-choices/--choice-jitter",
     )
+    parser.add_argument(
+        "--disconnect-duration-s",
+        type=float,
+        nargs=2,
+        metavar=("LO", "HI"),
+        default=None,
+        dest="disconnect_duration_s",
+        help="down periods uniform on [LO, HI] s with exponential up periods (p = down-time fraction); "
+        "omit for the 5 s slot model",
+    )
     return parser.parse_args(argv)
 
 
@@ -626,6 +815,7 @@ def main(argv: list[str] | None = None) -> int:
             max_in_flight_per_neighbor=args.max_in_flight,
             store_synchronous=args.store_synchronous,
             state_poll_policy=parse_poll_policy_arg(args.poll_policy),
+            disconnect_duration_s=parse_disconnect_duration_arg(args.disconnect_duration_s),
         )
     except gen.ExperimentError as exc:
         print(f"semindex.evalgen: {exc}", file=sys.stderr)
