@@ -1145,8 +1145,22 @@ def test_the_outage_shape_reads_the_same_uniforms_at_every_p():
 
 
 def test_the_outage_shape_and_the_slot_model_use_unrelated_streams():
-    """The outage shape's purpose string is its own, never the slot model's."""
-    assert evalgen._derive_seed(7, "outage:0:1") != evalgen._derive_seed(7, "link:0:1")
+    """The outage shape draws each link from the purpose "outage:{a}:{b}", never the slot model's
+    "link:{a}:{b}": the generated events equal a replay of `_outage_link_events` on the outage
+    stream and differ from one on the slot stream.
+
+    2026-11-11 review nit: comparing the two purpose strings' seeds alone never ran the
+    generator, so a regression that drew the outage shape from the slot stream would have passed.
+    """
+    p, seed = 0.4, 7
+    events = evalgen.build_experiment(p, seed, "s6", "/out", disconnect_duration_s=_DURATION)["events"]
+    lo, hi = _DURATION
+    for a, b in evalgen.LINKS:
+        got = [e for e in events if e["nodes"] == [a, b]]
+        on_outage = evalgen._outage_link_events(evalgen._rng_for(seed, f"outage:{a}:{b}"), p, lo, hi, [a, b])
+        on_slot = evalgen._outage_link_events(evalgen._rng_for(seed, f"link:{a}:{b}"), p, lo, hi, [a, b])
+        assert got == on_outage
+        assert got != on_slot
 
 
 def test_the_outage_shape_asserts_no_link_gets_two_events_at_one_at(monkeypatch):

@@ -507,11 +507,15 @@ def _outage_link_events(rng, p: float, lo: float, hi: float, nodes: list[int]) -
     Times stay continuous while drawing; only the emitted `at` is rounded to
     OUTAGE_AT_DECIMALS (ms). Two rules then apply to the rounded times:
 
-    - An up gap that rounds to 0 ms is merged: the two outages become one.
-      That merge exists solely so one link never gets two events at the same
-      `at` (evalvalid matches link events by exact `scheduled_at`, and at a
-      shared `at` the link_down would sort first and leave the link up). It
-      is not a floor on up time: every gap of 1 ms or more is kept.
+    - When an outage's rounded start is at or before the previous outage's
+      rounded end, the two are merged into one. That merge exists solely so
+      one link never gets two events at the same `at` (evalvalid matches
+      link events by exact `scheduled_at`, and at a shared `at` the
+      link_down would sort first and leave the link up). It is not a floor
+      on up time: every gap of 1 ms or more is kept, and a gap under 1 ms is
+      kept or merged depending on where its two ends fall against the ms
+      grid (2026-11-11 review nit: this used to say "a gap that rounds to
+      0 ms", which is not what the comparison below tests).
     - An outage whose own rounded length is 0 ms (the start's residual when
       v is tiny, or any outage if lo < 0.5 ms) is no outage and is dropped,
       for the same same-`at` reason. It covers no time, so nothing is lost.
