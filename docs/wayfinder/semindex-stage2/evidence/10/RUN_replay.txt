@@ -1,0 +1,21 @@
+Replay half of evidence/10 (2026-11-12). Run from this directory; 3 worker processes each.
+
+W=/home/lab_shared/cefore-semindex            # main checkout: only its .venv is used as the interpreter
+export PYTHONDONTWRITEBYTECODE=1
+export AGG=<evalagg output of the s6 stages>  # here /tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/main5-agg-full
+# replay_common.py puts ../09 (replay.py, ana.py) and this worktree's src (semindex.evalgen at 6b036ff) on sys.path itself.
+
+$W/.venv/bin/python3 replay_calib.py > replay_calib_tables.md   # replay_calib_perseed.csv, replay_calib.csv,
+                                                                 # replay_calib_front4.csv; 2 s wall
+                                                          # (exits naming the stage if $AGG lacks 80 valid runs)
+$W/.venv/bin/python3 replay_retune.py                     # replay_retune_train.csv, replay_retune.csv; 95 s wall
+                                                          # stderr: "cross-check vs replay_calib_perseed.csv: 240 per-seed rows equal"
+
+Order matters: replay_retune.py reads replay_calib.csv for the bias condition of the gate (without it the gate
+column says "pending (no calibration)") and replay_calib_perseed.csv for the cross-check. The calib markdown on stdout
+(replay_calib_tables.md) was pasted into replay.md; the retune table in replay.md was formatted from replay_retune.csv.
+replay_calib.py was run twice; replay_calib.csv and replay_calib_perseed.csv were byte-identical (md5).
+
+Lint: uvx ruff@0.17.2 check replay_common.py replay_calib.py replay_retune.py   -> All checks passed!
+Everything is deterministic (numeric hash seeding, fixed numpy seeds): replay_retune.py was run three times and
+gave the same picks.

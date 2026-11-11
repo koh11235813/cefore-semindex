@@ -1,0 +1,46 @@
+## 1. 4-hop delay and cens4 from discovery.csv vs live_main.csv
+s6b0p5 p 0.2: delay 5530.5 (live_main 5530.5) cens4 0.00 % (live_main 0.00 %) ok
+s6b0p5 p 0.4: delay 9671.0 (live_main 9671.0) cens4 0.00 % (live_main 0.00 %) ok
+s6b0p5 p 0.5: delay 12361.0 (live_main 12361.0) cens4 0.00 % (live_main 0.00 %) ok
+s6b0p5 p 0.6: delay 14504.2 (live_main 14504.2) cens4 0.00 % (live_main 0.00 %) ok
+s6b10p043 p 0.2: delay 31557.3 (live_main 31557.3) cens4 0.08 % (live_main 0.08 %) ok
+s6b10p043 p 0.4: delay 42448.3 (live_main 42448.3) cens4 3.00 % (live_main 3.00 %) ok
+s6b10p043 p 0.5: delay 47720.2 (live_main 47720.2) cens4 22.33 % (live_main 22.33 %) ok
+s6b10p043 p 0.6: delay 57337.5 (live_main 57337.5) cens4 31.67 % (live_main 31.67 %) ok
+s6b1p359 p 0.2: delay 7483.5 (live_main 7483.5) cens4 0.00 % (live_main 0.00 %) ok
+s6b1p359 p 0.4: delay 12217.5 (live_main 12217.5) cens4 0.52 % (live_main 0.52 %) ok
+s6b1p359 p 0.5: delay 16713.2 (live_main 16713.2) cens4 0.00 % (live_main 0.00 %) ok
+s6b1p359 p 0.6: delay 19627.4 (live_main 19627.4) cens4 0.00 % (live_main 0.00 %) ok
+s6b3p695 p 0.2: delay 13829.0 (live_main 13829.0) cens4 0.00 % (live_main 0.00 %) ok
+s6b3p695 p 0.4: delay 21463.5 (live_main 21463.5) cens4 0.00 % (live_main 0.00 %) ok
+s6b3p695 p 0.5: delay 26086.9 (live_main 26086.9) cens4 0.92 % (live_main 0.92 %) ok
+s6b3p695 p 0.6: delay 31978.8 (live_main 31978.8) cens4 1.33 % (live_main 1.33 %) ok
+s6short p 0.2: delay 26686.9 (live_main 26686.9) cens4 0.17 % (live_main 0.17 %) ok
+s6short p 0.4: delay 32159.3 (live_main 32159.3) cens4 0.00 % (live_main 0.00 %) ok
+s6short p 0.5: delay 35407.2 (live_main 35407.2) cens4 0.33 % (live_main 0.33 %) ok
+s6short p 0.6: delay 40867.7 (live_main 40867.7) cens4 1.00 % (live_main 1.00 %) ok
+s6wait p 0.2: delay 27345.9 (live_main 27345.9) cens4 0.00 % (live_main 0.00 %) ok
+s6wait p 0.4: delay 35386.9 (live_main 35386.9) cens4 0.50 % (live_main 0.50 %) ok
+s6wait p 0.5: delay 40581.0 (live_main 40581.0) cens4 7.58 % (live_main 7.58 %) ok
+s6wait p 0.6: delay 48116.0 (live_main 48116.0) cens4 5.42 % (live_main 5.42 %) ok
+cells 24, mismatches 0
+
+## 2. Retries and down share from raw decision events vs retry_table.csv
+s5short p 0.2: retries/run 24.55 (table 24.55) down 0.3870 (table 0.3870) timed out 0.3788 + no outcome 0.0081 (table timed out 0.3819) ok
+s5short p 0.4: retries/run 63.50 (table 63.45) down 0.5693 (table 0.5697) timed out 0.5598 + no outcome 0.0118 (table timed out 0.5670) differs
+s5wait p 0.2: retries/run 19.20 (table 19.20) down 0.1901 (table 0.1901) timed out 0.1875 + no outcome 0.0026 (table timed out 0.1880) ok
+s5wait p 0.4: retries/run 47.40 (table 47.40) down 0.4251 (table 0.4251) timed out 0.4198 + no outcome 0.0053 (table timed out 0.4221) ok
+s6short p 0.2: retries/run 36.95 (table 36.95) down 0.5196 (table 0.5196) timed out 0.5074 + no outcome 0.0122 (table timed out 0.5137) ok
+s6short p 0.4: retries/run 67.10 (table 67.05) down 0.5283 (table 0.5287) timed out 0.5186 + no outcome 0.0127 (table timed out 0.5257) differs
+s6short p 0.5: retries/run 84.65 (table 84.50) down 0.5517 (table 0.5527) timed out 0.5416 + no outcome 0.0112 (table timed out 0.5488) differs
+s6short p 0.6: retries/run 99.05 (table 98.95) down 0.5921 (table 0.5927) timed out 0.5840 + no outcome 0.0096 (table timed out 0.5903) differs
+s6wait p 0.2: retries/run 27.85 (table 27.80) down 0.3698 (table 0.3705) timed out 0.3609 + no outcome 0.0090 (table timed out 0.3648) differs
+s6wait p 0.4: retries/run 55.80 (table 55.70) down 0.4659 (table 0.4668) timed out 0.4624 + no outcome 0.0036 (table timed out 0.4649) differs
+s6wait p 0.5: retries/run 69.90 (table 69.90) down 0.5021 (table 0.5021) timed out 0.4957 + no outcome 0.0064 (table timed out 0.4989) ok
+s6wait p 0.6: retries/run 84.00 (table 83.80) down 0.5607 (table 0.5621) timed out 0.5560 + no outcome 0.0065 (table timed out 0.5610) differs
+differing cells 7 (same-ms reply quirk of phase.retries_of, see the docstring)
+
+## 3. replay.simulate called directly: wait-form at p 0.4, seeds 1-20, 10 paired reps
+SlotBlind(10.043, 5.0): 34337.4 ms (replay_retune.csv cap row 34337.4)
+SlotBlind(10.043, 2.75): 29799.6 ms (replay_retune.csv best row 29799.6)
+delta -4537.9 ms (replay_retune.csv ddelay -4537.9)
