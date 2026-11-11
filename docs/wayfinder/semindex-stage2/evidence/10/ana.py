@@ -213,7 +213,10 @@ def main():
                  f"{r['arm_pts_live'].replace(';', '; ')} | {r['arm_cens4'].replace(';', ' / ')} |")
     L += ["", "Hull weights (d hull / d arm delay at the policy's bytes) with the arms' cens4: an arm's censored pairs "
           "drop out of its delay, so a censored arm's point sits too low and pulls the hull down by weight x bias, "
-          "which makes [4] less negative; the policy's own censoring biases its D low and [4] more negative.", ""]
+          "which makes [4] less negative; the policy's own censoring biases its D low and [4] more negative. "
+          "That is the delay coordinate at fixed bytes only: censoring also shrinks B/rh's denominator (uncensored "
+          "record-hops), so a censored arm's point also sits too far right, and the combined direction of the "
+          "bias in [4] is not established.", ""]
     for r in fr_rows:
         ws = [float(x) for x in r["hull_w"].split(";")]
         cs = r["arm_cens4"].split(";")

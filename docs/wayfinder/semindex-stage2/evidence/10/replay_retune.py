@@ -15,7 +15,7 @@ Procedure (fixed before computing; the map's rule: only run live if the retuned 
     Bytes-capped pick: smallest training seed-mean delay among candidates whose training bytes <= the unchanged rule's.
   Test: the stored live schedules, seeds 1-20, paired replay. delta X = X(pick) - X(unchanged rule), X in [4], delay,
     bytes, all seed means; CI95 = percentiles of 400 seed-bootstrap reps whose weights are shared by the pick, the
-    unchanged rule and the four arms within a rep. R.Oracle(10.043) on the same seeds for scale.
+    unchanged rule and the four arms within a rep. R.Oracle(10.043) on the same seeds for scale, a clairvoyant reference policy (not a bound).
   Gate per (family, p): delta[4] < -2000 ms, its CI95 excludes 0, and the unchanged rule's replay - live delay bias
     (replay_calib.csv) is well under 2 s, operationalised here as |bias| + 1.96 SE < 2000 ms.
 Training REPS (10) were not fixed by the procedure; 10 is replay_runs.py's paired count.
@@ -210,7 +210,7 @@ def main():
             U = mat(te, p, TEST, ("unch", u))
             bs = np.array([C.seed_mean(orc, w)[0] - C.seed_mean(U, w)[0] for w in W])
             lo, hi = C.ci95(bs)
-            out.append(dict(family="oracle", p=p, pick="bound", w1="", w2="", unchanged=u,
+            out.append(dict(family="oracle", p=p, pick="reference", w1="", w2="", unchanged=u,
                             test_d4=C.d4(orc, arms, one), test_unch_d4=C.d4(U, arms, one),
                             test_delay=C.seed_mean(orc, one)[0], test_bytes=C.seed_mean(orc, one)[1],
                             ddelay=C.seed_mean(orc, one)[0] - C.seed_mean(U, one)[0], ddelay_lo=lo, ddelay_hi=hi,

@@ -104,7 +104,7 @@ Procedure as fixed before computing (module docstring of `replay_retune.py`). Tr
 | wait | 0.4 | best | 2.75 | -7437 (-5750) | 17.73 (15.34) | -6430 / -4177 | **-2254 (-3220, -1360)** | -4538 (-5624, -3417) | +2.38 (2.25, 2.53) | w 2.25-3.0 (4 points, contiguous) | fail (bias) |
 | wait | 0.4 | cap | 5.0 | -5750 (-5750) | 15.34 (15.34) | -4177 / -4177 | 0 | 0 | 0 | - | fail |
 
-R.Oracle(10.043) on the test seeds (bound no real rule can reach):
+R.Oracle(10.043) on the test seeds, a clairvoyant reference policy (not a bound): it draws the next poll 10.043 s (jittered) ahead and, only if that instant falls inside an outage, moves the poll to just after the link_up. It ignores the outcome of earlier polls, does not poll at every link_up, and can still fail (overhead, RTT and the up-residual are applied after its check), so a rule with a short post-failure wait can beat it on some seeds.
 
 | p | oracle [4] | oracle delay ms | oracle B/rh | Δdelay vs s6short (CI95) | Δdelay vs s6wait (CI95) |
 |---|---|---|---|---|---|
@@ -117,7 +117,7 @@ Gate per (family, p): delta[4] < -2000 ms AND its CI95 excludes 0 AND the unchan
 - Its bytes-capped comparison does not pass: no wait-form candidate with bytes <= s6wait's is faster than s6wait itself (the capped pick is w = 5.0, the unchanged rule; on the training seeds delay rises and bytes fall monotonically with w, apart from noise). So [4] and the bytes-capped comparison disagree for wait-form p 0.4; under the procedure no live run happens without asking.
 - The wait-form p 0.4 gain is mostly s6wait losing on this shape, not a gain over the better existing rule: its pick (w 2.75, test [4] -6430) is 700 ms better than unchanged s6short (-5731) on the same seeds, and the short-form pick at the same w gains only -35 ms over s6short.
 - Every other family and p fails delta[4] < -2000 ms. The p 0.2 threshold in the map's reading 3 is not met by any family: best is two-step at -1435 ms (CI -2207 to -745), and its training-set gain is only -468 ms.
-- Training vs test: on the training seeds the retuned gain in [4] is -105 (short), -468 (two), -751 (wait) ms at p 0.2 and -522 / -839 / -1687 ms at p 0.4. The test seeds 1-20 give larger gains at p 0.2 (-914 / -1435 / -983) because unchanged s6short scores worse there (test [4] -2644 vs training -3843). The 100 training seeds are the better estimate of the size of the gain.
+- Training vs test: on the training seeds the retuned gain in [4] is -105 (short), -468 (two), -751 (wait) ms at p 0.2 and -522 / -839 / -1687 ms at p 0.4. The test seeds 1-20 give larger gains at p 0.2 (-914 / -1435 / -983; test / training = 8.7, 3.1, 1.3), and both unchanged baselines score worse there than on the training seeds (s6short test [4] -2644 vs training -3843, s6wait -2518 vs -3234). The training values of the picks are minima selected over many candidates (47 per one-wait family, 576 two-step) and lean toward a larger gain, so they are not the better estimate; the held-out test deltas with their CIs are the ones to use.
 - Optimum: both one-wait families settle at w about 2.75-3.25 s, whatever the jitter; the training curve is flat within 300 ms over w 1.75-4.0 at p 0.2 and 2.25-3.0 at p 0.4, with point-to-point noise of about 100-200 ms. The two-step optimum is (4.5, 2.0) at both p (wait longer after the first failure, shorter after more).
 
 ## Deviations and choices

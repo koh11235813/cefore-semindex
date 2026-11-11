@@ -12,8 +12,14 @@ Definitions (times in ms, relative to t0 = evalagg.derive_t0_ms, window [t0 + 10
   outcome    policy: the trigger of the reschedule row naming the poll; fixed arm: last_poll_status of the same
              pair's next poll (its interval, 3.695 s, exceeds the 2 s Interest lifetime).
   down       the link between the two nodes is down at the send time by the nominal schedule in
-             *.experiment.json (t0 + at * 1000). Down intervals of one link that touch (next down <= last up)
-             are merged into one outage episode; an interval with no link_up stays open to the run's end.
+             *.experiment.json (t0 + at * 1000), in any outage. Down intervals of one link that touch (next
+             down <= last up) are merged into one outage episode; an interval with no link_up stays open to the
+             run's end.
+  same       the retry is down AND inside the same merged outage episode as the pair's previous poll (the one
+             that failed). This is the share the hypothesis is about: `down` also counts a retry that waited past
+             the failed poll's outage and fell into the next one (possible on s6, whose up gaps can be shorter
+             than the wait; rare on s5, whose up gaps are multiples of 5 s, so only a wait of 5 s or more can
+             skip one: 2 retries of s5wait p 0.4).
   residual   for a retry sent while down: next link_up - send time (open episodes are counted, not averaged).
   disagree   retries that are down but answered, and retries that are up but timed out.
   episode    one merged outage of a link, started inside the window, seen from one directed pair:
@@ -125,7 +131,8 @@ def analyze(job):
             iv = which(ivs, t)
             i = bisect.bisect_left(ts, t)
             out["gaps"].append(t - ts[i - 1])
-            out["retries"].append((iv is not None, (iv[1] - t) if iv else None, oc_at[t]))
+            same = iv is not None and iv == which(ivs, ts[i - 1])
+            out["retries"].append((iv is not None, (iv[1] - t) if iv else None, oc_at[t], same))
         for s, e in ivs:
             if ws <= s < we:
                 c = bisect.bisect_left(ts, e) - bisect.bisect_left(ts, s)
@@ -164,6 +171,8 @@ def pool(res):
             stage=st, p=p, n_runs=len(rs), n_retry=n, retry_per_run=n / len(rs),
             retry_gap_med_ms=statistics.median(gaps) if gaps else None,
             down_share=len(down) / n if n else None,
+            same_outage_share=sum(1 for x in R if x[3]) / n if n else None,
+            down_other_outage=sum(1 for x in R if x[0] and not x[3]),
             timed_out_share=to / known if known else None, outcome_unknown=n - known,
             down_answered=sum(1 for x in R if x[0] and x[2] == "answered"),
             up_timed_out=sum(1 for x in R if not x[0] and x[2] == "timed_out"),
@@ -187,19 +196,21 @@ def fmt(x, nd):
 def table(rows):
     L = [SECTION + ": does the retry land inside the same outage?", "",
          "Definitions in retry.py's docstring. Policies (short, wait): the poll after a timed-out reschedule; "
-         "b3p695: the poll after a timed-out poll. down = link down at send by experiment.json; to = measured "
+         "b3p695: the poll after a timed-out poll. down = link down at send by experiment.json (any outage); same = "
+         "down and in the same outage as the failed poll (other = down in a later outage); to = measured "
          "timed out; disagree = down-but-answered / up-but-timed-out. resid = time from the retry to the link_up "
          "(retries sent while down). polls in episode = a directed pair's polls sent inside one merged outage "
          "(0/1/2/3/4+); streak = measured runs of consecutive timed-out polls (1/2/3/4+). all-poll down = share of "
          "all in-window polls sent while down (about p).", "",
-         "| stage | p | retries/run | gap med ms | down | to | disagree | resid mean / med ms (open) | all-poll down "
+         "| stage | p | retries/run | gap med ms | down | same (other) | to | disagree | resid mean / med ms (open) | all-poll down "
          "| polls in episode 0/1/2/3/4+ (mean, n) | streak 1/2/3/4+ (n) |",
-         "|---|---|---|---|---|---|---|---|---|---|---|"]
+         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
         pe = "/".join(fmt(r[f"ep_polls_in_{c}"], 2) for c in range(5))
         sk = "/".join(fmt(r[f"streak_{c}"], 2) for c in range(1, 5))
         L.append(f"| {r['stage']} | {r['p']} | {r['retry_per_run']:.1f} | {fmt(r['retry_gap_med_ms'], 0)} | "
-                 f"{fmt(r['down_share'], 3)} | {fmt(r['timed_out_share'], 3)} | {r['down_answered']}/{r['up_timed_out']} | "
+                 f"{fmt(r['down_share'], 3)} | {fmt(r['same_outage_share'], 3)} ({r['down_other_outage']}) | "
+                 f"{fmt(r['timed_out_share'], 3)} | {r['down_answered']}/{r['up_timed_out']} | "
                  f"{fmt(r['resid_mean_ms'], 0)} / {fmt(r['resid_med_ms'], 0)} ({r['resid_open']}) | "
                  f"{r['poll_down_share']:.3f} | {pe} ({fmt(r['ep_polls_in_mean'], 2)}, {r['episodes']}) | "
                  f"{sk} ({r['streaks']}) |")

@@ -26,18 +26,18 @@ s6wait p 0.6: delay 48116.0 (live_main 48116.0) cens4 5.42 % (live_main 5.42 %) 
 cells 24, mismatches 0
 
 ## 2. Retries and down share from raw decision events vs retry_table.csv
-s5short p 0.2: retries/run 24.55 (table 24.55) down 0.3870 (table 0.3870) timed out 0.3788 + no outcome 0.0081 (table timed out 0.3819) ok
-s5short p 0.4: retries/run 63.50 (table 63.45) down 0.5693 (table 0.5697) timed out 0.5598 + no outcome 0.0118 (table timed out 0.5670) differs
-s5wait p 0.2: retries/run 19.20 (table 19.20) down 0.1901 (table 0.1901) timed out 0.1875 + no outcome 0.0026 (table timed out 0.1880) ok
-s5wait p 0.4: retries/run 47.40 (table 47.40) down 0.4251 (table 0.4251) timed out 0.4198 + no outcome 0.0053 (table timed out 0.4221) ok
-s6short p 0.2: retries/run 36.95 (table 36.95) down 0.5196 (table 0.5196) timed out 0.5074 + no outcome 0.0122 (table timed out 0.5137) ok
-s6short p 0.4: retries/run 67.10 (table 67.05) down 0.5283 (table 0.5287) timed out 0.5186 + no outcome 0.0127 (table timed out 0.5257) differs
-s6short p 0.5: retries/run 84.65 (table 84.50) down 0.5517 (table 0.5527) timed out 0.5416 + no outcome 0.0112 (table timed out 0.5488) differs
-s6short p 0.6: retries/run 99.05 (table 98.95) down 0.5921 (table 0.5927) timed out 0.5840 + no outcome 0.0096 (table timed out 0.5903) differs
-s6wait p 0.2: retries/run 27.85 (table 27.80) down 0.3698 (table 0.3705) timed out 0.3609 + no outcome 0.0090 (table timed out 0.3648) differs
-s6wait p 0.4: retries/run 55.80 (table 55.70) down 0.4659 (table 0.4668) timed out 0.4624 + no outcome 0.0036 (table timed out 0.4649) differs
-s6wait p 0.5: retries/run 69.90 (table 69.90) down 0.5021 (table 0.5021) timed out 0.4957 + no outcome 0.0064 (table timed out 0.4989) ok
-s6wait p 0.6: retries/run 84.00 (table 83.80) down 0.5607 (table 0.5621) timed out 0.5560 + no outcome 0.0065 (table timed out 0.5610) differs
+s5short p 0.2: retries/run 24.55 (table 24.55) down 0.3870 (table 0.3870) same outage 0.3870 (table 0.3870) timed out 0.3788 + no outcome 0.0081 (table timed out 0.3819) ok
+s5short p 0.4: retries/run 63.50 (table 63.45) down 0.5693 (table 0.5697) same outage 0.5693 (table 0.5697) timed out 0.5598 + no outcome 0.0118 (table timed out 0.5670) differs
+s5wait p 0.2: retries/run 19.20 (table 19.20) down 0.1901 (table 0.1901) same outage 0.1901 (table 0.1901) timed out 0.1875 + no outcome 0.0026 (table timed out 0.1880) ok
+s5wait p 0.4: retries/run 47.40 (table 47.40) down 0.4251 (table 0.4251) same outage 0.4230 (table 0.4230) timed out 0.4198 + no outcome 0.0053 (table timed out 0.4221) ok
+s6short p 0.2: retries/run 36.95 (table 36.95) down 0.5196 (table 0.5196) same outage 0.4993 (table 0.4993) timed out 0.5074 + no outcome 0.0122 (table timed out 0.5137) ok
+s6short p 0.4: retries/run 67.10 (table 67.05) down 0.5283 (table 0.5287) same outage 0.4724 (table 0.4728) timed out 0.5186 + no outcome 0.0127 (table timed out 0.5257) differs
+s6short p 0.5: retries/run 84.65 (table 84.50) down 0.5517 (table 0.5527) same outage 0.4725 (table 0.4734) timed out 0.5416 + no outcome 0.0112 (table timed out 0.5488) differs
+s6short p 0.6: retries/run 99.05 (table 98.95) down 0.5921 (table 0.5927) same outage 0.4806 (table 0.4811) timed out 0.5840 + no outcome 0.0096 (table timed out 0.5903) differs
+s6wait p 0.2: retries/run 27.85 (table 27.80) down 0.3698 (table 0.3705) same outage 0.3429 (table 0.3435) timed out 0.3609 + no outcome 0.0090 (table timed out 0.3648) differs
+s6wait p 0.4: retries/run 55.80 (table 55.70) down 0.4659 (table 0.4668) same outage 0.3719 (table 0.3725) timed out 0.4624 + no outcome 0.0036 (table timed out 0.4649) differs
+s6wait p 0.5: retries/run 69.90 (table 69.90) down 0.5021 (table 0.5021) same outage 0.3698 (table 0.3698) timed out 0.4957 + no outcome 0.0064 (table timed out 0.4989) ok
+s6wait p 0.6: retries/run 84.00 (table 83.80) down 0.5607 (table 0.5621) same outage 0.3768 (table 0.3777) timed out 0.5560 + no outcome 0.0065 (table timed out 0.5610) differs
 differing cells 7 (same-ms reply quirk of phase.retries_of, see the docstring)
 
 ## 3. replay.simulate called directly: wait-form at p 0.4, seeds 1-20, 10 paired reps
