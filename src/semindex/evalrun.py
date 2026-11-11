@@ -21,7 +21,8 @@ Run as:
         --recefore /home/lab_shared/cefore-emu-sslab \\
         [--k 4] [--interval-choices 1 2 4] [--choice-jitter 0.1] \
         [--max-in-flight 32] [--store-synchronous FULL] \
-        [--poll-policy '{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}']
+        [--poll-policy '{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}'] \
+        [--disconnect-duration-s 8 12]
 
 `--k`, `--interval-choices`, `--choice-jitter`, `--max-in-flight`,
 `--store-synchronous` (stage-2 map "生成器と集計") and `--poll-policy`
@@ -31,6 +32,10 @@ not part of the store path, so a sweep with different values -- a different
 `--max-in-flight`, `--store-synchronous` or `--poll-policy` included -- needs
 its own `--stage` label. Resuming a stage checks only each run's DONE marker,
 never these settings, so that label is the one thing keeping two settings apart.
+`--disconnect-duration-s LO HI` (2026-11-11, stage-2 map "ほかの切断の形")
+switches the disconnect schedule from the 5 s slot model to down periods
+uniform on [LO, HI] s with exponential up periods, p the down-time fraction;
+it is recorded the same way, and needs its own `--stage` label by the same rule.
 """
 
 from __future__ import annotations
@@ -578,6 +583,7 @@ def _build_meta(
     max_in_flight_per_neighbor: int | None,
     store_synchronous: str | None,
     state_poll_policy: dict | None,
+    disconnect_duration_s: tuple[float, float] | None,
     recefore: str,
     recefore_rc: int,
     start_s: float,
@@ -592,7 +598,8 @@ def _build_meta(
     None without) and `max_in_flight_per_neighbor` (None = not set, so the
     agents ran with their own default cap of 8) and `store_synchronous` (None =
     not set; recorded resolved, see below) and `state_poll_policy` (None = not
-    set, so the agents ran stage 1's or the choices' poll scheduling) are the
+    set, so the agents ran stage 1's or the choices' poll scheduling) and
+    `disconnect_duration_s` (None = the 5 s slot model) are the
     generator settings this run was made with, so the aggregate can tell runs apart by them (runs.csv)
     without re-reading the generated schedule.
 
@@ -620,6 +627,9 @@ def _build_meta(
         # 2026-11-03: recorded as given, null included, like the in-flight cap:
         # nothing is written into the agent configs without it.
         "state_poll_policy": state_poll_policy,
+        # 2026-11-11: [lo, hi] or null, as given; null means the 5 s slot
+        # model, so no separate "kind" field is needed to tell the shapes apart.
+        "disconnect_duration_s": None if disconnect_duration_s is None else list(disconnect_duration_s),
         "semindex_git_commit": _git_commit(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "semindex_git_dirty": _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess),
         "recefore_git_commit": _git_commit(recefore, capture_subprocess),
@@ -667,6 +677,7 @@ def run_one(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    disconnect_duration_s: tuple[float, float] | None = None,
 ) -> RunOutcome:
     """Generate, run, store and validate one (p, seed) run; or skip it if already DONE.
 
@@ -711,6 +722,7 @@ def run_one(
             max_in_flight_per_neighbor=max_in_flight_per_neighbor,
             store_synchronous=store_synchronous,
             state_poll_policy=state_poll_policy,
+            disconnect_duration_s=disconnect_duration_s,
         )
         yaml_path = next(path for path in generated_paths if path.endswith(".yaml"))
 
@@ -787,6 +799,7 @@ def run_one(
             max_in_flight_per_neighbor=max_in_flight_per_neighbor,
             store_synchronous=store_synchronous,
             state_poll_policy=state_poll_policy,
+            disconnect_duration_s=disconnect_duration_s,
             recefore=recefore,
             recefore_rc=recefore_rc,
             start_s=start_s,
@@ -868,6 +881,7 @@ def run_all(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[RunOutcome]:
     """Run every (p, seed) pair in `build_run_order`'s order, logging one line per run to `out`.
 
@@ -910,6 +924,10 @@ def run_all(
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
     )
+    # 2026-11-11: same reasoning for the down-period range and the p < 1 rule
+    # it brings, checked against every p of the grid before any run.
+    for p in ps:
+        evalgen.validate_disconnect_duration(p, disconnect_duration_s)
     if not allow_dirty:
         dirty = _git_dirty(_SEMINDEX_REPO_ROOT, capture_subprocess)
         if dirty is not False:
@@ -960,6 +978,7 @@ def run_all(
                 max_in_flight_per_neighbor=max_in_flight_per_neighbor,
                 store_synchronous=store_synchronous,
                 state_poll_policy=state_poll_policy,
+                disconnect_duration_s=disconnect_duration_s,
             )
         except Exception as exc:  # noqa: BLE001 -- see docstring: one run's crash must not stop the sweep
             print(f"p={p} seed={seed} status=error error={exc!r}", file=out)
@@ -973,7 +992,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments for the evaluation runner."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", required=True, help="stage label (e.g. s1); used in the store path and run names")
-    parser.add_argument("--p", type=float, nargs="+", required=True, help="one or more disconnect probabilities")
+    parser.add_argument(
+        "--p",
+        type=float,
+        nargs="+",
+        required=True,
+        help="one or more disconnect probabilities: per 5 s slot for the slot model, "
+        "the down-time fraction (< 1) with --disconnect-duration-s",
+    )
     parser.add_argument("--seeds", required=True, help='seed range/list, e.g. "1-100" or "1,3,5-8"')
     parser.add_argument("--store", required=True, help="directory runs are stored under")
     parser.add_argument("--recefore", required=True, help="path to the ReCefore (cefore-emu-sslab) checkout")
@@ -1020,6 +1046,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='state-poll table as JSON, e.g. \'{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}\'; '
         "not with --interval-choices/--choice-jitter",
     )
+    parser.add_argument(
+        "--disconnect-duration-s",
+        type=float,
+        nargs=2,
+        metavar=("LO", "HI"),
+        default=None,
+        dest="disconnect_duration_s",
+        help="down periods uniform on [LO, HI] s with exponential up periods (p = down-time fraction); "
+        "omit for the 5 s slot model",
+    )
     return parser.parse_args(argv)
 
 
@@ -1045,6 +1081,7 @@ def main(argv: list[str] | None = None) -> int:
             # Parsed inside this try, so invalid JSON exits 2 with the same
             # prefix as every other refused setting.
             state_poll_policy=evalgen.parse_poll_policy_arg(args.poll_policy),
+            disconnect_duration_s=evalgen.parse_disconnect_duration_arg(args.disconnect_duration_s),
         )
     except (DirtySemindexError, gen.ExperimentError) as exc:
         print(f"semindex.evalrun: {exc}", file=sys.stderr)

@@ -1079,6 +1079,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "max_in_flight_per_neighbor",
         "store_synchronous",
         "state_poll_policy",
+        "disconnect_duration_s",
         "semindex_git_commit",
         "semindex_git_dirty",
         "recefore_git_commit",
@@ -1098,6 +1099,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
     assert meta["max_in_flight_per_neighbor"] is None
     assert meta["store_synchronous"] == "NORMAL"  # not set: the agents' default, made explicit
     assert meta["state_poll_policy"] is None  # not set: recorded as given, like the in-flight cap
+    assert meta["disconnect_duration_s"] is None  # not set: the 5 s slot model
     assert meta["recefore_exit_code"] == 0
     assert meta["validity"]["valid"] is True
     assert set(meta["host_python"]) == {"evalrun", "recefore_venv"}
@@ -1345,6 +1347,82 @@ def test_main_refuses_a_poll_policy_that_is_not_json_before_any_run(tmp_path: Pa
     assert rc == 2
     assert calls == []
     assert capsys.readouterr().err == "semindex.evalrun: --poll-policy must be valid JSON\n"
+
+
+def test_run_one_generates_with_and_records_a_disconnect_duration(tmp_path: Path, monkeypatch):
+    """A down-period range reaches the generated run (the stored experiment's events are
+    the outage shape's) and meta.json as [lo, hi]; the fake run's results, built from
+    those events, still validate, millisecond `at`s included."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.4,
+        3,
+        "s6",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        k=4,
+        state_poll_policy=_SHORTEN,
+        disconnect_duration_s=(8.0, 12.0),
+    )
+
+    run_dir = store / "s6" / "p0.4" / "3"
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["disconnect_duration_s"] == [8.0, 12.0]
+    assert meta["validity"]["valid"] is True
+    experiment = json.loads((run_dir / "s6_p040_seed3.experiment.json").read_text(encoding="utf-8"))
+    assert experiment["events"] == evalgen.build_experiment(
+        0.4, 3, "s6", "/out", disconnect_duration_s=(8.0, 12.0)
+    )["events"]
+    assert any(e["at"] != round(e["at"]) for e in experiment["events"])
+
+
+def test_main_passes_a_disconnect_duration_to_run_all_and_none_when_not_given(tmp_path: Path, monkeypatch):
+    """--disconnect-duration-s LO HI reaches run_all as a (lo, hi) tuple; without it, None."""
+    seen: dict = {}
+    monkeypatch.setattr(evalrun, "run_all", lambda *a, **kw: seen.update(kw) or [])
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    base = ["--stage", "s6", "--p", "0.2", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+            str(tmp_path / "recefore"), "--staging", str(staging_parent)]
+    assert evalrun.main(base + ["--disconnect-duration-s", "8", "12"]) == 0
+    assert seen["disconnect_duration_s"] == (8.0, 12.0)
+    seen.clear()
+    assert evalrun.main(base) == 0
+    assert seen["disconnect_duration_s"] is None
+
+
+@pytest.mark.parametrize(
+    ("ps", "duration", "message"),
+    [
+        (["0.2", "1"], ["8", "12"], "p must be < 1 with disconnect_duration_s (the down-time fraction), got 1.0"),
+        (["0.2"], ["0", "12"], "disconnect_duration_s must be two finite numbers lo, hi with 0 < lo <= hi, got (0.0, 12.0)"),
+    ],
+)
+def test_main_refuses_p_one_or_a_bad_range_before_any_run(tmp_path: Path, monkeypatch, capsys, ps, duration, message):
+    """p >= 1 anywhere in the grid, or a bad range, is refused once, up front (exit 2),
+    with the exact diagnostic, and no run is attempted."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s6", "--p", *ps, "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--disconnect-duration-s", *duration]
+    )
+    assert rc == 2
+    assert calls == []
+    assert capsys.readouterr().err == f"semindex.evalrun: {message}\n"
 
 
 def test_run_one_flags_an_invalid_run_but_still_completes(tmp_path: Path, monkeypatch):

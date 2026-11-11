@@ -921,3 +921,318 @@ def test_cli_rejects_a_poll_policy_that_is_not_json(tmp_path: Path, capsys):
     assert rc == 1
     assert capsys.readouterr().err == "semindex.evalgen: --poll-policy must be valid JSON\n"
     assert not outdir.exists()
+
+
+# -- the outage shape (disconnect_duration_s, stage-2 map "ほかの切断の形", 2026-11-11) --
+
+_DURATION = (8.0, 12.0)
+
+
+def _outage_events(seed: int, p: float, nodes: list[int], duration=_DURATION) -> list[dict]:
+    """One link's outage-shape events, straight from the per-link function with the
+    run's own rng stream (cheap enough for the many-window statistics below)."""
+    a, b = nodes
+    return evalgen._outage_link_events(evalgen._rng_for(seed, f"outage:{a}:{b}"), p, *duration, nodes)
+
+
+def _down_time_s(events: list[dict]) -> float:
+    """Seconds one link spends down inside the window, an open outage counted to WINDOW_END_S."""
+    return sum(
+        (evalgen.WINDOW_END_S if up_at is None else up_at) - down_at
+        for down_at, up_at in _down_intervals(events, events[0]["nodes"] if events else [])
+    )
+
+
+class _ScriptedRng:
+    """A stand-in for random.Random whose random() returns a fixed script of uniforms."""
+
+    def __init__(self, draws: list[float]):
+        self._draws = list(draws)
+
+    def random(self) -> float:
+        return self._draws.pop(0)
+
+
+@pytest.mark.parametrize("p", sorted(_STAGE1_DIGESTS))
+def test_an_explicit_none_disconnect_duration_still_reproduces_stage_1(p: float):
+    """Passing None is the slot model: stage 1's files, byte for byte (main's output for
+    these (p, seed) pairs, pinned by _STAGE1_DIGESTS)."""
+    raw = evalgen.build_experiment(p, 7, "s1", "/out", disconnect_duration_s=None)
+    assert _normalized_digest(raw) == _STAGE1_DIGESTS[p]
+
+
+def test_a_disconnect_duration_changes_only_the_events_and_writes_no_key():
+    """The range swaps the slot model's events for the outage shape's and touches nothing
+    else: same records, probes, settings and keys as the slot model's experiment."""
+    slot = evalgen.build_experiment(0.4, 7, "s6", "/out")
+    outage = evalgen.build_experiment(0.4, 7, "s6", "/out", disconnect_duration_s=_DURATION)
+    assert outage["events"] != slot["events"]
+    assert {key: v for key, v in outage.items() if key != "events"} == {key: v for key, v in slot.items() if key != "events"}
+    # Off the 5 s grid: the slot model's times are all WINDOW_START_S + 5 s multiples.
+    assert any((e["at"] - evalgen.WINDOW_START_S) % 5 != 0 for e in outage["events"])
+    parse_experiment(outage)
+
+
+def test_the_outage_shape_with_p_zero_has_no_events():
+    """p = 0 means no down time: no events at all."""
+    assert evalgen.build_experiment(0.0, 7, "s6", "/out", disconnect_duration_s=_DURATION)["events"] == []
+
+
+def test_the_outage_shape_rejects_p_of_one():
+    """p is the down-time fraction there, and the mean up period is 0 at p = 1."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.build_experiment(1.0, 7, "s6", "/out", disconnect_duration_s=_DURATION)
+    assert str(excinfo.value) == "p must be < 1 with disconnect_duration_s (the down-time fraction), got 1.0"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        (0.0, 12.0),
+        (-1.0, 12.0),
+        (12.0, 8.0),
+        (8.0, float("inf")),
+        (float("nan"), 12.0),
+        (8.0,),
+        (8.0, 10.0, 12.0),
+        (True, 12.0),
+        ("8", 12.0),
+        8.0,
+    ],
+)
+def test_the_outage_shape_rejects_a_bad_range(bad):
+    """LO and HI must be two finite numbers with 0 < LO <= HI; the message names the value."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.build_experiment(0.2, 7, "s6", "/out", disconnect_duration_s=bad)
+    assert str(excinfo.value) == (
+        f"disconnect_duration_s must be two finite numbers lo, hi with 0 < lo <= hi, got {bad!r}"
+    )
+
+
+def test_the_outage_shape_accepts_lo_equal_to_hi():
+    """A fixed down period (LO = HI) is a valid range."""
+    raw = evalgen.build_experiment(0.4, 7, "s6", "/out", disconnect_duration_s=(10.0, 10.0))
+    parse_experiment(raw)
+
+
+@pytest.mark.parametrize("p", [0.2, 0.4, 0.5, 0.6])
+def test_outage_events_alternate_stay_in_the_window_and_last_lo_to_hi(p: float):
+    """Per link: strict down/up alternation starting with a down, every up gap > 0, every
+    event inside [WINDOW_START_S, WINDOW_END_S), and every outage that neither starts at
+    WINDOW_START_S (cut by the window's start) nor stays open (cut by its end) lasts
+    within [LO, HI], or longer than HI only when it is a merge of two (> 2 LO)."""
+    lo, hi = _DURATION
+    for seed in range(200):
+        raw = evalgen.build_experiment(p, seed, "s6", "/out", disconnect_duration_s=_DURATION)
+        at_values = [e["at"] for e in raw["events"]]
+        assert at_values == sorted(at_values)
+        for a, b in evalgen.LINKS:
+            events = [e for e in raw["events"] if e["nodes"] == [a, b]]
+            assert [e["type"] for e in events] == ["link_down", "link_up"] * (len(events) // 2) + (
+                ["link_down"] if len(events) % 2 else []
+            )
+            for e in events:
+                assert evalgen.WINDOW_START_S <= e["at"] < evalgen.WINDOW_END_S
+                assert e["at"] == round(e["at"], 3)
+            intervals = _down_intervals(raw["events"], [a, b])
+            for (_, up_at), (next_down_at, _) in zip(intervals, intervals[1:]):
+                assert next_down_at > up_at
+            for down_at, up_at in intervals:
+                if up_at is None or down_at == evalgen.WINDOW_START_S:
+                    continue
+                length = round(up_at - down_at, 3)
+                # Each rounded end moves by at most 0.5 ms, so a length by at most 1 ms.
+                assert lo - 0.001 <= length <= hi + 0.001 or length > 2 * lo
+
+
+# 2026-11-11: the stationary start is the trap this shape's statistics exist for.
+# An always-up start falls short of p by about p(1-p)*E[R]/120 (E[R] = 5.067 s,
+# the mean residual of a length-biased [8, 12] outage): 0.0068 at p 0.2 and
+# 0.010 at p 0.4-0.6 -- small, because the exponential up periods are
+# memoryless, so the only difference is the start-down branch. Measured over
+# these OUTAGE_SEEDS * 4 = 20 000 (seed, link) windows it gives 0.1923 at
+# p 0.2 (deviation -0.0077), against -0.0009 for the stationary start. The
+# per-window down fraction has an SD of about 0.10 (0.09-0.11 across the four
+# p), so the mean's SE is about 0.0007; the 0.004 tolerance is ~5.5 SE, while
+# the always-up start lands ~5 SE beyond it at p 0.2 and further at higher p.
+# (150 seeds, the slot model's count, would give SE ~0.004 and could not tell
+# the two starts apart.)
+OUTAGE_SEEDS = 5000
+
+
+@pytest.mark.parametrize("p", [0.2, 0.4, 0.5, 0.6])
+def test_outage_mean_down_fraction_over_many_windows_approaches_p(p: float):
+    """The outage shape's mean down fraction over the 120 s window is p, open outages
+    counted to WINDOW_END_S (the same window the fraction is drawn over)."""
+    total_down_s = 0.0
+    windows = 0
+    for seed in range(OUTAGE_SEEDS):
+        for a, b in evalgen.LINKS:
+            total_down_s += _down_time_s(_outage_events(seed, p, [a, b]))
+            windows += 1
+    observed_fraction = total_down_s / (windows * evalgen.DISCONNECT_WINDOW_S)
+    assert abs(observed_fraction - p) < 0.004
+
+
+@pytest.mark.parametrize("p", [0.2, 0.4, 0.5, 0.6])
+def test_outage_share_of_windows_starting_down_is_p(p: float):
+    """A share p of (seed, link) windows starts with a link_down at WINDOW_START_S. Over
+    20 000 windows the share's SE is at most 0.0035, so 0.015 is ~4 SE; an always-up
+    start gives 0."""
+    starting_down = 0
+    windows = 0
+    for seed in range(OUTAGE_SEEDS):
+        for a, b in evalgen.LINKS:
+            events = _outage_events(seed, p, [a, b])
+            starting_down += bool(events) and events[0]["at"] == evalgen.WINDOW_START_S
+            windows += 1
+    assert abs(starting_down / windows - p) < 0.015
+
+
+def test_a_sub_millisecond_up_gap_merges_two_outages_into_one():
+    """An up gap that rounds to 0 ms joins its two outages (the one merge there is);
+    a 1 ms gap is kept, so the merge is no floor on up time."""
+    p = 0.5  # mean up period E[D] = 10 s, so an up draw u gives -10 * log(1 - u) s
+    lo, hi = _DURATION
+
+    def events_for(first_up_s: float, gap_s: float) -> list[dict]:
+        # Start up (state draw 0.99 >= p), then an up period, one 10 s outage
+        # (down draw 0.5), the crafted gap, a second 10 s outage, then a long up.
+        draws = [0.99, 0.0, 0.0, 1 - math.exp(-first_up_s / 10), 0.5, 1 - math.exp(-gap_s / 10), 0.5, 0.999999]
+        return evalgen._outage_link_events(_ScriptedRng(draws), p, lo, hi, [0, 1])
+
+    merged = events_for(5.0, 0.0004)
+    assert [(e["type"], e["at"]) for e in merged] == [("link_down", 15.0), ("link_up", 35.0)]
+    kept = events_for(5.0, 0.001)
+    assert [(e["type"], e["at"]) for e in kept] == [
+        ("link_down", 15.0),
+        ("link_up", 25.0),
+        ("link_down", 25.001),
+        ("link_up", 35.001),
+    ]
+
+
+def test_a_start_residual_that_rounds_to_zero_is_no_outage():
+    """A start-down residual shorter than 0.5 ms emits nothing for it (a link_down and a
+    link_up at one `at` would leave the link up and break evalvalid's matching)."""
+    draws = [0.0, 0.0, 1e-6, 1 - math.exp(-5.0 / 10), 0.5, 0.999999]
+    events = evalgen._outage_link_events(_ScriptedRng(draws), 0.5, 8.0, 12.0, [0, 1])
+    assert [(e["type"], e["at"]) for e in events] == [("link_down", 15.0), ("link_up", 25.0)]
+
+
+def test_the_outage_shape_reads_the_same_uniforms_at_every_p():
+    """The draw order is fixed: at two p values the same seed consumes the same uniforms
+    in the same positions, and the start draws are four whatever the start state."""
+    class Recording:
+        def __init__(self, rng):
+            self.rng, self.seen = rng, []
+
+        def random(self):
+            self.seen.append(self.rng.random())
+            return self.seen[-1]
+
+    runs = {}
+    for p in (0.2, 0.6):
+        rng = Recording(evalgen._rng_for(7, "outage:0:1"))
+        evalgen._outage_link_events(rng, p, *_DURATION, [0, 1])
+        runs[p] = rng.seen
+    shorter, longer = sorted(runs.values(), key=len)
+    assert longer[: len(shorter)] == shorter
+    # Four start draws whatever the start state, then two per cycle: an even count
+    # at both p, so no state read a different number of start uniforms.
+    assert [len(seen) % 2 for seen in runs.values()] == [0, 0]
+    assert len(shorter) >= 6
+
+
+def test_the_outage_shape_and_the_slot_model_use_unrelated_streams():
+    """The outage shape draws each link from the purpose "outage:{a}:{b}", never the slot model's
+    "link:{a}:{b}": the generated events equal a replay of `_outage_link_events` on the outage
+    stream and differ from one on the slot stream.
+
+    2026-11-11 review nit: comparing the two purpose strings' seeds alone never ran the
+    generator, so a regression that drew the outage shape from the slot stream would have passed.
+    """
+    p, seed = 0.4, 7
+    events = evalgen.build_experiment(p, seed, "s6", "/out", disconnect_duration_s=_DURATION)["events"]
+    lo, hi = _DURATION
+    for a, b in evalgen.LINKS:
+        got = [e for e in events if e["nodes"] == [a, b]]
+        on_outage = evalgen._outage_link_events(evalgen._rng_for(seed, f"outage:{a}:{b}"), p, lo, hi, [a, b])
+        on_slot = evalgen._outage_link_events(evalgen._rng_for(seed, f"link:{a}:{b}"), p, lo, hi, [a, b])
+        assert got == on_outage
+        assert got != on_slot
+
+
+def test_the_outage_shape_asserts_no_link_gets_two_events_at_one_at(monkeypatch):
+    """The generator's own guard: should the per-link function ever emit two events of one
+    link at one `at`, generation stops instead of writing that schedule."""
+    def twin(rng, p, lo, hi, nodes):
+        return [{"at": 20.0, "type": "link_down", "nodes": nodes}, {"at": 20.0, "type": "link_up", "nodes": nodes}]
+
+    monkeypatch.setattr(evalgen, "_outage_link_events", twin)
+    with pytest.raises(AssertionError) as excinfo:
+        evalgen.build_experiment(0.2, 7, "s6", "/out", disconnect_duration_s=_DURATION)
+    assert str(excinfo.value) == "two events of one link share an `at`"
+
+
+def test_cli_disconnect_duration_writes_the_description_to_any_outdir_without_running(tmp_path: Path):
+    """The standalone CLI writes the experiment description (its events the outage shape's)
+    plus gen's files into an arbitrary --out and nothing else: the later replay reads
+    these files, no ReCefore run is involved."""
+    outdir = tmp_path / "any" / "where"
+    rc = evalgen.main(
+        ["--p", "0.4", "--seed", "7", "--stage", "s6", "--out", str(outdir), "--disconnect-duration-s", "8", "12"]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s6_p040_seed7.experiment.json").read_text(encoding="utf-8"))
+    assert raw["events"] == evalgen.build_experiment(0.4, 7, "s6", str(outdir), disconnect_duration_s=_DURATION)["events"]
+    assert sorted(path.name for path in outdir.iterdir()) == [
+        "s6_p040_seed7",
+        "s6_p040_seed7.experiment.json",
+        "s6_p040_seed7.yaml",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--p", "1"], "p must be < 1 with disconnect_duration_s (the down-time fraction), got 1.0"),
+        (
+            ["--p", "0.2", "--disconnect-duration-s", "12", "8"],
+            "disconnect_duration_s must be two finite numbers lo, hi with 0 < lo <= hi, got (12.0, 8.0)",
+        ),
+    ],
+)
+def test_cli_refuses_p_one_or_a_bad_range_before_anything_is_written(tmp_path: Path, capsys, extra, message):
+    """Exit 1 with the exact diagnostic and nothing written."""
+    outdir = tmp_path / "run"
+    argv = ["--seed", "1", "--stage", "s6", "--out", str(outdir)] + extra
+    if "--disconnect-duration-s" not in extra:
+        argv += ["--disconnect-duration-s", "8", "12"]
+    assert evalgen.main(argv) == 1
+    assert capsys.readouterr().err == f"semindex.evalgen: {message}\n"
+    assert not outdir.exists()
+
+
+def test_outage_event_times_survive_recefores_own_yaml_loader(tmp_path: Path):
+    """ReCefore's loader reads the generated YAML's millisecond `at`s back as exactly the
+    experiment's floats (evalvalid matches results rows by `scheduled_at ==`), and its
+    validator accepts them."""
+    if not os.path.exists(_RECEFORE_VENV_PYTHON):
+        pytest.skip(f"ReCefore venv not found at {_RECEFORE_VENV_PYTHON}")
+    written = evalgen.generate_run(0.5, 7, "s6", str(tmp_path / "run"), disconnect_duration_s=_DURATION)
+    raw = json.loads(Path(written[0]).read_text(encoding="utf-8"))
+    yaml_path = [p for p in written if p.endswith(".yaml")][0]
+    script = (
+        "import sys, json; sys.path.insert(0, %r)\n"
+        "from core.config.loader import load_config\n"
+        "from core.config.validator import validate_config\n"
+        "cfg = load_config(%r)\n"
+        "print(json.dumps({'errors': validate_config(cfg), 'at': [repr(e['at']) for e in cfg['events']]}))\n"
+    ) % (_RECEFORE_SRC, yaml_path)
+    result = subprocess.run([_RECEFORE_VENV_PYTHON, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    loaded = json.loads(result.stdout)
+    assert loaded["errors"] == []
+    assert any(e["at"] != round(e["at"]) for e in raw["events"])
+    assert loaded["at"][1:] == [repr(e["at"]) for e in raw["events"]]  # [0] is gen's seed put
