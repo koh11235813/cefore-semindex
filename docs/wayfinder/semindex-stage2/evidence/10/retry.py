@@ -19,7 +19,9 @@ Definitions (times in ms, relative to t0 = evalagg.derive_t0_ms, window [t0 + 10
              that failed). This is the share the hypothesis is about: `down` also counts a retry that waited past
              the failed poll's outage and fell into the next one (possible on s6, whose up gaps can be shorter
              than the wait; rare on s5, whose up gaps are multiples of 5 s, so only a wait of 5 s or more can
-             skip one: 2 retries of s5wait p 0.4).
+             skip one: 2 retries of s5wait p 0.4). down AND NOT same (`down_other_outage`) is mostly that, but
+             also a retry whose previous poll was sent while the link was nominally up and still timed out
+             (s6short p 0.4 seed 20 h3->h2: sent 7 ms after a link_up; 9 such retries over all cells).
   residual   for a retry sent while down: next link_up - send time (open episodes are counted, not averaged).
   disagree   retries that are down but answered, and retries that are up but timed out.
   episode    one merged outage of a link, started inside the window, seen from one directed pair:
@@ -197,7 +199,8 @@ def table(rows):
     L = [SECTION + ": does the retry land inside the same outage?", "",
          "Definitions in retry.py's docstring. Policies (short, wait): the poll after a timed-out reschedule; "
          "b3p695: the poll after a timed-out poll. down = link down at send by experiment.json (any outage); same = "
-         "down and in the same outage as the failed poll (other = down in a later outage); to = measured "
+         "down and in the same outage as the failed poll (other = down but outside that outage: mostly a later "
+         "outage, also when the failed poll itself was sent while nominally up); to = measured "
          "timed out; disagree = down-but-answered / up-but-timed-out. resid = time from the retry to the link_up "
          "(retries sent while down). polls in episode = a directed pair's polls sent inside one merged outage "
          "(0/1/2/3/4+); streak = measured runs of consecutive timed-out polls (1/2/3/4+). all-poll down = share of "
