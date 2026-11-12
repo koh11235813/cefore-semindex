@@ -1,0 +1,53 @@
+Commands run 2026-11-12 for evidence/11 (emptypoll.py), from this directory.
+Worktree at docs/stage2-evidence-11 ffbe4b6; interpreter = the cefore-semindex checkout's venv; no bytecode written.
+Read-only: the run store, evalagg's polls.csv for the s6 stages, ../09/perrun.csv, ../10/perrun.csv, and
+../09/live_main.csv and ../10/live_main.csv (the B_const cross-check).
+
+W=/home/lab_shared/wt/semindex-ev11
+PY=/home/lab_shared/cefore-semindex/.venv/bin/python3
+export PYTHONDONTWRITEBYTECODE=1
+export AGG=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/main5-agg-full
+# (session scratch, not kept; evalagg output, one dir per s6 stage, built with:)
+#   for st in s6b0p5 s6b1p359 s6b3p695 s6b10p043 s6short s6wait; do
+#     PYTHONPATH=$W/src $PY -m semindex.evalagg --store /home/lab_shared/semindex-eval --stage $st --out $AGG/$st
+#   done
+# STORE defaults to /home/lab_shared/semindex-eval
+
+PYTHONPATH=$W/src $PY emptypoll.py    # perpair.csv, cells.csv, tables.md, mismatch_examples.txt (~6 s, 4 workers)
+
+stdout of the run:
+
+reference check: s6 3840 polls.csv pairs, 0 mismatched; s5 360 perrun.csv runs, 0 mismatched (polls_sent, state_rx, late_replies)
+runs 840 pairs 6720 after_complete>no_new rows 0
+why split: rows with sum(why_*) != rx_no_new 0 rows with why_all_complete != rx_after_complete 0
+record_created counts (family, origin, count): runs {('s5', 'h0', 120): 360, ('s5', 'h4', 120): 360, ('s6', 'h0', 120): 480, ('s6', 'h4', 120): 480}
+
+The why_* split is checked twice: per perpair.csv row in the run log above (sum of the four equals rx_no_new,
+and why_all_complete equals rx_after_complete, 0 rows failing either out of 6720) and per cell in tables.md.
+A second full run gave byte-identical perpair.csv, cells.csv, tables.md, mismatch_examples.txt and stdout.
+Every column that existed before the why_* split was added equals the earlier draft of this script value for
+value (6720 perpair.csv rows x 21 columns, 42 cells.csv rows x 50 columns, 0 differences); the why_* shares
+draw from their own RNG stream for exactly this reason.
+Check afterwards: git status --short shows nothing outside evidence/11 and map.md (no __pycache__, no cache dir
+under evidence/11; uvx ruff was run from the worktree root, so .ruff_cache lands there and is gitignored).
+
+$PY recheck.py > recheck.txt          # independent recount of every perpair.csv row (3 to 10 s, 16 workers)
+
+recheck.txt's head: 42 cells, 4200 node files, 6720 pairs recounted, 10 columns compared per pair, 0 differences.
+A second run of recheck.py gave a byte-identical recheck.txt.
+
+After the recount, emptypoll.py's docstring and the Legend it writes into tables.md were corrected (what a
+policy can see of rx_no_new and rx_hi_unchanged; text only). emptypoll.py was then rerun twice: perpair.csv,
+cells.csv and mismatch_examples.txt byte-identical to the run above, tables.md changed in three Legend lines only.
+
+After the reviews (2026-11-12, a four-angle review with a refuting pass per finding, and codex exec read-only):
+text corrections in emptypoll.py (docstring, Legend), README.md and map.md; recheck.py now also reports
+during_after_gen and no longer names the fetch-bookkeeping replay as something it covers. emptypoll.py rerun:
+perpair.csv, cells.csv, mismatch_examples.txt and stdout byte-identical to the runs above; tables.md differs in
+Legend lines only. recheck.py rerun twice: byte-identical recheck.txt, 0 differences.
+
+After the second review round (same two reviewers): recheck.py also reports seq_* (what two consecutive
+state_poll decision states show about the reply between them); wording fixes in README.md, map.md and
+emptypoll.py (docstring, Legend, one summary line of tables.md). Final runs of both scripts, twice each:
+perpair.csv, cells.csv, mismatch_examples.txt and emptypoll.py's stdout byte-identical to the first run above;
+recheck.txt byte-identical between its two runs, 0 differences.
