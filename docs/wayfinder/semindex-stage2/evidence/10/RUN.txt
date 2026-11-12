@@ -1,0 +1,25 @@
+Commands run 2026-11-12 for the live half of evidence/10 (perrun.py, ana.py, retry.py), from this directory.
+Worktree at main 6b036ff; interpreter = the cefore-semindex checkout's venv; no bytecode written.
+
+W=/home/lab_shared/wt/semindex-ev10
+PY=/home/lab_shared/cefore-semindex/.venv/bin/python3
+export PYTHONDONTWRITEBYTECODE=1
+export AGG=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/main5-agg-full
+# (session scratch, not kept; evalagg output, one dir per s6 stage, built with:)
+#   for st in s6b0p5 s6b1p359 s6b3p695 s6b10p043 s6short s6wait; do
+#     PYTHONPATH=$W/src $PY -m semindex.evalagg --store /home/lab_shared/semindex-eval --stage $st --out $AGG/$st
+#   done
+# STORE defaults to /home/lab_shared/semindex-eval (perrun.py, retry.py)
+
+PYTHONPATH=$W/src:../05:../07 $PY perrun.py    # perrun.csv; per-stage sanity counters on stderr (~11 s, 3 workers)
+$PY ana.py > /dev/null                         # live_main.csv, front4.csv, tables.md (stdout = tables.md minus retry)
+PYTHONPATH=$W/src $PY retry.py > /dev/null     # retry_table.csv; replaces the "## Retry" section of tables.md (~3 s, 3 workers)
+
+ana.py prints two numpy 'invalid value encountered in divide' warnings: s6b10p043 p 0.6 seeds 7 and 12 have
+every 4-hop pair censored, so their seed delay is nan and they drop out of that arm's seed mean.
+Order matters: ana.py rewrites tables.md, retry.py then appends its section.
+Check afterwards: git status --short shows nothing outside evidence/10 (no __pycache__ under evidence/04, 05, 07, 09).
+Retry counts per (stage, p) for s5short / s5wait / s5b3p695 equal evidence/09 retry_table.csv's n_retry.
+A second full run of all three scripts gave byte-identical outputs.
+Interim check: the p 0.2 / 0.4 rows of perrun.csv equal the interim perrun CSV row for row, and the p 0.2 / 0.4
+main-table and [4] values printed in the interim table's format are identical to it (bootstrap order in ana.py's docstring).
