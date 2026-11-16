@@ -1,0 +1,16 @@
+## fetch_but_nonew/extra: s6b0p5 p0.4 seed3 h0 line index 556 (0-based, blank lines skipped); missing<=hi 0 first []; in-flight to neighbor 0
+{"event": "state_rx", "hi": {"h0": 120, "h4": 108}, "neighbor": "h1", "ts_ms": 1794343190596}
+{"action": {"fetched": [["h4", 113], ["h4", 114], ["h4", 115], ["h4", 116], ["h4", 117], ["h4", 118], ["h4", 119], ["h4", 120]], "neighbor": "h1"}, "action_prob": 1.0, "event": "decision", "kind": "fetch_plan", "state": {"in_flight": 0, "last_timeout_s": null, "origins": {"h0": {"advertised": {"h1": {"hi": 120, "notified_max": 120}}, "hi": 120, "missing": 0}, "h4": {"advertised": {"h1": {"hi": 108, "notified_max": 120}}, "hi": 108, "missing": 12}}, "truncated": false}, "ts_ms": 1794343190596}
+
+## nofetch_but_new/backoff: s6b0p5 p0.4 seed3 h1 line index 902 (0-based, blank lines skipped); missing<=hi 4 first [('h4', 109), ('h4', 110), ('h4', 111), ('h4', 112)]; in-flight to neighbor 0
+{"event": "state_rx", "hi": {"h0": 120, "h4": 120}, "neighbor": "h2", "ts_ms": 1794343186254}
+{"action": {"applied_interval_s": 0.47036558557473135, "interval_s": 0.5, "neighbor": "h0"}, "action_prob": 1.0, "event": "decision", "kind": "state_poll", "state": {"consecutive_poll_timeouts": 11, "in_flight": 0, "last_poll_status": "pending", "last_timeout_s": null, "origins": {"h0": {"advertised": {"h0": {"hi": 120, "notified_max": 120}, "h2": {"hi": 120, "notified_max": 120}}, "hi": 120, "missing": 0}, "h4": {"advertised": {"h0": {"hi": 108, "notified_max": 108}, "h2": {"hi": 120, "notified_max": 120}}, "hi": 108, "missing": 4}}, "truncated": false}, "ts_ms": 1794343186758}
+
+## nofetch_but_new/cap: s6b0p5 p0.5 seed3 h4 line index 305 (0-based, blank lines skipped); missing<=hi 20 first [('h0', 49), ('h0', 50), ('h0', 51), ('h0', 52), ('h0', 53), ('h0', 54), ('h0', 55), ('h0', 56), ('h0', 57), ('h0', 58)]; in-flight to neighbor 8
+{"event": "state_rx", "hi": {"h0": 68, "h4": 64}, "neighbor": "h3", "ts_ms": 1794381253098}
+{"event": "record_stored", "holder": "h3", "origin": "h0", "seq": 49, "ts_ms": 1794381253100}
+
+## nofetch_but_new/in_flight: s6b0p5 p0.4 seed3 h1 line index 887 (0-based, blank lines skipped); missing<=hi 4 first [('h4', 109), ('h4', 110), ('h4', 111), ('h4', 112)]; in-flight to neighbor 4
+{"event": "state_rx", "hi": {"h0": 120, "h4": 120}, "neighbor": "h2", "ts_ms": 1794343185144}
+{"action": {"applied_interval_s": 0.4751575770842779, "interval_s": 0.5, "neighbor": "h0"}, "action_prob": 1.0, "event": "decision", "kind": "state_poll", "state": {"consecutive_poll_timeouts": 8, "in_flight": 0, "last_poll_status": "pending", "last_timeout_s": null, "origins": {"h0": {"advertised": {"h0": {"hi": 120, "notified_max": 120}, "h2": {"hi": 120, "notified_max": 120}}, "hi": 120, "missing": 0}, "h4": {"advertised": {"h0": {"hi": 108, "notified_max": 108}, "h2": {"hi": 120, "notified_max": 120}}, "hi": 108, "missing": 4}}, "truncated": false}, "ts_ms": 1794343185245}
+
