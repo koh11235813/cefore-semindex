@@ -1,0 +1,88 @@
+evidence/12 (streak.py) run log -- 2026-11-16
+
+Worktree: /home/lab_shared/wt/semindex-ev11 (branch docs/stage2-evidence-12)
+Run store: /home/lab_shared/semindex-eval (read-only; STORE left at its default)
+Interpreter: /home/lab_shared/cefore-semindex/.venv/bin/python3 -B
+
+Commands, exactly as run, from the worktree root /home/lab_shared/wt/semindex-ev11:
+
+  # run 1
+  /home/lab_shared/cefore-semindex/.venv/bin/python3 -B docs/wayfinder/semindex-stage2/evidence/12/streak.py
+
+  # keep run 1's outputs for the byte comparison
+  cp docs/wayfinder/semindex-stage2/evidence/12/perpair.csv \
+     docs/wayfinder/semindex-stage2/evidence/12/cells.csv \
+     docs/wayfinder/semindex-stage2/evidence/12/tables.md \
+     /tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev12/sub/
+
+  # run 2
+  /home/lab_shared/cefore-semindex/.venv/bin/python3 -B docs/wayfinder/semindex-stage2/evidence/12/streak.py
+
+  # byte comparison of run 2 against the kept copies of run 1
+  for f in perpair.csv cells.csv tables.md; do
+    cmp /tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev12/sub/$f \
+        docs/wayfinder/semindex-stage2/evidence/12/$f
+  done
+
+  # lint
+  uvx ruff@0.17.2 check docs/wayfinder/semindex-stage2/evidence/12/streak.py
+  rm -rf /home/lab_shared/wt/semindex-ev11/.ruff_cache
+
+  # hygiene: nothing left behind in the worktree
+  find /home/lab_shared/wt/semindex-ev11 -name __pycache__ -o -name .ruff_cache
+
+  # hashes of the published outputs
+  cd docs/wayfinder/semindex-stage2/evidence/12 && sha256sum perpair.csv cells.csv tables.md
+
+stdout of the final run (run 2), verbatim:
+
+check against ../11/perpair.csv over 6720 rows: 0 rows where sum(n_*) != state_rx, 0 rows where sum(e_*) != rx_no_new
+node files read 4200 cells 42 pairs 6720
+
+Determinism: the second run was byte-identical to the first. `cmp` reported no difference for
+perpair.csv, cells.csv or tables.md, and the sha256 sums below are the same after both runs.
+
+  36034971aaaf0d61890b272db3ef4ac2cc723152dc1dea26b8e7f09cecf7d90d  perpair.csv
+  ebde5f1384bb0572cf45aee1eee3636388ff0d9a97752f459effe6218e043c7a  cells.csv
+  09a6474837a4707ef78c9d89a09bf37b6d677912b33039faa3d1816e7c3e25b9  tables.md
+
+Lint: ruff 0.17.2 printed "All checks passed!" (exit 0); .ruff_cache was removed afterwards. The
+`find` above printed nothing: no __pycache__ and no .ruff_cache anywhere in the worktree (the script
+imports nothing from semindex and runs under -B).
+
+Extra invariants on the streak bookkeeping, run from a scratch one-liner over this perpair.csv (the
+ev11 cross-check only proves the window, the EMPTY predicate and the totals; these probe k and
+seen_new). All 6720 rows pass:
+  - |n_k0 - (state_rx - rx_no_new)| <= 1 (a k = 0 reply is one whose predecessor was non-empty or
+    absent; the window edges allow +-1). Largest observed difference 1.
+  - |sum(n_k>=1) - rx_no_new| <= 1, the mirror of the same identity. Largest observed difference 1.
+  - sum(n_s0_*) - sum(e_s0_*) <= 1: inside the seen_new = 0 prefix only the last reply can be non-empty.
+  - n_s0_k{1,2,3,4} <= 1 each, n_s0_k5_9 <= 5, n_s0_k10_19 <= 10: k rises by one per reply inside that
+    prefix, so each exact k occurs at most once.
+  - total n_s0_k0 over all 6720 rows = 0: the first reply of a pair always arrives before t0+10 s, so
+    "no earlier reply at all" never lands inside the window.
+
+Timing: about 4 s wall with 16 worker processes over the 4200 node files.
+
+Nothing was committed, added or pushed; nothing outside evidence/12/ and the session scratchpad was
+written.
+
+Independent recount (recheck.py, written without streak.py's code), from this directory:
+  /home/lab_shared/cefore-semindex/.venv/bin/python3 -B recheck.py > recheck.txt
+recheck.txt's head: 42 cells, 4200 node files, 6720 pairs recounted, 32 columns compared per pair, 0 differences.
+A second run of recheck.py gave a byte-identical recheck.txt. uvx ruff@0.17.2 check on the folder: clean.
+
+After the review (2026-11-16, a four-angle review with a refuting pass per finding): streak.py now writes
+precision_K*_nseeds into cells.csv and Table B, names Table D's last three columns "within seen_new=1" and
+defines the _s1_ denominators in the Legend; recheck.py also checks that perpair.csv's row keys equal
+../11/perpair.csv's. Both scripts rerun twice: perpair.csv byte-identical to the first run, the 190 earlier
+cells.csv columns value for value the same (4 columns added), tables.md changed in the Legend, Table B's new
+column and Table D's header only; recheck.txt: 0 differences, cell totals unchanged.
+The sha256 sums printed above are those of the first run. After the review changes they are:
+  36034971aaaf0d61890b272db3ef4ac2cc723152dc1dea26b8e7f09cecf7d90d  perpair.csv
+  fad308976097226a87b587dc1960b53ef711cc9c4b0d1ca74e3435b8021996b2  cells.csv
+  6fefb3c8dd31eb4e04245acc124f5538bc9315510b7870ed581d707612f385f2  tables.md
+  111ad60f969c69fedeb7d5b56f6f3466fd400a474f6e1c3912c465525d112c74  recheck.txt
+
+Second external read (pi, opencode-go/glm-5.3-flash, read-only tools, no code execution): APPROVE with fixes,
+three wording items; two README sentences reworded and the sums above added. No number changed.
