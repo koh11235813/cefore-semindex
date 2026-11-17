@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from semindex import holder_state, names, schema
-from semindex.engine import StatePollPolicy, SyncConfig, SyncEngine, _PollReplies
+from semindex.engine import StatePollPolicy, StatePollRule, SyncConfig, SyncEngine, _PollReplies
 from semindex.store import OriginProgress, Store
 
 
@@ -1379,6 +1379,35 @@ def test_policy_an_undecodable_reply_still_resolves_the_poll_as_answered(tmp_pat
     assert _poll_names(transport)[-1] == _state_name(14000)
 
 
+def test_policy_an_undecodable_reply_s_whole_reschedule_row_and_event_order_are_pinned(tmp_path: Path):
+    """Every event the undecodable reply of the test above produces, in order: the poll
+    is re-decided from row 0 *before* the payload is decoded, so the reschedule row
+    comes out ahead of the state_rx that reports the failed decode, carries no record of
+    what the reply held, and its state is the post-resolution snapshot. A policy's rows
+    must keep exactly these keys."""
+    engine, _, _ = _policy_engine(tmp_path, (10.0, 4.0), (0.0, 0.0), _Cycle(0.5))
+    _drive(engine, [("tick", 0.0), ("tick", 2.0), ("tick", 4.0)])
+    engine.on_state("h1", b"not json", 4.1, poll_epoch_ms=4000)
+    assert engine.drain_events() == [
+        {
+            "event": "decision",
+            "ts_ms": 4100,
+            "kind": "state_poll_reschedule",
+            "state": {"last_poll_status": "answered", "consecutive_poll_timeouts": 0},
+            "action": {
+                "neighbor": "h1",
+                "poll_epoch_ms": 4000,
+                "trigger": "answered",
+                "interval_s": 10.0,
+                "applied_interval_s": 10.0,
+                "clamped": False,
+            },
+            "action_prob": 1.0,
+        },
+        {"event": "state_rx", "ts_ms": 4100, "neighbor": "h1", "hi": {}},
+    ]
+
+
 def test_policy_a_reply_after_the_lifetime_but_before_any_tick_resolves_as_answered(tmp_path: Path):
     """The poll at 0 is answered at 2.05, past its 2 s lifetime but before any tick has
     resolved it as timed out: it is resolved once, as answered (count 0, next at 0 +
@@ -1669,3 +1698,339 @@ def test_five_second_wait_policy_retries_exactly_5_s_after_a_failed_poll(tmp_pat
     assert _poll_names(transport) == [_state_name(0), _state_name(5000)]
     _drive(engine, [("tick", back)])
     assert _poll_names(transport)[-1] == _state_name(round(back * 1000))
+
+
+# -- the per-neighbor interval rule (state_poll_rule) ---------------------------------
+
+# The two rules the live comparison runs: the same floor, factor and ceiling, differing only
+# in what a timeout does to the interval.
+_T37_KEEP = StatePollRule(i_min_s=3.695, factor=2.0, i_max_s=10.043, jitter_frac=0.1, on_timeout="keep")
+_T37_RESET = StatePollRule(i_min_s=3.695, factor=2.0, i_max_s=10.043, jitter_frac=0.1, on_timeout="reset")
+# A floor below the 2 s lifetime, so two polls can be outstanding at once.
+_FAST_KEEP = StatePollRule(i_min_s=1.0, factor=2.0, i_max_s=10.043, jitter_frac=0.0, on_timeout="keep")
+# The factor u = 0.75 maps to: neither 1 nor the interval itself, so an interval
+# applied with the wrong draw, or at the wrong moment, shows up in the poll times.
+_FACTOR = 1 + 0.1 * (2 * 0.75 - 1)
+# The engines below hold exactly seq 1 of their own origin (see _rule_engine), so a
+# reply advertising hi 1 brings nothing new and one advertising hi 2 brings something.
+_NOTHING_NEW = holder_state.encode({"h0": OriginProgress(hi=1, extra=())})
+_SOMETHING_NEW = holder_state.encode({"h0": OriginProgress(hi=2, extra=())})
+
+
+def _rule_engine(
+    tmp_path: Path, u: "_Cycle", rule: StatePollRule = _T37_KEEP, *, neighbors: tuple[str, ...] = ("h1",), **overrides
+) -> tuple[SyncEngine, RecordingTransport, dict[str, _Cycle]]:
+    """An engine under `rule` holding seq 1 of its own origin, its jitter u drawn from
+    `u`; the other two poll rngs are spies that must stay undrawn."""
+    store = Store(tmp_path / "h0.db")
+    transport = RecordingTransport()
+    spies = {"jitter": _Cycle(0.2), "choice": _Cycle(0.5)}
+    config = SyncConfig(group="g", node="h0", neighbors=neighbors, state_poll_rule=rule, **overrides)
+    engine = SyncEngine(
+        config,
+        store,
+        transport,
+        poll_jitter_rng=spies["jitter"],
+        poll_choice_rng=spies["choice"],
+        poll_choice_jitter_rng=u,
+    )
+    engine.create_record(content_name="c", zone="zone1", disaster="flood", media="image", observed_at=1)
+    engine.drain_events()
+    return engine, transport, spies
+
+
+def _poll_cycle(engine: SyncEngine, payload: bytes, delay: float = 0.05) -> list[dict]:
+    """Tick at h1's next due poll time, answer that poll `delay` later with `payload`,
+    and return every event of that one poll-and-answer cycle."""
+    due = engine._next_state_poll.get("h1", 0.0)
+    engine.on_tick(due)
+    events = engine.drain_events()
+    engine.on_state("h1", payload, due + delay, poll_epoch_ms=round(due * 1000))
+    return events + engine.drain_events()
+
+
+def test_rule_starts_at_i_min_and_doubles_when_a_reply_brings_nothing_new(tmp_path: Path):
+    """The first poll to a neighbor goes with the floor, 3.695, applied with its own
+    draw. Its reply advertises only what h0 already holds, so the interval doubles and
+    the next poll is re-decided to that poll's send time + 7.39 * 1.05. The reschedule
+    row carries `empty` and follows the state_rx, the reply having to be read before
+    emptiness is known; only the choice-jitter stream is drawn."""
+    u = _Cycle(0.75)
+    engine, transport, spies = _rule_engine(tmp_path, u)
+    [poll] = _decisions(_drive(engine, [("tick", 0.0)]), "state_poll")
+    assert poll["action"] == {"neighbor": "h1", "interval_s": 3.695, "applied_interval_s": 3.695 * _FACTOR}
+    assert poll["action_prob"] == 1.0
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    assert engine.drain_events() == [
+        {"event": "state_rx", "ts_ms": 50, "neighbor": "h1", "hi": {"h0": 1}},
+        {
+            "event": "decision",
+            "ts_ms": 50,
+            "kind": "state_poll_reschedule",
+            "state": {"last_poll_status": "answered", "consecutive_poll_timeouts": 0},
+            "action": {
+                "neighbor": "h1",
+                "poll_epoch_ms": 0,
+                "trigger": "answered",
+                "interval_s": 3.695 * 2,
+                "applied_interval_s": 3.695 * 2 * _FACTOR,
+                "clamped": False,
+                "empty": True,
+            },
+            "action_prob": 1.0,
+        },
+    ]
+    nxt = 3.695 * 2 * _FACTOR
+    _drive(engine, [("tick", nxt - 0.001)])
+    assert _poll_names(transport) == [_state_name(0)]
+    _drive(engine, [("tick", nxt)])
+    assert _poll_names(transport)[-1] == _state_name(round(nxt * 1000))
+    assert (u.calls, spies["jitter"].calls, spies["choice"].calls) == (2, 0, 0)
+
+
+def test_rule_stops_doubling_at_i_max(tmp_path: Path):
+    """Four answered polls that each bring nothing new: 3.695 doubles to 7.39, the next
+    double is cut to the ceiling 10.043 and stays there, never reaching 14.78."""
+    engine, _, _ = _rule_engine(tmp_path, _Cycle(0.75))
+    rows = []
+    for _ in range(4):
+        events = _poll_cycle(engine, _NOTHING_NEW)
+        rows += [d["action"]["interval_s"] for d in _decisions(events, "state_poll_reschedule")]
+    assert rows == [3.695 * 2, 10.043, 10.043, 10.043]
+
+
+def test_rule_returns_to_i_min_when_a_reply_brings_something_new(tmp_path: Path):
+    """After the interval has doubled, a reply whose hi is past what h0 holds drops it
+    straight back to the floor -- not one factor down -- and records empty False."""
+    engine, _, _ = _rule_engine(tmp_path, _Cycle(0.75))
+    _poll_cycle(engine, _NOTHING_NEW)
+    events = _poll_cycle(engine, _SOMETHING_NEW)
+    [row] = _decisions(events, "state_poll_reschedule")
+    assert (row["action"]["interval_s"], row["action"]["empty"]) == (3.695, False)
+    assert row["action"]["applied_interval_s"] == 3.695 * _FACTOR
+    # The re-decision is logged once the reply has been read and before the fetches it
+    # sets off, so a log reader sees what the reply held ahead of what was done about it.
+    kinds = [e.get("kind", e["event"]) for e in events]
+    assert kinds.index("state_rx") < kinds.index("state_poll_reschedule") < kinds.index("fetch_plan")
+
+
+def test_rule_counts_sparse_held_seqs_as_held(tmp_path: Path):
+    """Emptiness asks for every seq up to the advertised hi, contiguous progress and
+    sparse seqs alike: with 1 and 2 held above a contiguous mark of 0, a reply
+    advertising hi 2 brings nothing new. The tracker is seeded directly here because
+    the store folds a gap-free run of sparse seqs into the contiguous mark itself, so
+    no sequence of replies can put a real engine in this state."""
+    engine, _, _ = _rule_engine(tmp_path, _Cycle(0.75))
+    engine._tracker.observe_held("origin-x", 0, (1, 2))
+    payload = holder_state.encode({"origin-x": OriginProgress(hi=2, extra=())})
+    [row] = _decisions(_poll_cycle(engine, payload), "state_poll_reschedule")
+    assert (row["action"]["interval_s"], row["action"]["empty"]) == (3.695 * 2, True)
+
+
+def test_rule_ignores_the_extra_seqs_a_reply_advertises(tmp_path: Path):
+    """Emptiness reads the reply's hi alone: a reply whose hi h0 already holds brings
+    nothing new even when its extra list advertises a seq h0 has never seen -- which
+    h0 does go and fetch, so the seq really was new to it."""
+    engine, transport, _ = _rule_engine(tmp_path, _Cycle(0.75))
+    payload = holder_state.encode({"h0": OriginProgress(hi=1, extra=(9,))})
+    [row] = _decisions(_poll_cycle(engine, payload), "state_poll_reschedule")
+    assert (row["action"]["interval_s"], row["action"]["empty"]) == (3.695 * 2, True)
+    assert names.build_record_name("g", "h1", "h0", 9) in [n for n, _ in transport.sent]
+
+
+def test_rule_treats_a_reply_with_no_origin_as_bringing_nothing_new(tmp_path: Path):
+    """A neighbor holding nothing at all answers with no origin in it; there is nothing
+    there h0 does not hold, so the interval backs off like any other empty answer."""
+    engine, _, _ = _rule_engine(tmp_path, _Cycle(0.75))
+    [row] = _decisions(_poll_cycle(engine, _EMPTY_STATE_PAYLOAD), "state_poll_reschedule")
+    assert (row["action"]["interval_s"], row["action"]["empty"]) == (3.695 * 2, True)
+
+
+def test_rule_keeps_the_interval_when_a_reply_cannot_be_decoded(tmp_path: Path):
+    """An undecodable reply resolves its poll as answered, as under a policy, but says
+    nothing about whether the neighbor has news: the interval -- 7.39 after one empty
+    answer -- stays there, and the row records empty as null rather than guessing it
+    either way. The re-decision still follows the state_rx that reports the failure."""
+    engine, _, _ = _rule_engine(tmp_path, _Cycle(0.75))
+    _poll_cycle(engine, _NOTHING_NEW)
+    events = _poll_cycle(engine, b"not json")
+    assert [e["event"] for e in events] == ["decision", "state_rx", "decision"]
+    [row] = _decisions(events, "state_poll_reschedule")
+    assert (row["action"]["trigger"], row["action"]["interval_s"]) == ("answered", 3.695 * 2)
+    assert row["action"]["empty"] is None
+
+
+@pytest.mark.parametrize("rule, interval", [(_T37_KEEP, 3.695 * 2), (_T37_RESET, 3.695)])
+def test_rule_on_timeout_keeps_or_returns_to_i_min(tmp_path: Path, rule: StatePollRule, interval: float):
+    """The interval is at 7.39 after one empty answer when the next poll goes
+    unanswered. "keep" leaves it there; "reset" drops it to the floor so the neighbor
+    is polled again soon. Nothing was read either way, so empty is null."""
+    engine, _, _ = _rule_engine(tmp_path, _Cycle(0.75), rule)
+    _poll_cycle(engine, _NOTHING_NEW)
+    sent_at = 3.695 * 2 * _FACTOR
+    _drive(engine, [("tick", sent_at)])
+    events = _drive(engine, [("tick", sent_at + 2.0)])
+    assert _decisions(events, "state_poll_reschedule") == [
+        {
+            "event": "decision",
+            "ts_ms": round((sent_at + 2.0) * 1000),
+            "kind": "state_poll_reschedule",
+            "state": {"last_poll_status": "timed_out", "consecutive_poll_timeouts": 1},
+            "action": {
+                "neighbor": "h1",
+                "poll_epoch_ms": round(sent_at * 1000),
+                "trigger": "timed_out",
+                "interval_s": interval,
+                "applied_interval_s": interval * _FACTOR,
+                "clamped": False,
+                "empty": None,
+            },
+            "action_prob": 1.0,
+        }
+    ]
+
+
+def test_rule_reuses_the_poll_s_own_draw_and_measures_from_its_send_time(tmp_path: Path):
+    """Each poll draws u once, at send, and its re-decision applies the new interval
+    with that same draw from that same send time. The poll at 0 draws 0.75 and is
+    answered a whole second later, so the next poll goes at 0 + 7.39 * 1.05 -- not from
+    the reply's time, and not with the 0.25 the second poll draws for itself."""
+    u = _Cycle(0.75, 0.25)
+    engine, transport, _ = _rule_engine(tmp_path, u)
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _NOTHING_NEW, 1.0, poll_epoch_ms=0)
+    engine.drain_events()
+    nxt = 3.695 * 2 * _FACTOR
+    _drive(engine, [("tick", nxt - 0.001)])
+    assert _poll_names(transport) == [_state_name(0)]
+    [poll] = _decisions(_drive(engine, [("tick", nxt)]), "state_poll")
+    assert _poll_names(transport)[-1] == _state_name(round(nxt * 1000))
+    assert poll["action"]["applied_interval_s"] == 3.695 * 2 * (1 + 0.1 * (2 * 0.25 - 1))
+    assert u.calls == 2
+
+
+def test_rule_clamps_a_next_time_already_past_to_now(tmp_path: Path):
+    """The reply to the poll at 0 arrives at 5.0 -- still the newest poll, so still
+    accepted -- and brings something new, so the next poll is due 3.695 * 1.05 after
+    that poll's send time, a time already gone. It is recorded as clamped and held at
+    now, and the tick at now polls."""
+    engine, transport, _ = _rule_engine(tmp_path, _Cycle(0.75))
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _SOMETHING_NEW, 5.0, poll_epoch_ms=0)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert (row["action"]["interval_s"], row["action"]["clamped"]) == (3.695, True)
+    assert engine._next_state_poll["h1"] == 5.0
+    _drive(engine, [("tick", 5.0)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(5000)]
+
+
+def test_rule_keeps_one_interval_per_neighbor(tmp_path: Path):
+    """h1 and h2 are both polled at 0. h1's answer brings nothing new and doubles h1's
+    interval; h2's brings something new and leaves h2 at the floor. Their next polls
+    then go at their own times: h2 alone at 3.695 * 1.05, and at 7.39 * 1.05 h1 on its
+    doubled interval together with h2 on its second floor-length one."""
+    engine, _, _ = _rule_engine(tmp_path, _Cycle(0.75), neighbors=("h1", "h2"))
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    engine.on_state("h2", _SOMETHING_NEW, 0.05, poll_epoch_ms=0)
+    rows = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert [(r["action"]["neighbor"], r["action"]["interval_s"]) for r in rows] == [("h1", 3.695 * 2), ("h2", 3.695)]
+    engine.on_tick(3.695 * _FACTOR)
+    polls = _decisions(engine.drain_events(), "state_poll")
+    assert [(p["action"]["neighbor"], p["action"]["interval_s"]) for p in polls] == [("h2", 3.695)]
+    engine.on_tick(3.695 * 2 * _FACTOR)
+    polls = _decisions(engine.drain_events(), "state_poll")
+    assert [(p["action"]["neighbor"], p["action"]["interval_s"]) for p in polls] == [("h1", 3.695 * 2), ("h2", 3.695)]
+
+
+def test_rule_leaves_the_interval_alone_for_a_late_reply_to_a_timed_out_poll(tmp_path: Path):
+    """The poll at 0 is resolved as timed out at 2.0, which under "keep" leaves the
+    interval at the floor. Its reply at 2.5 is accepted and counted as a late reply,
+    exactly as under a policy: it re-decides nothing, so the empty answer it carries
+    does not double the interval and the next poll still goes with 3.695. Under a rule
+    the late-reply event follows the state_rx, since the whole resolution waits for the
+    decode."""
+    engine, transport, _ = _rule_engine(tmp_path, _Cycle(0.75))
+    _drive(engine, [("tick", 0.0), ("tick", 2.0)])
+    engine.on_state("h1", _NOTHING_NEW, 2.5, poll_epoch_ms=0)
+    events = engine.drain_events()
+    assert _decisions(events, "state_poll_reschedule") == []
+    assert [e["event"] for e in events] == ["state_rx", "state_poll_late_reply"]
+    assert events[-1] == {"event": "state_poll_late_reply", "ts_ms": 2500, "neighbor": "h1", "poll_epoch_ms": 0}
+    nxt = 3.695 * _FACTOR
+    [poll] = _decisions(_drive(engine, [("tick", nxt)]), "state_poll")
+    assert _poll_names(transport) == [_state_name(0), _state_name(round(nxt * 1000))]
+    assert poll["action"]["interval_s"] == 3.695
+
+
+def test_rule_leaves_the_interval_alone_for_a_reply_to_a_poll_that_is_not_the_newest(tmp_path: Path):
+    """A 1 s floor, so two polls are outstanding inside one 2 s lifetime: the reply to
+    the poll at 0 arrives after the poll at 1.0 went out. It is accepted but re-decides
+    nothing -- the poll after it has already been sent -- so its empty answer does not
+    double the interval; the reply to the newest poll then does."""
+    engine, _, _ = _rule_engine(tmp_path, _Cycle(0.75), _FAST_KEEP)
+    _drive(engine, [("tick", 0.0), ("tick", 1.0)])
+    engine.on_state("h1", _NOTHING_NEW, 1.05, poll_epoch_ms=0)
+    events = engine.drain_events()
+    assert _decisions(events, "state_poll_reschedule") == []
+    assert [e for e in events if e["event"] == "state_poll_late_reply"] == []
+    engine.on_state("h1", _NOTHING_NEW, 1.1, poll_epoch_ms=1000)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert (row["action"]["poll_epoch_ms"], row["action"]["interval_s"]) == (1000, 2.0)
+
+
+@pytest.mark.parametrize("on_timeout", ["keep", "reset"])
+def test_a_flat_rule_polls_exactly_like_the_same_one_row_policy(tmp_path: Path, on_timeout: str):
+    """A rule whose interval can never move (factor 1, floor and ceiling both 3.695)
+    reaches for the same draw at the same points as the one-row table with that value:
+    over a FakeNetwork run with replies, a partition and a heal it sends the same
+    Interests at the same times -- whichever of the two things a timeout is meant to do
+    to an interval that has nowhere to go."""
+    from fakes import FakeNetwork
+
+    class _Tap:
+        """Record every Interest name an engine sends, then pass it on."""
+
+        def __init__(self, inner) -> None:
+            """Wrap `inner`, a FakeNetwork node transport."""
+            self.inner = inner
+            self.sent: list[str] = []
+
+        def register(self, prefix: str) -> None:
+            """Pass through."""
+            self.inner.register(prefix)
+
+        def send_interest(self, name: str, lifetime_ms: int) -> None:
+            """Record and pass through."""
+            self.sent.append(name)
+            self.inner.send_interest(name, lifetime_ms)
+
+    def _run(label: str, **policy) -> list[str]:
+        """Run h0 polling h1 for 40 s, h1 unreachable over [10, 20); return h0's sends."""
+        network = FakeNetwork()
+        tap = _Tap(network.transport_for("h0"))
+        h0 = SyncEngine(
+            SyncConfig(group="g", node="h0", neighbors=("h1",), **policy),
+            Store(tmp_path / f"{label}-h0.db"),
+            tap,
+            poll_choice_jitter_rng=_Cycle(0.1, 0.9, 0.35, 0.6),
+        )
+        h1 = SyncEngine(SyncConfig(group="g", node="h1", neighbors=()), Store(tmp_path / f"{label}-h1.db"), network.transport_for("h1"))
+        network.add_node("h0", h0)
+        network.add_node("h1", h1)
+        for i in range(800):
+            now = i * 0.05
+            if i == 200:
+                network.partition("h0", "h1")
+            if i == 400:
+                network.heal("h0", "h1")
+            network.pump(now)
+            h0.on_tick(now)
+            h0.drain_events()
+        return tap.sent
+
+    flat = StatePollRule(i_min_s=3.695, factor=1.0, i_max_s=3.695, jitter_frac=0.1, on_timeout=on_timeout)
+    sent_rule = _run(f"rule-{on_timeout}", state_poll_rule=flat)
+    sent_policy = _run(f"policy-{on_timeout}", state_poll_policy=StatePollPolicy(intervals_s=(3.695,), jitter_frac=(0.1,)))
+    assert sent_rule == sent_policy
+    assert len(sent_rule) > 40 / (3.695 * 1.1)

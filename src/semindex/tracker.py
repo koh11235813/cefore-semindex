@@ -164,6 +164,25 @@ class Tracker:
         state = self._origins.get(origin)
         return state.held_contiguous if state is not None else 0
 
+    def holds_through(self, origin: str, hi: int) -> bool:
+        """Whether this node holds every seq from 1 to `hi` of `origin` right now.
+
+        Contiguous progress and the sparse seqs above it both count: the question is
+        what is actually held, not how it was collected. An origin never heard of
+        holds nothing, so only an advertisement of 0 asks for nothing.
+
+        Counted rather than walked, for the reason missing_total's own 2026-10-23 note
+        gives: a neighbor advertising a hi in the tens of millions must not make this
+        single-threaded agent walk that span, and held_extra is sparse and small.
+        """
+        state = self._origins.get(origin)
+        if state is None:
+            return hi <= 0
+        if hi <= state.held_contiguous:
+            return True
+        held_extra_in_range = sum(1 for seq in state.held_extra if state.held_contiguous < seq <= hi)
+        return held_extra_in_range == hi - state.held_contiguous
+
     def missing(self, origin: str) -> list[int]:
         """Seqs this node knows exist (<= notified_max) but does not hold, lowest first.
 
