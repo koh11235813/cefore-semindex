@@ -4,7 +4,9 @@ Why: spec.md's reading of inference 2 for T37r came out "supported" with 4 of 6 
 has a lower bound of +0.0003 %. A verdict that thin can be made or unmade by things spec.md did not fix: which
 resamples the bootstrap happened to draw, how the percentile is interpolated, and where the early-record cut
 is put. Review showed all three move it. This script measures how much, with scoring, frontier and bootstrap
-written here independently of onoff.py (only its generators, its engine and its rule table are imported):
+written here independently of onoff.py. Imported from it: the generators, the engine, the rule table and the
+shared constants (cells, seeds, replicates, bootstrap size and seed), so a wrong constant there would be
+repeated here, not caught:
 
 - per outage cell and workload: the headline gain of T37 and T37r, their paired difference, and how many of
   the 2000 resamples put the difference at or below zero (the count behind the lower bound);
@@ -83,6 +85,7 @@ def job(arg):
                 run["rule"] = None
             else:
                 run["policy"] = run["choices"] = None
+                # kind "arm": one of the three added fixed arms, run as the rule with m = 1 (../14/workload.py)
                 run["rule"] = spec if kind == "rule" else dict(i_min=spec, m=1.0, i_max=spec, jf=O.T.JF)
             acc = {c: np.zeros(4) for c in CUTS_MS}
             for rep in range(O.REPS):
@@ -151,7 +154,7 @@ def main():
                 pr = pub[(wl, donor, p, "T37r")]["diff"] if cut == CUTS_MS[0] else ""
                 c = [100 * vals(mats[m])[2] for m in ("T37", "T37r", "fix10.043")]
                 L.append(f"| {wl} | {donor[:2]} p{p} | {c[0]:.1f} / {c[1]:.1f} / {c[2]:.1f} % | {100 * g0:+.1f} | {100 * g1:+.1f} | "
-                         f"{100 * l1:+.1f} .. {100 * h1:+.1f} | {100 * (g1 - g0):+.1f} | {100 * lo:+.2f} .. {100 * hi:+.2f} | "
+                         f"{100 * l1:+.1f} .. {100 * h1:+.1f} | {100 * (g1 - g0):+.1f} | {100 * lo:+.4f} .. {100 * hi:+.4f} | "
                          f"{sum(x <= 0 for x in bd)}/{len(bd)} | " + (f"{100 * float(pr):+.1f}" if pr else "-") + " |")
         # seed sensitivity: the verdict under 25 other resample draws
         for bs in range(25):
