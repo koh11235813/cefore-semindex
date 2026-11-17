@@ -633,8 +633,8 @@ class SyncEngine:
             "clamped": due_at < now,
         }
         if rule is not None:
-            # 2026-11-18: what the reply held is the only thing that moves
-            # a rule's interval, so a row without it cannot be read back. Added under a
+            # 2026-11-18: on an answer, what the reply held is what moves a rule's
+            # interval, so a row without it cannot be read back. Added under a
             # rule alone: a policy's rows are compared whole by tests that pin the
             # shape its analysis already expects.
             action["empty"] = empty
