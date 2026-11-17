@@ -30,7 +30,7 @@ blocked-by: []
 - `src/semindex/engine.py`: 決まりの型、隣ごとの今の間隔、送るときと決め直すときの枝。**答えの中身を読む前に決め直しが走っている**（`on_state` の中の順）ので、空かどうかを渡せるよう順を入れ替えるか、読んだ中身を渡す。ここが一番気をつける所で、今ある二つの方針（`s6short`、`s6wait`）の動きを変えてはいけない。60〜90 行。
 - `src/semindex/agent.py`（設定の検査）、`gen.py`、`evalgen.py`、`evalrun.py`（`--poll-rule` と `meta.json`）: 合わせて 180 行ほど。
 - `src/semindex/evalagg.py`: `meta.json` の新しい鍵を `runs.csv` に出す。`state_poll_reschedule` の間隔が「表と理由から決まる」という前提が崩れるので、間隔の列を出す。
-- 判断のログ: `state_poll` と `state_poll_reschedule` に、空だったかどうかと今の間隔を足す。**足すのは新しい決まりが有効なときだけ**（今ある方針のログの形は変えない。今ある試験は判断の辞書を丸ごと比べているため）。
+- 判断のログ: `state_poll` と `state_poll_reschedule` に、空だったかどうかと今の間隔を足す。（2026-11-18 実装での形: 足した欄は `state_poll_reschedule` の `empty` 1 つ。今の間隔は、どちらの行でも、もとからある `interval_s` に入る。送る時点には答えが無いので、`state_poll` に空かどうかは付けない。）**足すのは新しい決まりが有効なときだけ**（今ある方針のログの形は変えない。今ある試験は判断の辞書を丸ごと比べているため）。
 - 試験: `tests/test_engine.py` の方針の塊（判断の辞書を丸ごと比べる形）に並べて書く。今ある方針の試験が 1 つも変わらないことが、動きを変えていない証拠になる。`tests/test_agent.py`・`test_gen.py`・`test_evalgen.py`・`test_evalrun.py`・`test_evalagg.py` に設定の通り道の試験。
 - `docs/adr/0004`: 決め直しの仕組みに、隣ごとの間隔を持つ決まりが加わることを追記する。
 
