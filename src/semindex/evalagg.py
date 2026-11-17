@@ -73,8 +73,9 @@ plotting tool can read a table directly, no reshaping:
   from that neighbor), `reschedule_answered`/`reschedule_timed_out` (the
   `state_poll_reschedule` lines by `trigger`) and `reschedule_clamped`
   (those with `clamped` true), and `late_replies`
-  (`state_poll_late_reply` events). The last four stay 0 for a run without
-  a state_poll_policy, whose agents never log them. Same inclusive window
+  (`state_poll_late_reply` events). The last four stay 0 for a run with
+  neither a state_poll_policy nor a state_poll_rule, whose agents never log
+  them. Same inclusive window
   cut on each line's ts_ms as decisions.csv (see `_poll_rows`).
 
 t0 (map.md "計測の窓"): every agent's own `elapsed_s` is `now -
@@ -365,6 +366,27 @@ def read_meta_disconnect_duration(run_dir: str) -> list[float] | None:
     ):
         return value
     return None
+
+
+def read_meta_state_poll_rule(run_dir: str) -> dict | None:
+    """This run's per-neighbor state-poll rule from `<run_dir>/meta.json`, or None.
+
+    2026-11-18 (`docs/wayfinder/semindex-stage2/tickets/05-timeout-reset-rule.md`):
+    semindex.evalrun records `state_poll_rule` from then on, null for a run
+    that set none. None means no rule both then and for every run recorded
+    before the key existed (no key: those runs could only have used the table,
+    the choices or the default poll scheduling), for a value that is not an
+    object, and when meta.json is unreadable. A reader of its own, not a
+    seventh element of `read_meta_generation`, so that tuple's callers stay as
+    they are.
+    """
+    try:
+        with open(os.path.join(run_dir, "meta.json"), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = data.get("state_poll_rule") if isinstance(data, dict) else None
+    return value if isinstance(value, dict) else None
 
 
 # -- t0 derivation ---------------------------------------------------------
@@ -678,6 +700,7 @@ class RunAnalysis:
     store_synchronous: str | None = None
     state_poll_policy: dict | None = None
     disconnect_duration_s: list[float] | None = None  # see `read_meta_disconnect_duration`
+    state_poll_rule: dict | None = None  # see `read_meta_state_poll_rule`
 
 
 def _split_lives(events: list[dict]) -> list[list[dict]]:
@@ -993,7 +1016,7 @@ def _poll_rows(nodes: dict[str, list[dict]], window_start_ms: float, window_end_
     2026-11-03: no agent counter records how many state polls were sent (the
     counters hold bytes only), so `polls_sent` counts `state_poll` decision
     lines: the engine logs exactly one per Interest sent, which is why a
-    re-decision under a state_poll_policy is logged as its own kind,
+    re-decision under a state_poll_policy or a state_poll_rule is logged as its own kind,
     `state_poll_reschedule`, never as another `state_poll`. The window cut is
     decisions.csv's, applied to each line's own ts_ms with both edges
     inclusive, not control bytes' life-aware snapshot difference: these are
@@ -1061,6 +1084,7 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
         analysis.state_poll_policy,
     ) = read_meta_generation(run_dir)
     analysis.disconnect_duration_s = read_meta_disconnect_duration(run_dir)
+    analysis.state_poll_rule = read_meta_state_poll_rule(run_dir)
     return analysis
 
 
@@ -1220,7 +1244,12 @@ def _analyze_run_metrics(p: float, seed: int, run_dir: str, status: str, flags: 
                         event["ts_ms"] / 1000.0 - last_timeout_s if last_timeout_s is not None else None
                     ),
                     "wait_s": action.get("wait_s") if kind == "fetch_backoff" else None,
-                    "interval_s": action.get("interval_s") if kind == "state_poll" else None,
+                    # Both kinds carry it: under a state_poll_rule the re-decided
+                    # interval is per-neighbor state, so dropping it would lose
+                    # the only record of what the rule actually chose.
+                    "interval_s": (
+                        action.get("interval_s") if kind in ("state_poll", "state_poll_reschedule") else None
+                    ),
                     "fetched_count": len(action["fetched"]) if kind == "fetch_plan" and "fetched" in action else None,
                     # 2026-10-26 (stage-2 map "判断の記録の欄"): a stage-2 agent's
                     # state_poll state carries the previous poll's reply status;
@@ -1318,6 +1347,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                     "store_synchronous": run.store_synchronous,
                     "state_poll_policy": _policy_cell(run.state_poll_policy),
                     "disconnect_duration_s": _choices_cell(run.disconnect_duration_s),
+                    "state_poll_rule": _policy_cell(run.state_poll_rule),
                 }
             )
             continue
@@ -1376,6 +1406,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "store_synchronous": run.store_synchronous,
                 "state_poll_policy": _policy_cell(run.state_poll_policy),
                 "disconnect_duration_s": _choices_cell(run.disconnect_duration_s),
+                "state_poll_rule": _policy_cell(run.state_poll_rule),
             }
         )
     return rows
@@ -1388,7 +1419,8 @@ def _choices_cell(choices: list[float] | None) -> str | None:
 
 
 def _policy_cell(policy: dict | None) -> str | None:
-    """The state-poll policy as one compact, key-sorted JSON object cell (e.g.
+    """The state-poll policy table, or the per-neighbor rule, as one compact,
+    key-sorted JSON object cell (e.g.
     '{"intervals_s":[10.043,3.695],"jitter_frac":[0.1,0.1]}'), or None (empty)."""
     return None if policy is None else json.dumps(policy, sort_keys=True, separators=(",", ":"))
 
@@ -1436,6 +1468,10 @@ RUNS_FIELDS = [
     # JSON list, "[8.0,12.0]" (the choices cell's format); empty for the 5 s
     # slot model, recorded (null) or not.
     "disconnect_duration_s",
+    # 2026-11-18: last, by the same rule. The per-neighbor rule as compact,
+    # key-sorted JSON (the policy cell's format); empty when not set or not
+    # recorded.
+    "state_poll_rule",
 ]
 
 
@@ -1784,14 +1820,17 @@ _STATE_NUMERIC_FIELDS = (
 )
 
 # Which action field each kind's own `action` shape carries (map.md
-# "action は種類ごとに違う"): state_poll -> interval_s, fetch_plan ->
-# how many records that tick's fetch sent (len(fetched)), fetch_backoff
-# -> wait_s. A kind not in this map reports no action-field row at all:
-# since 2026-11-03 that is state_poll_reschedule (logged only under a
-# state_poll_policy), whose re-decided interval follows from its table and
-# trigger, both already known per stage.
+# "action は種類ごとに違う"): state_poll and state_poll_reschedule ->
+# interval_s, fetch_plan -> how many records that tick's fetch sent
+# (len(fetched)), fetch_backoff -> wait_s. A kind not in this map reports no
+# action-field row at all. 2026-11-18: state_poll_reschedule is in the map.
+# Under a state_poll_policy its re-decided interval followed from that table
+# and the trigger, both already known per stage, so it used to report none;
+# under a state_poll_rule the interval is the neighbor's own running value,
+# which no table gives.
 _ACTION_FIELD_BY_KIND = {
     "state_poll": "interval_s",
+    "state_poll_reschedule": "interval_s",
     "fetch_plan": "fetched_count",
     "fetch_backoff": "wait_s",
 }
