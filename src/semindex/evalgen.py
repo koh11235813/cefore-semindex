@@ -257,21 +257,39 @@ def resolve_store_synchronous(store_synchronous: str | None) -> str:
     return DEFAULT_STORE_SYNCHRONOUS if store_synchronous is None else store_synchronous
 
 
-def parse_poll_policy_arg(text: str | None) -> dict | None:
-    """Parse the `--poll-policy` CLI string as JSON, or None when the flag was not given.
+def _parse_json_arg(text: str | None, flag: str) -> dict | None:
+    """Parse one JSON-object CLI argument, or None when the flag was not given.
 
-    Only the JSON itself is checked here; its shape (an object with intervals_s
-    and jitter_frac, the agent's rules) is gen.parse_state_poll_policy's to
-    check, reached through validate_settings. Public so every CLI that takes the
-    flag parses it the same way. A fixed message rather than the decoder's:
-    the decoder's wording and offsets are not this module's to promise.
+    A fixed message naming the flag rather than the decoder's: the decoder's
+    wording and offsets are not this module's to promise.
     """
     if text is None:
         return None
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        raise gen.ExperimentError("--poll-policy must be valid JSON") from None
+        raise gen.ExperimentError(f"{flag} must be valid JSON") from None
+
+
+def parse_poll_policy_arg(text: str | None) -> dict | None:
+    """Parse the `--poll-policy` CLI string as JSON, or None when the flag was not given.
+
+    Only the JSON itself is checked here; its shape (an object with intervals_s
+    and jitter_frac, the agent's rules) is gen.parse_state_poll_policy's to
+    check, reached through validate_settings. Public so every CLI that takes the
+    flag parses it the same way.
+    """
+    return _parse_json_arg(text, "--poll-policy")
+
+
+def parse_poll_rule_arg(text: str | None) -> dict | None:
+    """Parse the `--poll-rule` CLI string as JSON, or None when the flag was not given.
+
+    The same split as the policy's: only the JSON itself here, the shape (an
+    object with i_min_s, factor, i_max_s, jitter_frac and on_timeout) left to
+    gen.parse_state_poll_rule, reached through validate_settings.
+    """
+    return _parse_json_arg(text, "--poll-rule")
 
 
 def parse_disconnect_duration_arg(values: list[float] | None) -> tuple[float, float] | None:
@@ -287,13 +305,16 @@ def validate_settings(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    state_poll_rule: dict | None = None,
 ) -> None:
     """Reject a records-per-generation count that is not an integer >= 1, or interval
-    choices / a choice jitter / a poll policy table / a per-neighbor in-flight cap /
+    choices / a choice jitter / a poll policy table / a per-neighbor poll rule /
+    a per-neighbor in-flight cap /
     a store synchronous mode semindex.gen would refuse (see
     gen.parse_state_poll_interval_choices_s, gen.parse_state_poll_choice_jitter_frac,
-    gen.parse_state_poll_policy, gen.parse_max_in_flight_per_neighbor and
-    gen.parse_store_synchronous), a poll policy given together with choices or j
+    gen.parse_state_poll_policy, gen.parse_state_poll_rule,
+    gen.parse_max_in_flight_per_neighbor and
+    gen.parse_store_synchronous), a poll policy or rule given together with choices or j
     included.
 
     Public so a sweep can refuse bad settings once, up front, instead of failing
@@ -305,6 +326,14 @@ def validate_settings(
     # policy with j but no choices reports the combination, not "requires choices".
     gen.parse_state_poll_policy(
         state_poll_policy,
+        have_choices=state_poll_interval_choices_s is not None,
+        have_choice_jitter=state_poll_choice_jitter_frac is not None,
+    )
+    # 2026-11-18: after the policy, before the choices keys, gen.parse_experiment's
+    # order, so a rule beside either reports the combination under the rule's name.
+    gen.parse_state_poll_rule(
+        state_poll_rule,
+        have_policy=state_poll_policy is not None,
         have_choices=state_poll_interval_choices_s is not None,
         have_choice_jitter=state_poll_choice_jitter_frac is not None,
     )
@@ -573,6 +602,7 @@ def build_experiment(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    state_poll_rule: dict | None = None,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> dict:
     """Build the one `semindex.gen` experiment description this (p, seed, stage) run needs.
@@ -601,6 +631,10 @@ def build_experiment(
     the failure-reactive poll table {"intervals_s": [...], "jitter_frac": [...]},
     is passed through as given, with the run seed, to every agent config; it
     cannot be combined with choices or j, and None writes nothing.
+    `state_poll_rule` (2026-11-18), the per-neighbor interval rule
+    {"i_min_s": ..., "factor": ..., "i_max_s": ..., "jitter_frac": ...,
+    "on_timeout": ...}, is passed through the same way and cannot be combined
+    with the policy, choices or j.
     `disconnect_duration_s` (2026-11-11), a down-period range (LO, HI) in
     seconds, switches the disconnect schedule from the 5 s slot model to the
     outage shape (see `_outage_link_events`), where p is the down-time
@@ -623,6 +657,7 @@ def build_experiment(
         max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
+        state_poll_rule=state_poll_rule,
     )
     name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
     schedule = {str(host): _record_schedule(host, seed, k) for host in RECORD_ORIGIN_HOSTS}
@@ -671,6 +706,10 @@ def build_experiment(
     # the key, so stages A/B/C re-collected on this code generate main's bytes.
     if state_poll_policy is not None:
         raw["state_poll_policy"] = state_poll_policy
+    # Same reasoning (2026-11-18): absent, the files stay what they were before
+    # the key, so every earlier stage re-collected on this code generates its bytes.
+    if state_poll_rule is not None:
+        raw["state_poll_rule"] = state_poll_rule
     return raw
 
 
@@ -686,6 +725,7 @@ def generate_run(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    state_poll_rule: dict | None = None,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[str]:
     """Build and write one run's experiment description, ReCefore YAML and agent configs.
@@ -709,8 +749,9 @@ def generate_run(
     disk, or outside it.
 
     `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac`,
-    `max_in_flight_per_neighbor`, `store_synchronous`, `state_poll_policy` and
-    `disconnect_duration_s` are passed straight to `build_experiment`.
+    `max_in_flight_per_neighbor`, `store_synchronous`, `state_poll_policy`,
+    `state_poll_rule` and `disconnect_duration_s` are passed straight to
+    `build_experiment`.
 
     Returns every path written, experiment description first.
     """
@@ -725,6 +766,7 @@ def generate_run(
         max_in_flight_per_neighbor=max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
+        state_poll_rule=state_poll_rule,
         disconnect_duration_s=disconnect_duration_s,
     )
     gen.parse_experiment(raw)  # raises gen.ExperimentError before any filesystem write
@@ -792,6 +834,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "not with --interval-choices/--choice-jitter",
     )
     parser.add_argument(
+        "--poll-rule",
+        default=None,
+        dest="poll_rule",
+        help='per-neighbor state-poll rule as JSON, e.g. \'{"i_min_s": 3.695, "factor": 2, "i_max_s": 10.043, '
+        '"jitter_frac": 0.1, "on_timeout": "reset"}\'; not with --poll-policy/--interval-choices/--choice-jitter',
+    )
+    parser.add_argument(
         "--disconnect-duration-s",
         type=float,
         nargs=2,
@@ -819,6 +868,7 @@ def main(argv: list[str] | None = None) -> int:
             max_in_flight_per_neighbor=args.max_in_flight,
             store_synchronous=args.store_synchronous,
             state_poll_policy=parse_poll_policy_arg(args.poll_policy),
+            state_poll_rule=parse_poll_rule_arg(args.poll_rule),
             disconnect_duration_s=parse_disconnect_duration_arg(args.disconnect_duration_s),
         )
     except gen.ExperimentError as exc:

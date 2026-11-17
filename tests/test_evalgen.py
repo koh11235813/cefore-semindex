@@ -1236,3 +1236,120 @@ def test_outage_event_times_survive_recefores_own_yaml_loader(tmp_path: Path):
     assert loaded["errors"] == []
     assert any(e["at"] != round(e["at"]) for e in raw["events"])
     assert loaded["at"][1:] == [repr(e["at"]) for e in raw["events"]]  # [0] is gen's seed put
+
+
+# -- per-neighbor poll rule (agent key state_poll_rule, 2026-11-18) ---------
+
+_T37 = {"i_min_s": 3.695, "factor": 2.0, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "keep"}
+_T37R = {**_T37, "on_timeout": "reset"}
+
+
+@pytest.mark.parametrize("p", sorted(_STAGE1_DIGESTS))
+def test_an_explicit_none_poll_rule_still_reproduces_stage_1(p: float):
+    """Passing None is the same as not passing it: stage 1's files, byte for byte."""
+    raw = evalgen.build_experiment(p, 7, "s1", "/out", state_poll_rule=None)
+    assert "state_poll_rule" not in raw
+    assert _normalized_digest(raw) == _STAGE1_DIGESTS[p]
+
+
+@pytest.mark.parametrize("rule", [_T37, _T37R])
+def test_a_given_poll_rule_reaches_every_agent_config_with_the_run_seed(rule):
+    """A given rule is written, as given, into the experiment and, with the run seed,
+    every agent config; no table, choices or j are written beside it."""
+    raw = evalgen.build_experiment(0.4, 7, "s7t37", "/out", state_poll_rule=rule)
+    assert raw["state_poll_rule"] == rule
+    assert "state_poll_policy" not in raw
+    assert "state_poll_interval_choices_s" not in raw
+    assert "state_poll_choice_jitter_frac" not in raw
+    configs = gen.generate(parse_experiment(raw), "/cfg").agent_configs
+    assert sorted(configs) == ["h0", "h1", "h2", "h3", "h4"]
+    for config in configs.values():
+        assert config["seed"] == 7
+        assert config["state_poll_rule"] == rule
+
+
+@pytest.mark.parametrize(
+    ("policy", "choices", "j", "message"),
+    [
+        (_SHORTEN, None, None, "state_poll_rule cannot be combined with state_poll_policy"),
+        (None, [0.5], None, "state_poll_rule cannot be combined with state_poll_interval_choices_s"),
+        (None, [0.5], 0.1, "state_poll_rule cannot be combined with state_poll_interval_choices_s"),
+        (None, None, 0.1, "state_poll_rule cannot be combined with state_poll_choice_jitter_frac"),
+    ],
+)
+def test_validate_settings_rejects_a_poll_rule_with_the_table_choices_or_j(policy, choices, j, message):
+    """The up-front sweep check refuses the combination, with the exact diagnostic."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(1, choices, j, state_poll_policy=policy, state_poll_rule=_T37R)
+    assert str(excinfo.value) == message
+
+
+def test_a_bad_poll_rule_is_rejected_before_anything_is_written(tmp_path: Path):
+    """A rule semindex.gen would refuse fails generation before any file is written."""
+    outdir = tmp_path / "run"
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.generate_run(0.4, 7, "s7t37", str(outdir), state_poll_rule={**_T37R, "factor": 0.5})
+    assert str(excinfo.value) == "state_poll_rule.factor must be a finite number >= 1"
+    assert not outdir.exists()
+
+
+def test_parse_poll_rule_arg_reads_a_json_object_and_refuses_invalid_json():
+    """The CLI string is parsed as JSON as is (its shape is semindex.gen's to check)."""
+    assert evalgen.parse_poll_rule_arg(json.dumps(_T37R)) == _T37R
+    assert evalgen.parse_poll_rule_arg(None) is None
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.parse_poll_rule_arg("{i_min_s: 1}")
+    assert str(excinfo.value) == "--poll-rule must be valid JSON"
+
+
+def test_cli_poll_rule_reaches_the_written_agent_configs(tmp_path: Path):
+    """--poll-rule goes through the CLI into the experiment JSON and every agent config,
+    and each written config loads as an agent config carrying that rule."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0", "--seed", "1", "--stage", "s7t37r", "--out", str(outdir), "--poll-rule", json.dumps(_T37R)]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s7t37r_p000_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert raw["state_poll_rule"] == _T37R
+    for host in evalgen.AGENTS:
+        path = outdir / "s7t37r_p000_seed1" / f"h{host}.json"
+        assert json.loads(path.read_text(encoding="utf-8"))["state_poll_rule"] == _T37R
+        rule = load_config(str(path), t0_ms=0).sync_overrides["state_poll_rule"]
+        assert (rule.i_min_s, rule.factor, rule.i_max_s, rule.jitter_frac, rule.on_timeout) == (
+            3.695,
+            2.0,
+            10.043,
+            0.1,
+            "reset",
+        )
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--poll-policy", json.dumps(_SHORTEN)], "state_poll_rule cannot be combined with state_poll_policy"),
+        (["--interval-choices", "0.5"], "state_poll_rule cannot be combined with state_poll_interval_choices_s"),
+        (["--choice-jitter", "0.1"], "state_poll_rule cannot be combined with state_poll_choice_jitter_frac"),
+    ],
+)
+def test_cli_rejects_a_poll_rule_with_the_table_choices_or_j(tmp_path: Path, capsys, extra, message):
+    """--poll-rule with --poll-policy, --interval-choices or --choice-jitter exits 1 with
+    the exact diagnostic, before anything is written."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0", "--seed", "1", "--stage", "s7t37r", "--out", str(outdir), "--poll-rule", json.dumps(_T37R)]
+        + extra
+    )
+    assert rc == 1
+    assert capsys.readouterr().err == f"semindex.evalgen: {message}\n"
+    assert not outdir.exists()
+
+
+def test_cli_rejects_a_poll_rule_that_is_not_json(tmp_path: Path, capsys):
+    """A --poll-rule string that is not JSON exits 1 with the exact diagnostic."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(["--p", "0", "--seed", "1", "--stage", "s7t37r", "--out", str(outdir), "--poll-rule", "{3,"])
+    assert rc == 1
+    assert capsys.readouterr().err == "semindex.evalgen: --poll-rule must be valid JSON\n"
+    assert not outdir.exists()

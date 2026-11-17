@@ -679,3 +679,118 @@ def test_parse_experiment_rejects_a_state_poll_policy_with_the_choices_keys(extr
     with pytest.raises(ExperimentError) as exc_info:
         parse_experiment(_minimal_raw(state_poll_policy=_POLICY, **extra))
     assert str(exc_info.value) == message
+
+
+# -- state_poll_rule (agent key, 2026-11-18) --------------------------------
+
+_RULE = {"i_min_s": 3.695, "factor": 2.0, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+
+
+def test_a_state_poll_rule_reaches_every_agent_config_with_the_seed():
+    """Given a rule, every agent config carries it and the run seed (its jitter rng needs both)."""
+    configs = generate(parse_experiment(_minimal_raw(seed=9, state_poll_rule=_RULE)), "/cfg").agent_configs
+    assert sorted(configs) == ["h0", "h1"]
+    for config in configs.values():
+        assert config["seed"] == 9
+        assert config["state_poll_rule"] == _RULE
+
+
+def test_no_state_poll_rule_writes_neither_it_nor_the_seed():
+    """Absent, neither key is written, so an existing experiment's agent configs stay byte for byte."""
+    for config in generate(parse_experiment(_minimal_raw()), "/cfg").agent_configs.values():
+        assert "state_poll_rule" not in config
+        assert "seed" not in config
+
+
+def test_a_written_state_poll_rule_passes_the_agents_own_validation(tmp_path: Path):
+    """The written agent config loads, so gen's rules are no looser than the agent's."""
+    experiment = tmp_path / "exp.json"
+    experiment.write_text(json.dumps(_minimal_raw(state_poll_rule=_RULE)), encoding="utf-8")
+    write_experiment(str(experiment), str(tmp_path / "out"))
+    config = load_config(str(tmp_path / "out" / "mini" / "h0.json"))
+    rule = config.sync_overrides["state_poll_rule"]
+    assert (rule.i_min_s, rule.factor, rule.i_max_s, rule.on_timeout) == (3.695, 2.0, 10.043, "reset")
+
+
+@pytest.mark.parametrize(
+    ("rule", "message"),
+    [
+        ([3.695], "state_poll_rule must be an object with keys i_min_s, factor, i_max_s, jitter_frac and on_timeout"),
+        (
+            {k: v for k, v in _RULE.items() if k != "on_timeout"},
+            "state_poll_rule must be an object with keys i_min_s, factor, i_max_s, jitter_frac and on_timeout",
+        ),
+        (
+            {**_RULE, "x": 1},
+            "state_poll_rule must be an object with keys i_min_s, factor, i_max_s, jitter_frac and on_timeout",
+        ),
+        ({**_RULE, "i_min_s": "3.695"}, "state_poll_rule.i_min_s must be a number"),
+        ({**_RULE, "i_min_s": True}, "state_poll_rule.i_min_s must be a number"),
+        ({**_RULE, "i_min_s": 0.0}, "state_poll_rule.i_min_s must be a finite number > 0"),
+        ({**_RULE, "i_min_s": -1.0}, "state_poll_rule.i_min_s must be a finite number > 0"),
+        ({**_RULE, "i_min_s": float("nan")}, "state_poll_rule.i_min_s must be a finite number > 0"),
+        ({**_RULE, "i_min_s": float("inf")}, "state_poll_rule.i_min_s must be a finite number > 0"),
+        ({**_RULE, "factor": None}, "state_poll_rule.factor must be a number"),
+        ({**_RULE, "factor": 0.5}, "state_poll_rule.factor must be a finite number >= 1"),
+        ({**_RULE, "factor": 0.0}, "state_poll_rule.factor must be a finite number >= 1"),
+        ({**_RULE, "factor": float("nan")}, "state_poll_rule.factor must be a finite number >= 1"),
+        ({**_RULE, "factor": float("inf")}, "state_poll_rule.factor must be a finite number >= 1"),
+        ({**_RULE, "i_max_s": "10"}, "state_poll_rule.i_max_s must be a number"),
+        (
+            {**_RULE, "i_max_s": 3.0},
+            "state_poll_rule.i_max_s must be a finite number >= state_poll_rule.i_min_s",
+        ),
+        (
+            {**_RULE, "i_max_s": float("inf")},
+            "state_poll_rule.i_max_s must be a finite number >= state_poll_rule.i_min_s",
+        ),
+        (
+            {**_RULE, "i_max_s": float("nan")},
+            "state_poll_rule.i_max_s must be a finite number >= state_poll_rule.i_min_s",
+        ),
+        ({**_RULE, "jitter_frac": None}, "state_poll_rule.jitter_frac must be a number"),
+        ({**_RULE, "jitter_frac": 1.0}, "state_poll_rule.jitter_frac must be a finite number in [0, 1)"),
+        ({**_RULE, "jitter_frac": -0.1}, "state_poll_rule.jitter_frac must be a finite number in [0, 1)"),
+        ({**_RULE, "jitter_frac": float("nan")}, "state_poll_rule.jitter_frac must be a finite number in [0, 1)"),
+        ({**_RULE, "on_timeout": "grow"}, 'state_poll_rule.on_timeout must be "keep" or "reset"'),
+        ({**_RULE, "on_timeout": None}, 'state_poll_rule.on_timeout must be "keep" or "reset"'),
+    ],
+)
+def test_parse_experiment_rejects_a_bad_state_poll_rule(rule, message):
+    """Each of the agent's rules is refused at generation, with the exact diagnostic."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(state_poll_rule=rule))
+    assert str(exc_info.value) == message
+
+
+def test_parse_experiment_accepts_the_rules_edges_as_ints():
+    """factor 1, i_max_s equal to i_min_s, j = 0 and "keep" are the edges the agent accepts,
+    and whole numbers given as ints come back as floats."""
+    rule = {"i_min_s": 4, "factor": 1, "i_max_s": 4, "jitter_frac": 0, "on_timeout": "keep"}
+    spec = parse_experiment(_minimal_raw(state_poll_rule=rule))
+    assert spec.state_poll_rule == {
+        "i_min_s": 4.0,
+        "factor": 1.0,
+        "i_max_s": 4.0,
+        "jitter_frac": 0.0,
+        "on_timeout": "keep",
+    }
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"state_poll_policy": _POLICY}, "state_poll_rule cannot be combined with state_poll_policy"),
+        (
+            {"state_poll_interval_choices_s": [1.0]},
+            "state_poll_rule cannot be combined with state_poll_interval_choices_s",
+        ),
+        # Not "requires state_poll_interval_choices_s": the rule is checked first, as in the agent.
+        ({"state_poll_choice_jitter_frac": 0.1}, "state_poll_rule cannot be combined with state_poll_choice_jitter_frac"),
+    ],
+)
+def test_parse_experiment_rejects_a_state_poll_rule_with_the_table_or_the_choices_keys(extra, message):
+    """The rule ignores the table and the choices, so combining them is refused."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(state_poll_rule=_RULE, **extra))
+    assert str(exc_info.value) == message

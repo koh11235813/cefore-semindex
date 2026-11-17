@@ -1079,6 +1079,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "max_in_flight_per_neighbor",
         "store_synchronous",
         "state_poll_policy",
+        "state_poll_rule",
         "disconnect_duration_s",
         "semindex_git_commit",
         "semindex_git_dirty",
@@ -1099,6 +1100,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
     assert meta["max_in_flight_per_neighbor"] is None
     assert meta["store_synchronous"] == "NORMAL"  # not set: the agents' default, made explicit
     assert meta["state_poll_policy"] is None  # not set: recorded as given, like the in-flight cap
+    assert meta["state_poll_rule"] is None  # not set: recorded as given, like the table
     assert meta["disconnect_duration_s"] is None  # not set: the 5 s slot model
     assert meta["recefore_exit_code"] == 0
     assert meta["validity"]["valid"] is True
@@ -1711,3 +1713,102 @@ def test_store_files_are_closed_to_0644_as_soon_as_they_are_written(tmp_path):
         os.umask(old)
     modes = {name: os.stat(tmp_path / name).st_mode & 0o777 for name in ("copied.json", "meta.json", "DONE")}
     assert modes == {"copied.json": 0o644, "meta.json": 0o644, "DONE": 0o644}
+
+
+_T37R = {"i_min_s": 3.695, "factor": 2.0, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+
+
+def test_run_one_generates_with_and_records_a_poll_rule(tmp_path: Path, monkeypatch):
+    """A poll rule reaches the generated run (stored experiment and agent configs, with
+    the seed) and meta.json as given; the table, choices and j stay null beside it."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.4,
+        3,
+        "s7t37r",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        k=4,
+        state_poll_rule=_T37R,
+    )
+
+    run_dir = store / "s7t37r" / "p0.4" / "3"
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["state_poll_rule"] == _T37R
+    assert meta["state_poll_policy"] is None
+    assert meta["state_poll_interval_choices_s"] is None
+    assert meta["state_poll_choice_jitter_frac"] is None
+    assert meta["validity"]["valid"] is True
+    experiment = json.loads((run_dir / "s7t37r_p040_seed3.experiment.json").read_text(encoding="utf-8"))
+    assert experiment["state_poll_rule"] == _T37R
+    h0 = json.loads((run_dir / "s7t37r_p040_seed3" / "h0.json").read_text(encoding="utf-8"))
+    assert h0["state_poll_rule"] == _T37R
+    assert h0["seed"] == 3
+
+
+def test_main_passes_a_poll_rule_to_run_all_and_none_when_not_given(tmp_path: Path, monkeypatch):
+    """--poll-rule reaches run_all parsed from its JSON; without it, None."""
+    seen: dict = {}
+    monkeypatch.setattr(evalrun, "run_all", lambda *a, **kw: seen.update(kw) or [])
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    base = ["--stage", "s7t37r", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+            str(tmp_path / "recefore"), "--staging", str(staging_parent)]
+    assert evalrun.main(base + ["--poll-rule", json.dumps(_T37R)]) == 0
+    assert seen["state_poll_rule"] == _T37R
+    seen.clear()
+    assert evalrun.main(base) == 0
+    assert seen["state_poll_rule"] is None
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--poll-policy", json.dumps(_SHORTEN)], "state_poll_rule cannot be combined with state_poll_policy"),
+        (["--interval-choices", "0.5"], "state_poll_rule cannot be combined with state_poll_interval_choices_s"),
+        (["--choice-jitter", "0.1"], "state_poll_rule cannot be combined with state_poll_choice_jitter_frac"),
+        ([], "state_poll_rule.i_max_s must be a finite number >= state_poll_rule.i_min_s"),
+    ],
+)
+def test_main_refuses_a_bad_or_combined_poll_rule_before_any_run(tmp_path: Path, monkeypatch, capsys, extra, message):
+    """A poll rule with the table, choices or j, or a bad rule, is refused once, up front
+    (exit 2), with the exact diagnostic, and no run is attempted."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rule = _T37R if extra else {**_T37R, "i_max_s": 1.0}
+    rc = evalrun.main(
+        ["--stage", "s7t37r", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--poll-rule", json.dumps(rule)]
+        + extra
+    )
+    assert rc == 2
+    assert calls == []
+    assert capsys.readouterr().err == f"semindex.evalrun: {message}\n"
+
+
+def test_main_refuses_a_poll_rule_that_is_not_json_before_any_run(tmp_path: Path, monkeypatch, capsys):
+    """A --poll-rule string that is not JSON exits 2 with the exact diagnostic; no run."""
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_all", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s7t37r", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--poll-rule", "{"]
+    )
+    assert rc == 2
+    assert calls == []
+    assert capsys.readouterr().err == "semindex.evalrun: --poll-rule must be valid JSON\n"
