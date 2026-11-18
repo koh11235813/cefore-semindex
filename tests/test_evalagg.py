@@ -41,6 +41,7 @@ from semindex.evalagg import (
     oldest_match_age_s,
     read_meta,
     read_meta_generation,
+    read_meta_state_poll_rule,
     run_has_done_marker,
     wilson_interval,
     _node_window_control_bytes,
@@ -1939,7 +1940,7 @@ def test_runs_rows_carry_k_and_choices_last_and_empty_when_not_recorded():
         (None, None, None, None, None),
         (1, None, None, 16, "OFF"),
     ]
-    assert evalagg.RUNS_FIELDS[-7:-2] == [
+    assert evalagg.RUNS_FIELDS[-8:-3] == [
         "k",
         "state_poll_interval_choices_s",
         "state_poll_choice_jitter_frac",
@@ -2130,7 +2131,7 @@ def test_store_synchronous_round_trips_from_the_cli_to_runs_csv(tmp_path: Path):
     csv_path = tmp_path / "runs.csv"
     evalagg._write_csv(str(csv_path), evalagg.RUNS_FIELDS, build_runs_rows(analyses))
     rows = _read_csv(csv_path)
-    assert list(rows[0])[-3] == "store_synchronous"
+    assert list(rows[0])[-4] == "store_synchronous"
     assert [row["store_synchronous"] for row in rows] == ["FULL", "", ""]
 
 
@@ -2190,7 +2191,7 @@ def test_runs_rows_carry_the_poll_policy_last_as_compact_json_and_empty_when_abs
         None,
         '{"intervals_s":[5.0],"jitter_frac":[0.0]}',
     ]
-    assert evalagg.RUNS_FIELDS[-2] == "state_poll_policy"
+    assert evalagg.RUNS_FIELDS[-3] == "state_poll_policy"
     csv_path = tmp_path / "runs.csv"
     evalagg._write_csv(str(csv_path), evalagg.RUNS_FIELDS, rows)
     read = _read_csv(csv_path)
@@ -2406,9 +2407,135 @@ def test_the_disconnect_duration_round_trips_from_evalruns_meta_json_to_the_last
         RunAnalysis(p=0.2, seed=4, status="valid", flags=[], analysis_error="no t0", disconnect_duration_s=[8, 12])
     )
     assert [a.disconnect_duration_s for a in analyses] == [[8.0, 12.0], None, None, [8, 12]]
-    assert evalagg.RUNS_FIELDS[-2:] == ["state_poll_policy", "disconnect_duration_s"]
+    assert evalagg.RUNS_FIELDS[-3:-1] == ["state_poll_policy", "disconnect_duration_s"]
     csv_path = tmp_path / "runs.csv"
     evalagg._write_csv(str(csv_path), evalagg.RUNS_FIELDS, build_runs_rows(analyses))
     rows = _read_csv(csv_path)
-    assert list(rows[0])[-1] == "disconnect_duration_s"
+    assert list(rows[0])[-2] == "disconnect_duration_s"
     assert [row["disconnect_duration_s"] for row in rows] == ["[8.0,12.0]", "", "", "[8,12]"]
+
+
+# -- the per-neighbor poll rule (meta key state_poll_rule, 2026-11-18) --
+
+_RULE = {"i_min_s": 3.695, "factor": 2, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+
+
+def _meta_with_poll_rule(state_poll_rule):
+    """evalrun's own meta.json for one run made with that rule (None = no rule)."""
+    return evalrun._build_meta(
+        p=0.4,
+        seed=1,
+        stage="s7",
+        k=4,
+        state_poll_interval_choices_s=None,
+        state_poll_choice_jitter_frac=None,
+        max_in_flight_per_neighbor=None,
+        store_synchronous=None,
+        state_poll_policy=None,
+        state_poll_rule=state_poll_rule,
+        disconnect_duration_s=None,
+        recefore="/fake/recefore",
+        recefore_rc=0,
+        start_s=0.0,
+        end_s=1.0,
+        verdict={"valid": True, "flags": []},
+        capture_subprocess=lambda argv, cwd=None: "",
+    )
+
+
+def test_read_meta_state_poll_rule_reads_the_rule_off_evalruns_own_meta_json(tmp_path: Path):
+    """A rule given to evalrun comes back as the dict it was; null comes back as None."""
+    evalrun._write_json(str(tmp_path / "meta.json"), _meta_with_poll_rule(_RULE))
+    assert read_meta_state_poll_rule(str(tmp_path)) == _RULE
+    evalrun._write_json(str(tmp_path / "meta.json"), _meta_with_poll_rule(None))
+    assert read_meta_state_poll_rule(str(tmp_path)) is None
+
+
+def test_read_meta_state_poll_rule_is_none_without_the_key_and_for_a_non_object(tmp_path: Path):
+    """A meta.json from before the key, and one whose value is not an object, both
+    read as no rule; so does a run directory with no meta.json at all."""
+    assert read_meta_state_poll_rule(str(tmp_path)) is None
+    (tmp_path / "meta.json").write_text(json.dumps({"k": 1, "validity": {"valid": True, "flags": []}}))
+    assert read_meta_state_poll_rule(str(tmp_path)) is None
+    (tmp_path / "meta.json").write_text(json.dumps({"k": 1, "state_poll_rule": [3.695, 10.043]}))
+    assert read_meta_state_poll_rule(str(tmp_path)) is None
+
+
+def test_the_poll_rule_round_trips_from_evalruns_meta_json_to_the_last_runs_csv_column(tmp_path: Path):
+    """A rule recorded by evalrun reaches runs.csv's new last column as compact,
+    key-sorted JSON; null, a meta.json from before the key, and an analysis_error
+    run give an empty cell."""
+    t0 = 1_000_000_000_000.0
+    events = {"h0": [{"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0}]}
+    analyses = []
+    for seed, value in ((1, _RULE), (2, None)):
+        run_dir = tmp_path / "store" / "s7" / "p0.4" / str(seed)
+        _write_run(run_dir, events)
+        evalrun._write_json(str(run_dir / "meta.json"), _meta_with_poll_rule(value))
+        analyses.append(analyze_run(0.4, seed, str(run_dir)))
+    old_dir = tmp_path / "store" / "s6" / "p0.4" / "3"
+    _write_run(old_dir, events)
+    (old_dir / "meta.json").write_text(json.dumps({"k": 1, "validity": {"valid": True, "flags": []}}))
+    analyses.append(analyze_run(0.4, 3, str(old_dir)))
+    analyses.append(RunAnalysis(p=0.4, seed=4, status="valid", flags=[], analysis_error="no t0", state_poll_rule=_RULE))
+    assert [a.state_poll_rule for a in analyses] == [_RULE, None, None, _RULE]
+    assert evalagg.RUNS_FIELDS[-1] == "state_poll_rule"
+    csv_path = tmp_path / "runs.csv"
+    evalagg._write_csv(str(csv_path), evalagg.RUNS_FIELDS, build_runs_rows(analyses))
+    rows = _read_csv(csv_path)
+    assert list(rows[0])[-1] == "state_poll_rule"
+    cell = '{"factor":2,"i_max_s":10.043,"i_min_s":3.695,"jitter_frac":0.1,"on_timeout":"reset"}'
+    assert [row["state_poll_rule"] for row in rows] == [cell, "", "", cell]
+
+
+def test_decisions_rows_report_the_re_decided_interval_of_a_reschedule(tmp_path: Path):
+    """Under a rule the re-decided interval is the neighbor's own running value, which
+    no table gives, so state_poll_reschedule gets its own interval_s row."""
+    t0 = 1_000_000_000_000.0
+    start = t0 + evalgen.WINDOW_START_S * 1000.0
+    lines = []
+    for offset, interval in ((100, 4.0), (200, 8.0), (300, 2.0)):
+        line = _reschedule(start + offset, "h1", "answered", False)
+        line["action"]["interval_s"] = interval
+        lines.append(line)
+    run_dir = tmp_path / "store" / "s7" / "p0.4" / "1"
+    _write_run(
+        run_dir,
+        {"h0": [{"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0}, *lines]},
+        meta={"validity": {"valid": True, "flags": []}},
+    )
+    run = analyze_run(0.4, 1, str(run_dir))
+    assert [d["interval_s"] for d in run.decision_rows if d["kind"] == "state_poll_reschedule"] == [4.0, 8.0, 2.0]
+    [row] = [
+        r
+        for r in build_decisions_rows([run], include_unknown=False)
+        if r["kind"] == "state_poll_reschedule" and r["field"] == "interval_s"
+    ]
+    assert (row["n"], row["median"], row["q1"], row["q3"]) == (3, 4.0, 3.0, 6.0)
+
+
+def test_a_reschedule_carrying_the_rules_empty_key_is_counted_like_one_without_it(tmp_path: Path):
+    """polls.csv reads a reschedule's trigger and clamped only, so the `empty` key a
+    rule's reschedule carries on top of them changes no count."""
+    t0 = 1_000_000_000_000.0
+    start = t0 + evalgen.WINDOW_START_S * 1000.0
+    with_empty = _reschedule(start + 100, "h1", "answered", False)
+    with_empty["action"]["empty"] = True
+    poll_rows = []
+    for seed, line in ((1, _reschedule(start + 100, "h1", "answered", False)), (2, with_empty)):
+        run_dir = tmp_path / "store" / "s7" / "p0.4" / str(seed)
+        _write_run(run_dir, {"h0": [{"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0}, line]})
+        poll_rows.append(analyze_run(0.4, seed, str(run_dir)).poll_rows)
+    assert poll_rows[0] == poll_rows[1]
+    assert poll_rows[1] == [
+        {
+            "node": "h0",
+            "neighbor": "h1",
+            "polls_sent": 0,
+            "state_rx": 0,
+            "reschedule_answered": 1,
+            "reschedule_timed_out": 0,
+            "reschedule_clamped": 0,
+            "late_replies": 0,
+        }
+    ]

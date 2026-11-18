@@ -1,0 +1,16 @@
+3 arms incl. 6.0 s : diff mean 15.8 sd 3.0 min 9.2 max 22.5 pp; experiments (of 40) with lower bound > 0: 37
+2 measured arms only : diff mean 15.9 sd 3.0 min 9.3 max 22.0 pp; experiments (of 40) with lower bound > 0: 38
+T37r vs T37: delay ratio-1 mean -0.272 [min -0.315 max -0.222]; polls ratio-1 mean 0.264; cens T37 0.019 T37r 0.000
+fix3.695 delay 21327 polls 256.2 cens 0.000
+fix6.0 delay 29744 polls 159.4 cens 0.003
+fix10.043 delay 41734 polls 95.9 cens 0.033
+T37 delay 34674 polls 142.5 cens 0.019
+T37r delay 25236 polls 180.1 cens 0.000
+experiment-level bands (40 single-run-per-seed experiments): rule, delay ms p2.5/p50/p97.5, polls, cens
+T37 delay 33674 / 34627 / 35890 | polls 141.4 / 142.5 / 143.4 | cens 0.004 / 0.016 / 0.037 | delay min 33269 max 35910
+T37r delay 24422 / 25160 / 26025 | polls 179.3 / 180.2 / 180.8 | cens 0.000 / 0.000 / 0.000 | delay min 24192 max 26070
+acceptance bands (median of the 40 experiments, plus/minus 6 %):
+T37 delay 34.627 s band 32.549 .. 36.704 s | polls 142.50 band 133.95 .. 151.05 | cens 0.016
+T37 per-experiment min/max: delay 33.269 .. 35.910 s | polls 141.35 .. 143.45 | cens 0.000 .. 0.040
+T37r delay 25.160 s band 23.650 .. 26.669 s | polls 180.15 band 169.34 .. 190.96 | cens 0.000
+T37r per-experiment min/max: delay 24.192 .. 26.070 s | polls 179.15 .. 180.75 | cens 0.000 .. 0.000

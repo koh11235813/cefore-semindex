@@ -23,7 +23,7 @@ from semindex.agent import (
     load_config,
     validate_config,
 )
-from semindex.engine import StatePollPolicy
+from semindex.engine import StatePollPolicy, StatePollRule
 from semindex.store import OriginProgress, Store
 
 from test_cefpyco_transport import _FakeClock, _FakeHandle, _FakePacket
@@ -2032,6 +2032,128 @@ def test_build_agent_draws_policy_jitter_from_the_seed_and_node_jitter_stream(tm
     applied = []
     now = 0.0
     while len(applied) < 5:
+        engine.on_tick(now)
+        for event in engine.drain_events():
+            if event["event"] == "decision" and event["kind"] == "state_poll":
+                applied.append(event["action"]["applied_interval_s"])
+                now += event["action"]["applied_interval_s"]
+    assert applied == [3.695 * (1 + 0.1 * (2 * stream() - 1)) for _ in range(5)]
+
+
+# -- state_poll_rule (per-neighbor interval, 2026-11-18) -----------------------------
+
+
+_RULE = {"i_min_s": 3.695, "factor": 2.0, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"state_poll_rule": [3.695]},
+            "state_poll_rule must be an object with keys i_min_s, factor, i_max_s, jitter_frac and on_timeout",
+        ),
+        (
+            {"state_poll_rule": {k: v for k, v in _RULE.items() if k != "factor"}},
+            "state_poll_rule must be an object with keys i_min_s, factor, i_max_s, jitter_frac and on_timeout",
+        ),
+        (
+            {"state_poll_rule": {**_RULE, "extra": 1}},
+            "state_poll_rule must be an object with keys i_min_s, factor, i_max_s, jitter_frac and on_timeout",
+        ),
+        ({"state_poll_rule": {**_RULE, "i_min_s": True}}, "state_poll_rule.i_min_s must be a number"),
+        ({"state_poll_rule": {**_RULE, "i_min_s": 0}}, "state_poll_rule.i_min_s must be > 0"),
+        ({"state_poll_rule": {**_RULE, "i_min_s": float("nan")}}, "state_poll_rule.i_min_s must be finite"),
+        ({"state_poll_rule": {**_RULE, "i_min_s": float("inf")}}, "state_poll_rule.i_min_s must be finite"),
+        ({"state_poll_rule": {**_RULE, "factor": "2"}}, "state_poll_rule.factor must be a number"),
+        # 0 and a negative factor are refused as not positive, before the >= 1 bound is reached.
+        ({"state_poll_rule": {**_RULE, "factor": 0}}, "state_poll_rule.factor must be > 0"),
+        ({"state_poll_rule": {**_RULE, "factor": -1.0}}, "state_poll_rule.factor must be > 0"),
+        ({"state_poll_rule": {**_RULE, "factor": float("inf")}}, "state_poll_rule.factor must be finite"),
+        ({"state_poll_rule": {**_RULE, "factor": float("nan")}}, "state_poll_rule.factor must be finite"),
+        ({"state_poll_rule": {**_RULE, "factor": 0.5}}, "state_poll_rule.factor must be >= 1"),
+        ({"state_poll_rule": {**_RULE, "i_max_s": None}}, "state_poll_rule.i_max_s must be a number"),
+        ({"state_poll_rule": {**_RULE, "i_max_s": 0}}, "state_poll_rule.i_max_s must be > 0"),
+        ({"state_poll_rule": {**_RULE, "i_max_s": float("inf")}}, "state_poll_rule.i_max_s must be finite"),
+        (
+            {"state_poll_rule": {**_RULE, "i_max_s": 3.0}},
+            "state_poll_rule.i_max_s must be >= state_poll_rule.i_min_s",
+        ),
+        ({"state_poll_rule": {**_RULE, "jitter_frac": False}}, "state_poll_rule.jitter_frac must be a number"),
+        ({"state_poll_rule": {**_RULE, "jitter_frac": -0.1}}, "state_poll_rule.jitter_frac must be >= 0"),
+        ({"state_poll_rule": {**_RULE, "jitter_frac": float("nan")}}, "state_poll_rule.jitter_frac must be finite"),
+        ({"state_poll_rule": {**_RULE, "jitter_frac": 1.0}}, "state_poll_rule.jitter_frac must be < 1"),
+        ({"state_poll_rule": {**_RULE, "on_timeout": "grow"}}, 'state_poll_rule.on_timeout must be "keep" or "reset"'),
+        ({"state_poll_rule": {**_RULE, "on_timeout": None}}, 'state_poll_rule.on_timeout must be "keep" or "reset"'),
+        (
+            {"state_poll_rule": _RULE, "seed": 1, "state_poll_policy": _POLICY},
+            "state_poll_rule cannot be combined with state_poll_policy",
+        ),
+        (
+            {"state_poll_rule": _RULE, "seed": 1, "state_poll_interval_choices_s": [1.0]},
+            "state_poll_rule cannot be combined with state_poll_interval_choices_s",
+        ),
+        (
+            {"state_poll_rule": _RULE, "seed": 1, "state_poll_choice_jitter_frac": 0.1},
+            "state_poll_rule cannot be combined with state_poll_choice_jitter_frac",
+        ),
+        (
+            {"state_poll_rule": _RULE, "seed": 1, "state_poll_interval_s": 2.0},
+            "state_poll_rule cannot be combined with state_poll_interval_s",
+        ),
+        (
+            {"state_poll_rule": _RULE, "seed": 1, "state_poll_jitter_frac": 0.2},
+            "state_poll_rule cannot be combined with state_poll_jitter_frac",
+        ),
+        ({"state_poll_rule": _RULE}, "state_poll_rule requires seed"),
+        ({"state_poll_rule": _RULE, "seed": 1.0}, "seed must be an integer"),
+    ],
+)
+def test_validate_config_rejects_a_bad_state_poll_rule(overrides: dict, message: str):
+    """Each malformed rule, each combination with another poll-interval setting (each
+    would silently mean nothing beside the rule) and a missing seed (the jitter stream
+    is seeded from it) fails with its own exact diagnostic."""
+    raw = _minimal_raw()
+    raw.update(overrides)
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == message
+
+
+def test_validate_config_carries_the_state_poll_rule_as_floats():
+    """A valid rule reaches SyncConfig as a StatePollRule of floats, and the seed reaches
+    the AgentConfig; without the key SyncConfig has no rule."""
+    raw = _minimal_raw()
+    raw.update(
+        state_poll_rule={"i_min_s": 4, "factor": 1, "i_max_s": 4, "jitter_frac": 0, "on_timeout": "keep"}, seed=3
+    )
+    config = validate_config(raw)
+    assert config.seed == 3
+    rule = build_sync_config(config).state_poll_rule
+    assert rule == StatePollRule(i_min_s=4.0, factor=1.0, i_max_s=4.0, jitter_frac=0.0, on_timeout="keep")
+    assert [type(v) for v in (rule.i_min_s, rule.factor, rule.i_max_s, rule.jitter_frac)] == [float] * 4
+    assert build_sync_config(validate_config(_minimal_raw())).state_poll_rule is None
+
+
+def test_build_agent_draws_rule_jitter_from_the_seed_and_node_jitter_stream(tmp_path: Path):
+    """End to end through build_agent: under a rule whose interval can never move
+    (factor 1, i_max_s = i_min_s) every state poll's applied interval is
+    x * (1 + 0.1 * (2u - 1)) for successive u of the
+    "state_poll_interval_jitter:{seed}:{node}" stream -- the same stream a one-row
+    table draws from, so this rule polls when that table would."""
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        state_poll_rule={"i_min_s": 3.695, "factor": 1.0, "i_max_s": 3.695, "jitter_frac": 0.1, "on_timeout": "keep"},
+        seed=7,
+    )
+    engine = build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))._engine
+    stream = random.Random("state_poll_interval_jitter:7:h0").random
+    applied = []
+    now = 0.0
+    # Bounded: a re-decision that moved the next poll past `now` would otherwise leave
+    # this loop waiting for a poll that never comes, a hang where a failure belongs.
+    for _ in range(5):
         engine.on_tick(now)
         for event in engine.drain_events():
             if event["event"] == "decision" and event["kind"] == "state_poll":

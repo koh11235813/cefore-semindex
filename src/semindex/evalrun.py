@@ -22,15 +22,18 @@ Run as:
         [--k 4] [--interval-choices 1 2 4] [--choice-jitter 0.1] \
         [--max-in-flight 32] [--store-synchronous FULL] \
         [--poll-policy '{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}'] \
+        [--poll-rule '{"i_min_s": 3.695, "factor": 2, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}'] \
         [--disconnect-duration-s 8 12]
 
 `--k`, `--interval-choices`, `--choice-jitter`, `--max-in-flight`,
-`--store-synchronous` (stage-2 map "生成器と集計") and `--poll-policy`
-(2026-11-03, the failure-reactive state-poll table; not with choices or j) go
+`--store-synchronous` (stage-2 map "生成器と集計"), `--poll-policy`
+(2026-11-03, the failure-reactive state-poll table; not with choices or j) and
+`--poll-rule` (2026-11-18, the per-neighbor state-poll interval rule; not with
+the table, choices or j) go
 straight to semindex.evalgen and are recorded in each run's meta.json. They are
 not part of the store path, so a sweep with different values -- a different
-`--max-in-flight`, `--store-synchronous` or `--poll-policy` included -- needs
-its own `--stage` label. Resuming a stage checks only each run's DONE marker,
+`--max-in-flight`, `--store-synchronous`, `--poll-policy` or `--poll-rule`
+included -- needs its own `--stage` label. Resuming a stage checks only each run's DONE marker,
 never these settings, so that label is the one thing keeping two settings apart.
 `--disconnect-duration-s LO HI` (2026-11-11, stage-2 map "ほかの切断の形")
 switches the disconnect schedule from the 5 s slot model to down periods
@@ -583,6 +586,7 @@ def _build_meta(
     max_in_flight_per_neighbor: int | None,
     store_synchronous: str | None,
     state_poll_policy: dict | None,
+    state_poll_rule: dict | None = None,
     disconnect_duration_s: tuple[float, float] | None,
     recefore: str,
     recefore_rc: int,
@@ -599,6 +603,7 @@ def _build_meta(
     agents ran with their own default cap of 8) and `store_synchronous` (None =
     not set; recorded resolved, see below) and `state_poll_policy` (None = not
     set, so the agents ran stage 1's or the choices' poll scheduling) and
+    `state_poll_rule` (None = not set, likewise) and
     `disconnect_duration_s` (None = the 5 s slot model) are the
     generator settings this run was made with, so the aggregate can tell runs apart by them (runs.csv)
     without re-reading the generated schedule.
@@ -627,6 +632,9 @@ def _build_meta(
         # 2026-11-03: recorded as given, null included, like the in-flight cap:
         # nothing is written into the agent configs without it.
         "state_poll_policy": state_poll_policy,
+        # 2026-11-18: recorded as given, null included, for the same reason as the
+        # table; null is what every run made before this key could be set records.
+        "state_poll_rule": state_poll_rule,
         # 2026-11-11: [lo, hi] or null, as given; null means the 5 s slot
         # model, so no separate "kind" field is needed to tell the shapes apart.
         "disconnect_duration_s": None if disconnect_duration_s is None else list(disconnect_duration_s),
@@ -677,6 +685,7 @@ def run_one(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    state_poll_rule: dict | None = None,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> RunOutcome:
     """Generate, run, store and validate one (p, seed) run; or skip it if already DONE.
@@ -722,6 +731,7 @@ def run_one(
             max_in_flight_per_neighbor=max_in_flight_per_neighbor,
             store_synchronous=store_synchronous,
             state_poll_policy=state_poll_policy,
+            state_poll_rule=state_poll_rule,
             disconnect_duration_s=disconnect_duration_s,
         )
         yaml_path = next(path for path in generated_paths if path.endswith(".yaml"))
@@ -799,6 +809,7 @@ def run_one(
             max_in_flight_per_neighbor=max_in_flight_per_neighbor,
             store_synchronous=store_synchronous,
             state_poll_policy=state_poll_policy,
+            state_poll_rule=state_poll_rule,
             disconnect_duration_s=disconnect_duration_s,
             recefore=recefore,
             recefore_rc=recefore_rc,
@@ -881,6 +892,7 @@ def run_all(
     max_in_flight_per_neighbor: int | None = None,
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
+    state_poll_rule: dict | None = None,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[RunOutcome]:
     """Run every (p, seed) pair in `build_run_order`'s order, logging one line per run to `out`.
@@ -923,6 +935,7 @@ def run_all(
         max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
+        state_poll_rule=state_poll_rule,
     )
     # 2026-11-11: same reasoning for the down-period range and the p < 1 rule
     # it brings, checked against every p of the grid before any run.
@@ -978,6 +991,7 @@ def run_all(
                 max_in_flight_per_neighbor=max_in_flight_per_neighbor,
                 store_synchronous=store_synchronous,
                 state_poll_policy=state_poll_policy,
+                state_poll_rule=state_poll_rule,
                 disconnect_duration_s=disconnect_duration_s,
             )
         except Exception as exc:  # noqa: BLE001 -- see docstring: one run's crash must not stop the sweep
@@ -1047,6 +1061,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "not with --interval-choices/--choice-jitter",
     )
     parser.add_argument(
+        "--poll-rule",
+        default=None,
+        dest="poll_rule",
+        help='per-neighbor state-poll rule as JSON, e.g. \'{"i_min_s": 3.695, "factor": 2, "i_max_s": 10.043, '
+        '"jitter_frac": 0.1, "on_timeout": "reset"}\'; not with --poll-policy/--interval-choices/--choice-jitter',
+    )
+    parser.add_argument(
         "--disconnect-duration-s",
         type=float,
         nargs=2,
@@ -1081,6 +1102,7 @@ def main(argv: list[str] | None = None) -> int:
             # Parsed inside this try, so invalid JSON exits 2 with the same
             # prefix as every other refused setting.
             state_poll_policy=evalgen.parse_poll_policy_arg(args.poll_policy),
+            state_poll_rule=evalgen.parse_poll_rule_arg(args.poll_rule),
             disconnect_duration_s=evalgen.parse_disconnect_duration_arg(args.disconnect_duration_s),
         )
     except (DirtySemindexError, gen.ExperimentError) as exc:

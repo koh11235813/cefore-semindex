@@ -22,6 +22,29 @@ def test_gaps_1_2_4_give_contiguous_2_and_missing_3():
     assert tracker.missing("h0") == [3]
 
 
+def test_holds_through_stops_at_the_first_seq_not_held():
+    """Holding 1, 2 contiguously and 4 sparsely covers every hi up to 2, but not 3 or
+    4: the 3 in between is missing, however far above it the holdings reach."""
+    tracker = Tracker()
+    tracker.observe_held("h0", hi=2, extra=(4,))
+    assert [tracker.holds_through("h0", hi) for hi in (0, 1, 2, 3, 4)] == [True, True, True, False, False]
+
+
+def test_holds_through_counts_a_gap_closed_entirely_by_sparse_seqs():
+    """Sparse seqs count as held just as contiguous progress does: 1 contiguous plus 2
+    and 3 sparse covers hi 3, and nothing beyond it."""
+    tracker = Tracker()
+    tracker.observe_held("h0", hi=1, extra=(2, 3))
+    assert [tracker.holds_through("h0", hi) for hi in (3, 4)] == [True, False]
+
+
+def test_holds_through_an_origin_never_heard_of_holds_nothing():
+    """An origin with no state at all covers only hi 0 -- a holder advertising it has
+    no records of that origin either, so it is asking for nothing."""
+    tracker = Tracker()
+    assert [tracker.holds_through("h0", hi) for hi in (0, 1)] == [True, False]
+
+
 def test_missing_is_empty_when_caught_up():
     """Nothing is missing once held and notified are the same seq."""
     tracker = Tracker()

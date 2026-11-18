@@ -149,6 +149,8 @@ class ExperimentSpec:
     state_poll_choice_jitter_frac: float | None
     # {"intervals_s": [...], "jitter_frac": [...]}, both lists of floats, or None.
     state_poll_policy: dict[str, list[float]] | None
+    # {"i_min_s": ..., "factor": ..., "i_max_s": ..., "jitter_frac": ..., "on_timeout": "keep"|"reset"}, or None.
+    state_poll_rule: dict[str, float | str] | None
     max_in_flight_per_neighbor: int | None
     store_synchronous: str | None
 
@@ -175,6 +177,7 @@ _TOP_LEVEL_OPTIONAL = (
     "state_poll_interval_choices_s",
     "state_poll_choice_jitter_frac",
     "state_poll_policy",
+    "state_poll_rule",
     "max_in_flight_per_neighbor",
     "store_synchronous",
 )
@@ -587,6 +590,63 @@ def parse_state_poll_policy(raw, *, have_choices: bool, have_choice_jitter: bool
     return {"intervals_s": interval_values, "jitter_frac": jitter_values}
 
 
+def parse_state_poll_rule(
+    raw, *, have_policy: bool, have_choices: bool, have_choice_jitter: bool
+) -> dict[str, float | str] | None:
+    """Validate the optional `state_poll_rule` top-level key, or None if absent.
+
+    Forwarded verbatim into every generated agent config, where it is the
+    per-neighbor interval the agent moves with what each reply carried
+    (engine.StatePollRule): the interval starts at `i_min_s`, is multiplied by
+    `factor` up to `i_max_s` for a reply that brought nothing new, drops to
+    `i_min_s` for one that brought something, and on a timeout either stays put
+    or drops to `i_min_s` as `on_timeout` says. 2026-11-18: every rule
+    agent._validate_poll_rule enforces is checked here too, so a bad rule fails
+    at generation, not at every agent's startup mid-run. The numeric messages
+    use this module's own phrasing (as for the policy); the structural and
+    combination ones are the agent's text. The agent's "requires seed" rule has
+    no counterpart here: `seed` is a required top-level key. The agent's other
+    combined keys (state_poll_interval_s and state_poll_jitter_frac) are not
+    experiment keys at all.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) != {"i_min_s", "factor", "i_max_s", "jitter_frac", "on_timeout"}:
+        raise ExperimentError(
+            "state_poll_rule must be an object with keys i_min_s, factor, i_max_s, jitter_frac and on_timeout"
+        )
+    i_min_s = _require_number(raw["i_min_s"], "state_poll_rule.i_min_s")
+    if not math.isfinite(i_min_s) or i_min_s <= 0:
+        raise ExperimentError("state_poll_rule.i_min_s must be a finite number > 0")
+    factor = _require_number(raw["factor"], "state_poll_rule.factor")
+    # A factor below 1 would shrink the interval on a reply that brought nothing,
+    # which is the opposite of the backing-off this rule exists to express.
+    if not math.isfinite(factor) or factor < 1:
+        raise ExperimentError("state_poll_rule.factor must be a finite number >= 1")
+    i_max_s = _require_number(raw["i_max_s"], "state_poll_rule.i_max_s")
+    if not math.isfinite(i_max_s) or i_max_s < i_min_s:
+        raise ExperimentError("state_poll_rule.i_max_s must be a finite number >= state_poll_rule.i_min_s")
+    jitter_frac = _require_number(raw["jitter_frac"], "state_poll_rule.jitter_frac")
+    if not math.isfinite(jitter_frac) or not 0 <= jitter_frac < 1:
+        raise ExperimentError("state_poll_rule.jitter_frac must be a finite number in [0, 1)")
+    on_timeout = raw["on_timeout"]
+    if not isinstance(on_timeout, str) or on_timeout not in ("keep", "reset"):
+        raise ExperimentError('state_poll_rule.on_timeout must be "keep" or "reset"')
+    if have_policy:
+        raise ExperimentError("state_poll_rule cannot be combined with state_poll_policy")
+    if have_choices:
+        raise ExperimentError("state_poll_rule cannot be combined with state_poll_interval_choices_s")
+    if have_choice_jitter:
+        raise ExperimentError("state_poll_rule cannot be combined with state_poll_choice_jitter_frac")
+    return {
+        "i_min_s": i_min_s,
+        "factor": factor,
+        "i_max_s": i_max_s,
+        "jitter_frac": jitter_frac,
+        "on_timeout": on_timeout,
+    }
+
+
 def parse_max_in_flight_per_neighbor(raw) -> int | None:
     """Validate the optional `max_in_flight_per_neighbor` top-level key, or None if absent.
 
@@ -685,6 +745,15 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         have_choices=raw.get("state_poll_interval_choices_s") is not None,
         have_choice_jitter=raw.get("state_poll_choice_jitter_frac") is not None,
     )
+    # 2026-11-18: after the policy, before the choices keys, so that a rule set
+    # beside either reports the combination under the rule's own name, and the
+    # policy's own checks stay exactly the text they were.
+    state_poll_rule = parse_state_poll_rule(
+        raw.get("state_poll_rule"),
+        have_policy=raw.get("state_poll_policy") is not None,
+        have_choices=raw.get("state_poll_interval_choices_s") is not None,
+        have_choice_jitter=raw.get("state_poll_choice_jitter_frac") is not None,
+    )
     state_poll_interval_choices_s = parse_state_poll_interval_choices_s(raw.get("state_poll_interval_choices_s"))
     state_poll_choice_jitter_frac = parse_state_poll_choice_jitter_frac(
         raw.get("state_poll_choice_jitter_frac"), have_choices=state_poll_interval_choices_s is not None
@@ -719,6 +788,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         state_poll_interval_choices_s=state_poll_interval_choices_s,
         state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
         state_poll_policy=state_poll_policy,
+        state_poll_rule=state_poll_rule,
         max_in_flight_per_neighbor=max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
     )
@@ -852,6 +922,13 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
             "intervals_s": list(spec.state_poll_policy["intervals_s"]),
             "jitter_frac": list(spec.state_poll_policy["jitter_frac"]),
         }
+    # Same rule as the policy (2026-11-18): the rule draws its jitter from an rng
+    # seeded from (seed, node), and leaving both out keeps every agent config made
+    # before this key byte for byte. parse_experiment never lets a rule through
+    # beside a policy or the choices, so `seed` is written at most once.
+    if spec.state_poll_rule is not None:
+        config["seed"] = spec.seed
+        config["state_poll_rule"] = dict(spec.state_poll_rule)
     # Only when given: left out, the agent keeps SyncConfig's default cap and
     # the config stays byte for byte what it was before this key existed.
     if spec.max_in_flight_per_neighbor is not None:
