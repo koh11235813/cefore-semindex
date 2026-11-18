@@ -1,0 +1,43 @@
+Commands for the analysis half of evidence/16 (perrun.py, ana.py), in order, from this directory.
+Worktree /home/lab_shared/wt/semindex-ev11 on docs/stage2-evidence-16; interpreter = the
+cefore-semindex checkout's venv; no bytecode written.
+
+W=/home/lab_shared/wt/semindex-ev11
+PY=/home/lab_shared/cefore-semindex/.venv/bin/python3
+export PYTHONDONTWRITEBYTECODE=1
+export AGG=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev16/agg-ana
+export MPLCONFIGDIR=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev16/mpl
+# (session scratch, not kept; AGG holds evalagg output, one dir per s7 stage; MPLCONFIGDIR only keeps
+#  evalagg's matplotlib import from making a /tmp/matplotlib-* cache of its own each call)
+mkdir -p $AGG $MPLCONFIGDIR
+for st in s7short s7b3p695 s7b10p043 s7t37 s7t37r; do
+  PYTHONPATH=$W/src $PY -B -m semindex.evalagg --store /home/lab_shared/semindex-eval --stage $st --out $AGG/$st
+done
+# STORE defaults to /home/lab_shared/semindex-eval (perrun.py, ana.py)
+
+PYTHONPATH=$W/src:../05:../07 $PY -B perrun.py   # perrun.csv; per-stage dirs/done and sanity counters on stderr
+$PY -B ana.py > /dev/null                        # results.csv, results.md (stdout = results.md)
+
+evalagg writes a row for a run that has no DONE marker too (status incomplete, no metric columns), so
+the loop above is safe to run while the sweep is still producing runs. perrun.py leaves such a run out
+of its jobs: it has no meta.json yet and the per-run computation would die on it. Its stderr prints
+`dirs=` and `done=` per stage, and ana.py reports a stage with fewer than 20 DONE runs as incomplete,
+so a partial sweep cannot be read as a pass.
+
+If perrun.py stops with "AGG is older than the store", a run finished between the evalagg loop and
+perrun.py: rerun the evalagg loop and then perrun.py. perrun.py refuses rather than writing, because a
+run that evalagg has not seen yet would sit in perrun.csv with lat4 = n4 = polls_sent = 0 and deflate
+its stage's polls per run.
+
+Check afterwards: git status --short shows nothing outside evidence/16 (no __pycache__ under
+evidence/05, 07, 09); uvx ruff@0.17.2 check docs/wayfinder/semindex-stage2/evidence/16/ from the
+worktree root is clean, then rm -rf .ruff_cache.
+A second run of both scripts gives byte-identical perrun.csv, results.csv and results.md, as long as
+no further run reached DONE in between.
+
+Added 2026-11-18 after results.md was read (outside spec.md, no pass line):
+$PY -B after.py > /dev/null                      # after.md; a second run gives a byte-identical file
+
+Runs: sudo bash main6.sh rerun (2026-11-18 10:01 to 10:09 JST), then sudo bash main6.sh rules (10:09 to 11:55 JST),
+both from the detached checkout /home/lab_shared/wt/semindex-main6 at 077a700, dirty=0; recefore at 25ad4e9.
+The numbers committed here were produced with all 43 runs DONE.
