@@ -190,7 +190,7 @@ def _estimate_t0_ms_from_records(experiment: dict, nodes_events: dict[str, list[
       semindex.agent prints nothing, so there is nothing in it to read.
 
     What is always present, at every p: h0 and h4 each create
-    RECORD_COUNT own records purely on their own elapsed-time clock
+    their own scheduled records purely on their own elapsed-time clock
     (`Agent._elapsed_s`), never touched by link state. Each record_created
     event's `seq` (1-indexed, in creation order) maps straight back to
     this experiment's own `schedule["<host>"][seq - 1]["at_s"]` -- the
@@ -198,8 +198,9 @@ def _estimate_t0_ms_from_records(experiment: dict, nodes_events: dict[str, list[
     `ts_ms - at_s * 1000` is one independent estimate of t0_ms, off only
     by that one record's own scheduling/dispatch jitter (bounded by the
     agent's own step() tick rate, not by anything p-dependent). Taking
-    the median over every matched record (up to 60: 30 from h0, 30 from
-    h4) cancels that jitter without needing any p>0 data at all.
+    the median over every matched record (up to one per scheduled record,
+    pooled over both origins) cancels that jitter without needing any p>0
+    data at all.
 
     Returns None only when neither origin logged a single matching
     record_created event (so even a count-only check already has
