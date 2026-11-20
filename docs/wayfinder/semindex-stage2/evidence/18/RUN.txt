@@ -1,0 +1,75 @@
+ev18 bound: the commands that produced bound_cells.csv, bound_gain.csv, bound_v.csv
+and bound.md, in the order they were run, with the wall time of each.
+
+Machine: the same one evidence/13 to 16 ran on. 12 worker processes. Other sessions were
+using the machine at the same time, so the wall times below are upper bounds on an idle
+machine.
+
+Interpreter, for every line below:
+  cd /home/lab_shared/wt/semindex-ev18
+  PYTHONDONTWRITEBYTECODE=1 /home/lab_shared/cefore-semindex/.venv/bin/python3 -B \
+      docs/wayfinder/semindex-stage2/evidence/18/bound.py <command>
+
+spec.md's nine checks are gates. Each one below exits non-zero and prints what failed
+instead of writing a file. Checks 1, 4, 6, 7 and 8 are also run inside `run`, so the
+published numbers and the checks come from one invocation. Inside `run` check 1 is
+evaluated first and check 8 second, so nothing but check 1's own inputs is read before
+check 1 passes.
+
+  1. bound.py check1                         19.8 s
+     check 1, W0 byte-exact reproduction. 66/66 (cell x rule x file) identical to
+     ../14/workload_cells.csv and ../15/onoff_cells.csv on every printed column.
+     Nothing else was read before this passed.
+
+  2. bound.py check2                           2.4 s
+     check 2, identity through the subclass. 24/24 (arm x seed x mode) identical in
+     events and in metrics against the fixed arm on the existing choices path.
+
+  3. bound.py check3                           0.2 s
+     check 3, the k_cap locality trace. 288 live rule resolutions over 8 pairs, 0 of
+     them on an `m` another pair's counter dictated, with one witness instant printed.
+
+  4. bound.py check5                           0.2 s
+     check 5, V's lag stream. 8 pairs, 0 constant draws, 0 equal consecutive draws, and
+     the probe pair's lag sequence unchanged when another pair's schedule moved.
+
+  5. bound.py check7                           0.2 s
+     check 7, the DP timed on s6b10p043 p0.4 W0 seed 1 before any cell list runs.
+     2.35 ms per run-solve of eight pairs against 22.8 ms for one replay simulation,
+     measured while another session was loading the machine.
+
+  6. bound.py check8                           5.8 s
+     check 8, the timeout coordinate inert where no poll times out. 63/63
+     (workload x i_timeout x seed) identical to `keep` on every per-replicate count.
+
+  7. bound.py run                            251 s
+     Everything that is published: the arms and the evidence/15 rules on all three
+     workloads, C, the F search and scoring, V's bisection and final runs, V's poll
+     count at the bracket floor price per cell and workload, checks 1, 8, 7, 4 and 6
+     again, then bound_cells.csv, bound_gain.csv, bound_v.csv and bound.md.
+     Internal stages: arms and the evidence/15 rules 53 s, F search and scoring 166 s,
+     V bisection and final 23 s.
+
+  8. bound.py run                            253 s
+     check 9, reproducibility. The rerun wrote bound_cells.csv, bound_gain.csv and
+     bound_v.csv byte-identical to step 7 (`cmp` on all three). bound.md differs in two
+     lines and only there: the wall-clock seconds it prints in its first line and the
+     per-simulation milliseconds of check 7's timing row. Both are measurements of the
+     machine rather than results. The files in this directory are this rerun's.
+
+  9. uvx ruff@0.17.2 check docs/wayfinder/semindex-stage2/evidence/18/
+     All checks passed. `rm -rf .ruff_cache` afterwards; no __pycache__ was written,
+     because every invocation used -B and PYTHONDONTWRITEBYTECODE=1.
+
+Total wall time of the eight python invocations above: 532 s.
+
+2026-11-19, after two independent verifications of the files above, seven reporting
+defects and one feasibility defect were fixed and the whole sequence was run again.
+Only one row of the three csv moved, WO s6b10p043 p0.2 V@fix10.043, whose target
+was dropped by the reading rule in the earlier files as well: the pre-down guard of
+`feasible_instant` now rejects a candidate stamped in the exact millisecond of a
+link_down, which removed the 2 polls the provisional timer used to take in that run.
+That row's early delay moved from 4936.578010 ms to 4931.025480 ms and its polls per run
+from 92.58 to 92.57; its C gain moved from +17.796849 to +17.704285 points. Every other
+row of all three csv is byte-identical to the earlier files, and all nine outcome words
+are unchanged.
