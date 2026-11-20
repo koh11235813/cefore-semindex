@@ -1,0 +1,65 @@
+Commands for the analysis half of evidence/19 (perrun.py, ana.py), in order, from this directory.
+Worktree /home/lab_shared/wt/semindex-ev19 on docs/stage2-evidence-19 at 300fdcf; interpreter = the
+cefore-semindex checkout's venv; no bytecode written.
+
+W=/home/lab_shared/wt/semindex-ev19
+PY=/home/lab_shared/cefore-semindex/.venv/bin/python3
+export PYTHONDONTWRITEBYTECODE=1
+export AGG=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev19ana/agg-ana
+export MPLCONFIGDIR=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev19ana/mpl
+# (session scratch, not kept; AGG holds evalagg output, one dir per s9 stage; MPLCONFIGDIR only keeps
+#  evalagg's matplotlib import from making a /tmp/matplotlib-* cache of its own each call)
+mkdir -p $AGG $MPLCONFIGDIR
+for st in s9w0_b3p695 s9w0_b10p043 s9w0_t37r \
+          s9wo_b3p695 s9wo_b6p0 s9wo_b10p043 s9wo_t37 s9wo_t37r \
+          s9wv_b3p695 s9wv_b6p0 s9wv_b10p043 s9wv_t37 s9wv_t37r; do
+  PYTHONPATH=$W/src $PY -B -m semindex.evalagg --store /home/lab_shared/semindex-eval --stage $st --out $AGG/$st
+done
+# STORE defaults to /home/lab_shared/semindex-eval (perrun.py, ana.py)
+# PYTHONPATH=$W/src comes first everywhere: the venv's installed semindex points at another checkout,
+# so the evalagg loop and perrun.py would import the wrong package without it. ana.py imports only csv,
+# numpy and the standard library, and carries the same PYTHONPATH so that one environment serves the
+# whole sequence.
+
+PYTHONPATH=$W/src:../05:../07 $PY -B perrun.py   # perrun.csv; per-stage dirs/done and sanity counters on stderr
+PYTHONPATH=$W/src $PY -B ana.py > /dev/null      # results.csv, results.md (stdout = results.md)
+
+perrun.py also imports semindex.evalgen to draw each run's record instants again for that run's own
+(host, seed, k, workload) and compare them against the run's experiment description. That is the
+`sched_regen_diff` column, it writes nothing anywhere, and ana.py reports its total under pass line 5.
+
+The s7 seed-1 rows that pass line 1 reports the gate beside are read from ../16/perrun.csv as they were
+committed there; no evalagg output of those stages is rebuilt here.
+
+evalagg writes a row for a run that has no DONE marker too (status incomplete, no metric columns), so
+the loop above is safe to run while a sweep is still producing runs. perrun.py leaves such a run out
+of its jobs: it has no meta.json yet and the per-run computation would die on it. Its stderr prints
+`dirs=` and `done=` per stage, and ana.py reports a line computed on fewer seeds than it names as
+incomplete, so a partial sweep cannot be read as a pass.
+
+If perrun.py stops with "AGG is older than the store", a run finished between the evalagg loop and
+perrun.py: rerun the evalagg loop and then perrun.py. perrun.py refuses before writing, because a
+run that evalagg has not seen yet would sit in perrun.csv with lat4 = n4 = polls_sent = 0 and deflate
+its stage's polls per run.
+
+perrun.py also prints on stderr how many runs have 4-hop sums from the discovery rows that differ from
+attrib's own censoring chain, and the totals of `sched_regen_diff`, `head_missing_disc` and
+`all_missing_disc`. All four were 0 over the 203 runs, so the headline scoring and the all-record
+scoring rest on the same censoring rule, no scheduled record is missing from the aggregation, and every
+run's instants are the generator's own draw.
+
+Check afterwards: git status --short shows nothing outside evidence/19 (no __pycache__ under
+evidence/05, 07, 09); uvx ruff@0.17.2 check docs/wayfinder/semindex-stage2/evidence/19/ from the
+worktree root is clean, then rm -rf .ruff_cache.
+A second run of both scripts gives byte-identical perrun.csv, results.csv and results.md, as long as
+no further run reached DONE in between. README.md is written by hand out of results.md and is not
+produced by either script.
+
+Runs: sudo bash main9.sh gate from a scratch copy of this directory's main9.sh, start
+2026-11-20T19:40:27+09:00, finished 2026-11-20T19:48:26+09:00; then sudo bash main9.sh sweep, start
+2026-11-20T19:49:48+09:00, finished 2026-11-21T04:41:25+09:00. Both from the detached clean checkout
+/home/lab_shared/wt/semindex-main9 at 03f5ecc, dirty=0; recefore at 25ad4e9, dirty=0. The run log
+showed 3 "valid=True flags=0" lines for the gate and 200 for the sweep. Every one of the 203 stored
+meta.json files carries semindex 03f5ecc dirty=false and recefore 25ad4e9 dirty=false, and 03f5ecc is
+an ancestor of this worktree's 300fdcf, so the analysis code contains the code the runs were made with.
+The numbers committed here were produced with all 203 runs DONE.
