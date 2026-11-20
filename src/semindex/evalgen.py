@@ -2,7 +2,8 @@
 
 map.md ("トポロジーと負荷" / "切断の起こし方") fixes the evaluation's shape:
 a 5-host line h0-h1-h2-h3-h4 with an agent on every host, h0 and h4 each
-creating 30 Index records (one every 2s), h2 probing every 10s, and each
+creating Index records on the schedule `--workload` picks (by default 30
+of them, one every 2s), h2 probing every 10s, and each
 link independently going down for whole 5s slots with probability `p`
 (consecutive down slots merged into one link_down/link_up interval). The
 only thing that varies run to run is `(p, seed)`: everything else in this
@@ -64,6 +65,48 @@ WINDOW_START_S = LEAD_IN_S
 RECORD_COUNT = 30
 RECORD_INTERVAL_S = 2.0
 RECORD_START_S = WINDOW_START_S + gen.MIN_FIRST_RECORD_MARGIN_S
+
+# 2026-11-19 (stage-2 map "負荷"): the record-creation shape, chosen by
+# `workload`. "w0" is the load above and the default -- 30 generation times
+# 2 s apart from RECORD_START_S -- so a run that does not ask for a load is
+# byte for byte the run every earlier stage made. "wo" and "wv" switch
+# generation on and off per origin, the shape the replays of evidence/14 and
+# /15 used and the testbed has never run.
+#
+# The definition is `evidence/15/onoff.py`'s `gen_created`/`_ticks`, copied so
+# that a replay and the testbed place records at the same instants. Two
+# deviations from that file, both deliberate:
+#   * the seed string says "ev19", so no run repeats an evidence/15 draw;
+#   * `p` is not in it. Every other record draw dropped `p` on 2026-10-23
+#     (see `_derive_seed`) so that one seed means one load whatever the
+#     disconnect rate is, and a load keyed on p would be the one exception.
+#     The price is that evidence/15's per-cell record counts were drawn from
+#     another stream and do not carry over.
+DEFAULT_WORKLOAD = "w0"
+WORKLOADS: tuple[str, ...] = (DEFAULT_WORKLOAD, "wo", "wv")
+# The name as it goes into the seed string, spelled out rather than upper-cased,
+# because the string IS the definition: a replay reproducing these instants has
+# to write the same characters.
+WORKLOAD_SEED_NAME = {"wo": "WO", "wv": "WV"}
+# The first ON block starts uniformly in [13, 33] s. The low end is
+# RECORD_START_S itself: no load may create a record before the window's
+# startup margin is past, and the replay's generation window opens there.
+FIRST_ON_LO_S = RECORD_START_S
+FIRST_ON_HI_S = 33.0
+# While ON, a tick every RECORD_INTERVAL_S with the same k records on it as the
+# default load. Keeping the 2.0 s spacing is what keeps evalvalid's 1.5 s
+# per-record slack meaningful: inside a block the spacing is unchanged, and an
+# ON-to-OFF boundary only widens a gap, never narrows one.
+WO_ON_S = WO_OFF_S = 20.0
+WV_MEAN_S = 20.0
+WV_LO_S, WV_HI_S = 4.0, 60.0  # a block is never shorter than two ticks nor longer than the window
+# No tick above t0+110 s, and generation stops at the first one that would be:
+# the replay scores a record's discovery over the rest of the window, so the
+# last records need room to be found before WINDOW_END_S (130 s).
+GEN_END_S = 110.0
+# A tick is rounded to this many decimals (whole milliseconds), for the same
+# reason the outage events are: see `_onoff_ticks`.
+RECORD_AT_DECIMALS = 3
 
 # Probe generation (map.md "probe は真ん中の h2 から 10 秒ごとに出す").
 PROBE_INTERVAL_S = 10.0
@@ -306,8 +349,10 @@ def validate_settings(
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
+    workload: str = DEFAULT_WORKLOAD,
 ) -> None:
-    """Reject a records-per-generation count that is not an integer >= 1, or interval
+    """Reject a records-per-generation count that is not an integer >= 1, a workload
+    name that is not one of WORKLOADS, or interval
     choices / a choice jitter / a poll policy table / a per-neighbor poll rule /
     a per-neighbor in-flight cap /
     a store synchronous mode semindex.gen would refuse (see
@@ -322,6 +367,11 @@ def validate_settings(
     """
     if not isinstance(k, int) or isinstance(k, bool) or k < 1:
         raise gen.ExperimentError(f"k must be an integer >= 1, got {k!r}")
+    # 2026-11-19: beside k, the other knob that only shapes the schedule. A
+    # sweep calls this before its first run, so a misspelt load fails once here
+    # instead of failing every (p, seed) of the sweep the same way.
+    if workload not in WORKLOADS:
+        raise gen.ExperimentError(f"workload must be one of {', '.join(WORKLOADS)}, got {workload!r}")
     # 2026-11-03: before the choices keys, in gen.parse_experiment's order, so a
     # policy with j but no choices reports the combination, not "requires choices".
     gen.parse_state_poll_policy(
@@ -376,9 +426,79 @@ def validate_disconnect_duration(p: float, disconnect_duration_s: tuple[float, f
         raise gen.ExperimentError(f"p must be < 1 with disconnect_duration_s (the down-time fraction), got {p!r}")
 
 
-def _record_schedule(host: int, seed: int, k: int = 1) -> list[dict]:
-    """Build one origin host's schedule: RECORD_COUNT generation times, k records at each,
-    attrs drawn uniformly from the seed record by record.
+def _onoff_ticks(workload: str, seed: int, host: int) -> list[float]:
+    """The generation times of one origin under an on/off workload, in seconds.
+
+    `evidence/15/onoff.py`'s `gen_created` and `_ticks`, with that file's draw
+    order kept exactly: one stream per (workload, seed, origin), the first ON
+    start drawn from it first, then -- under "wv" -- every block length off the
+    same stream in order, ON first. The ON/OFF alternation and the two block
+    lengths are read off that list, so a change in how many lengths are drawn
+    would change nothing but is still avoided: the counts are onoff.py's.
+
+    An ON block `[b, b+L)` is half open. Its ticks are b, b+2, ... strictly
+    below b+L, so a 20 s block holds 10 ticks, the last 18 s in, and the instant
+    the block ends is the first OFF instant rather than an eleventh tick.
+    A tick above GEN_END_S is dropped and generation stops there.
+
+    Times are rounded to the millisecond because a replay of these runs rounds
+    its own creation stamps to whole milliseconds: without the rounding the
+    instants the replay simulates and the instants the testbed schedules differ
+    below a millisecond, and the two files can no longer be compared.
+    """
+    name = WORKLOAD_SEED_NAME[workload]
+    rng = random.Random(f"ev19:{name}:{seed}:h{host}")
+    start = rng.uniform(FIRST_ON_LO_S, FIRST_ON_HI_S)
+    if workload == "wo":
+        lengths = [
+            WO_ON_S if i % 2 == 0 else WO_OFF_S
+            for i in range(2 * int(GEN_END_S // (WO_ON_S + WO_OFF_S)) + 4)
+        ]
+    else:
+        lengths = [
+            min(max(rng.expovariate(1.0 / WV_MEAN_S), WV_LO_S), WV_HI_S)
+            for _ in range(2 * int(GEN_END_S / WV_LO_S) + 4)
+        ]
+    ticks: list[float] = []
+    at_s = start
+    on = True
+    for length in lengths:
+        if at_s > GEN_END_S:
+            break
+        if on:
+            i = 0
+            while i * RECORD_INTERVAL_S < length:
+                tick = at_s + i * RECORD_INTERVAL_S
+                if tick > GEN_END_S:
+                    return ticks
+                ticks.append(round(tick, RECORD_AT_DECIMALS))
+                i += 1
+        at_s += length
+        on = not on
+    return ticks
+
+
+def _record_times(host: int, seed: int, workload: str) -> list[float]:
+    """One origin host's generation times under `workload`, in seconds.
+
+    The default load's times are left as the literal expression they always
+    were, drawing nothing: that is what makes `workload="w0"` generate the same
+    bytes as every run made before this knob existed.
+    """
+    if workload == DEFAULT_WORKLOAD:
+        return [RECORD_START_S + i * RECORD_INTERVAL_S for i in range(RECORD_COUNT)]
+    return _onoff_ticks(workload, seed, host)
+
+
+def _record_schedule(host: int, seed: int, k: int = 1, workload: str = DEFAULT_WORKLOAD) -> list[dict]:
+    """Build one origin host's schedule: one generation time per tick of `workload`,
+    k records at each, attrs drawn uniformly from the seed record by record.
+
+    The times and the attrs come from two separate streams on purpose: the attrs
+    keep coming from this host's own `records:hN` stream in schedule order,
+    while an on/off workload draws its times from a stream of its own. Drawing
+    both from one stream would shift the default load's attr sequence and make
+    `workload="w0"` a different run from the ones already measured.
 
     k records share one `at_s` (stage-2 map "負荷"): the agent turns every due
     entry into a record in one step (agent.py's _drain_schedule), so a batch
@@ -398,11 +518,11 @@ def _record_schedule(host: int, seed: int, k: int = 1) -> list[dict]:
     disasters = sorted(schema.DISASTERS)
     media = sorted(schema.MEDIA)
     entries = []
-    for i in range(RECORD_COUNT):
+    for at_s in _record_times(host, seed, workload):
         for _ in range(k):
             entries.append(
                 {
-                    "at_s": RECORD_START_S + i * RECORD_INTERVAL_S,
+                    "at_s": at_s,
                     "zone": rng.choice(zones),
                     "disaster": rng.choice(disasters),
                     "media": rng.choice(media),
@@ -603,6 +723,7 @@ def build_experiment(
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
+    workload: str = DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> dict:
     """Build the one `semindex.gen` experiment description this (p, seed, stage) run needs.
@@ -620,7 +741,7 @@ def build_experiment(
     stage, outdir) to match, not just (p, seed).
 
     `k` (stage-2 map "負荷") is how many records each origin creates at each
-    of its RECORD_COUNT generation times; `state_poll_interval_choices_s`, when
+    of its `workload`'s generation times; `state_poll_interval_choices_s`, when
     given, is passed through to every agent config (with the run seed, which
     the agents' choice rng needs -- see semindex.gen). `max_in_flight_per_neighbor`,
     when given, is passed through to every agent config as its cap on outstanding
@@ -635,6 +756,12 @@ def build_experiment(
     {"i_min_s": ..., "factor": ..., "i_max_s": ..., "jitter_frac": ...,
     "on_timeout": ...}, is passed through the same way and cannot be combined
     with the policy, choices or j.
+    `workload` (2026-11-19) is the record-creation shape: "w0", the default,
+    is the 30 generation times 2 s apart this module has always used, and "wo"
+    and "wv" switch generation on and off per origin (see `_onoff_ticks`). It
+    changes `schedule` and nothing else -- it writes no key of its own, because
+    an on/off schedule is an ordinary schedule with other `at_s` values, and
+    evalrun's meta.json is what records which load a run was made with.
     `disconnect_duration_s` (2026-11-11), a down-period range (LO, HI) in
     seconds, switches the disconnect schedule from the 5 s slot model to the
     outage shape (see `_outage_link_events`), where p is the down-time
@@ -658,9 +785,10 @@ def build_experiment(
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
+        workload=workload,
     )
     name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
-    schedule = {str(host): _record_schedule(host, seed, k) for host in RECORD_ORIGIN_HOSTS}
+    schedule = {str(host): _record_schedule(host, seed, k, workload) for host in RECORD_ORIGIN_HOSTS}
     raw = {
         "name": name,
         "num": RECEFORE_NUM,
@@ -726,6 +854,7 @@ def generate_run(
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
+    workload: str = DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[str]:
     """Build and write one run's experiment description, ReCefore YAML and agent configs.
@@ -750,8 +879,8 @@ def generate_run(
 
     `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac`,
     `max_in_flight_per_neighbor`, `store_synchronous`, `state_poll_policy`,
-    `state_poll_rule` and `disconnect_duration_s` are passed straight to
-    `build_experiment`.
+    `state_poll_rule`, `workload` and `disconnect_duration_s` are passed
+    straight to `build_experiment`.
 
     Returns every path written, experiment description first.
     """
@@ -767,6 +896,7 @@ def generate_run(
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
+        workload=workload,
         disconnect_duration_s=disconnect_duration_s,
     )
     gen.parse_experiment(raw)  # raises gen.ExperimentError before any filesystem write
@@ -841,6 +971,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         '"jitter_frac": 0.1, "on_timeout": "reset"}\'; not with --poll-policy/--interval-choices/--choice-jitter',
     )
     parser.add_argument(
+        "--workload",
+        choices=WORKLOADS,
+        default=DEFAULT_WORKLOAD,
+        help=f"record-creation shape: {DEFAULT_WORKLOAD} (the default) creates records throughout, "
+        "wo and wv switch generation on and off per origin",
+    )
+    parser.add_argument(
         "--disconnect-duration-s",
         type=float,
         nargs=2,
@@ -869,6 +1006,7 @@ def main(argv: list[str] | None = None) -> int:
             store_synchronous=args.store_synchronous,
             state_poll_policy=parse_poll_policy_arg(args.poll_policy),
             state_poll_rule=parse_poll_rule_arg(args.poll_rule),
+            workload=args.workload,
             disconnect_duration_s=parse_disconnect_duration_arg(args.disconnect_duration_s),
         )
     except gen.ExperimentError as exc:

@@ -587,6 +587,7 @@ def _build_meta(
     store_synchronous: str | None,
     state_poll_policy: dict | None,
     state_poll_rule: dict | None = None,
+    workload: str = evalgen.DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None,
     recefore: str,
     recefore_rc: int,
@@ -603,7 +604,8 @@ def _build_meta(
     agents ran with their own default cap of 8) and `store_synchronous` (None =
     not set; recorded resolved, see below) and `state_poll_policy` (None = not
     set, so the agents ran stage 1's or the choices' poll scheduling) and
-    `state_poll_rule` (None = not set, likewise) and
+    `state_poll_rule` (None = not set, likewise) and `workload` (the
+    record-creation shape, "w0" when the sweep did not ask for another) and
     `disconnect_duration_s` (None = the 5 s slot model) are the
     generator settings this run was made with, so the aggregate can tell runs apart by them (runs.csv)
     without re-reading the generated schedule.
@@ -635,6 +637,11 @@ def _build_meta(
         # 2026-11-18: recorded as given, null included, for the same reason as the
         # table; null is what every run made before this key could be set records.
         "state_poll_rule": state_poll_rule,
+        # 2026-11-19: always a name, never null -- every run has a load, and a
+        # run made before this key existed had the default one. The aggregate
+        # still reads a missing key as "not recorded" rather than as "w0",
+        # because the file of such a run does not say it.
+        "workload": workload,
         # 2026-11-11: [lo, hi] or null, as given; null means the 5 s slot
         # model, so no separate "kind" field is needed to tell the shapes apart.
         "disconnect_duration_s": None if disconnect_duration_s is None else list(disconnect_duration_s),
@@ -686,6 +693,7 @@ def run_one(
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
+    workload: str = evalgen.DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> RunOutcome:
     """Generate, run, store and validate one (p, seed) run; or skip it if already DONE.
@@ -732,6 +740,7 @@ def run_one(
             store_synchronous=store_synchronous,
             state_poll_policy=state_poll_policy,
             state_poll_rule=state_poll_rule,
+            workload=workload,
             disconnect_duration_s=disconnect_duration_s,
         )
         yaml_path = next(path for path in generated_paths if path.endswith(".yaml"))
@@ -810,6 +819,7 @@ def run_one(
             store_synchronous=store_synchronous,
             state_poll_policy=state_poll_policy,
             state_poll_rule=state_poll_rule,
+            workload=workload,
             disconnect_duration_s=disconnect_duration_s,
             recefore=recefore,
             recefore_rc=recefore_rc,
@@ -893,6 +903,7 @@ def run_all(
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
+    workload: str = evalgen.DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[RunOutcome]:
     """Run every (p, seed) pair in `build_run_order`'s order, logging one line per run to `out`.
@@ -936,6 +947,7 @@ def run_all(
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
+        workload=workload,
     )
     # 2026-11-11: same reasoning for the down-period range and the p < 1 rule
     # it brings, checked against every p of the grid before any run.
@@ -992,6 +1004,7 @@ def run_all(
                 store_synchronous=store_synchronous,
                 state_poll_policy=state_poll_policy,
                 state_poll_rule=state_poll_rule,
+                workload=workload,
                 disconnect_duration_s=disconnect_duration_s,
             )
         except Exception as exc:  # noqa: BLE001 -- see docstring: one run's crash must not stop the sweep
@@ -1068,6 +1081,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         '"jitter_frac": 0.1, "on_timeout": "reset"}\'; not with --poll-policy/--interval-choices/--choice-jitter',
     )
     parser.add_argument(
+        "--workload",
+        choices=evalgen.WORKLOADS,
+        default=evalgen.DEFAULT_WORKLOAD,
+        help=f"record-creation shape: {evalgen.DEFAULT_WORKLOAD} (the default) creates records "
+        "throughout, wo and wv switch generation on and off per origin",
+    )
+    parser.add_argument(
         "--disconnect-duration-s",
         type=float,
         nargs=2,
@@ -1103,6 +1123,7 @@ def main(argv: list[str] | None = None) -> int:
             # prefix as every other refused setting.
             state_poll_policy=evalgen.parse_poll_policy_arg(args.poll_policy),
             state_poll_rule=evalgen.parse_poll_rule_arg(args.poll_rule),
+            workload=args.workload,
             disconnect_duration_s=evalgen.parse_disconnect_duration_arg(args.disconnect_duration_s),
         )
     except (DirtySemindexError, gen.ExperimentError) as exc:
