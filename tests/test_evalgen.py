@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import subprocess
 import sys
 from pathlib import Path
@@ -1353,3 +1354,217 @@ def test_cli_rejects_a_poll_rule_that_is_not_json(tmp_path: Path, capsys):
     assert rc == 1
     assert capsys.readouterr().err == "semindex.evalgen: --poll-rule must be valid JSON\n"
     assert not outdir.exists()
+
+
+# -- the on/off workloads (--workload w0|wo|wv, 2026-11-19) -----------------
+#
+# Every expectation below is written out here by hand -- the tick instants,
+# the half-open block end, the 110 s cut, the k records per tick -- and never
+# compared against the generator's own output, because the prediction that
+# scores these runs reads the creation times out of the generated
+# experiment.json: a mistake in the tick code would otherwise be a mistake in
+# the prediction too, and the two would agree with each other.
+
+
+def _hand_wo_ticks(seed: int, origin: str) -> list[float]:
+    """The WO tick instants of one origin, drawn here rather than read from evalgen.
+
+    The seed string, the draw order (first ON start, then nothing else) and the
+    block arithmetic are spelled out so this test fails if any of them moves.
+    `p` is deliberately absent from the string, as it is from every other record
+    draw (evalgen._derive_seed, 2026-10-23 finding 3).
+    """
+    rng = random.Random(f"ev19:WO:{seed}:{origin}")
+    start = rng.uniform(13.0, 33.0)
+    ticks: list[float] = []
+    block = start
+    while block <= 110.0:
+        j = 0
+        while 2.0 * j < 20.0:  # [b, b+20) is half open: 10 ticks, the last 18 s in
+            at_s = block + 2.0 * j
+            if at_s > 110.0:
+                return ticks
+            ticks.append(round(at_s, 3))
+            j += 1
+        block += 40.0  # 20 s ON then 20 s OFF
+    return ticks
+
+
+def _hand_wv_ticks(seed: int, origin: str) -> list[float]:
+    """The WV tick instants of one origin, drawn here rather than read from evalgen.
+
+    The ON and OFF lengths come off the same per-origin stream as the first ON
+    start, in order and ON first, each clipped to [4, 60] s.
+    """
+    rng = random.Random(f"ev19:WV:{seed}:{origin}")
+    start = rng.uniform(13.0, 33.0)
+    lengths = [min(max(rng.expovariate(1.0 / 20.0), 4.0), 60.0) for _ in range(2 * int(110.0 / 4.0) + 4)]
+    ticks: list[float] = []
+    block = start
+    on = True
+    for length in lengths:
+        if block > 110.0:
+            break
+        if on:
+            j = 0
+            while 2.0 * j < length:
+                at_s = block + 2.0 * j
+                if at_s > 110.0:
+                    return ticks
+                ticks.append(round(at_s, 3))
+                j += 1
+        block += length
+        on = not on
+    return ticks
+
+
+_HAND_TICKS = {"wo": _hand_wo_ticks, "wv": _hand_wv_ticks}
+
+
+def _ticks_of(raw: dict, host: int, k: int) -> list[float]:
+    """One origin's distinct tick instants, asserting every tick carries exactly k
+    entries that share its `at_s` and that the entries stay in time order."""
+    at_s = [entry["at_s"] for entry in raw["schedule"][str(host)]]
+    assert at_s == sorted(at_s)  # seq is the entry index plus one, so seq order is time order
+    assert len(at_s) % k == 0
+    batches = [at_s[i : i + k] for i in range(0, len(at_s), k)]
+    for batch in batches:
+        assert batch == [batch[0]] * k
+    ticks = [batch[0] for batch in batches]
+    assert len(set(ticks)) == len(ticks)
+    return ticks
+
+
+def test_workload_w0_generates_the_same_bytes_as_leaving_the_knob_out(tmp_path: Path):
+    """`--workload w0` is today's load: every generated file is byte-identical to the
+    one generated without the knob. This is what makes a run of the default workload the
+    same run as every run made before the knob existed.
+
+    Both sides of this comparison are the new generator, so it pins the two code paths
+    to each other and nothing more: a change that moved the default load itself would
+    move both and still pass here. What pins the default load to the runs already
+    measured is `test_workload_w0_still_reproduces_stage_1`'s frozen digests, below.
+    """
+    outdir = tmp_path / "run"
+    without = evalgen.generate_run(0.4, 7, "s9w0", str(outdir), k=4)
+    before = {path: Path(path).read_bytes() for path in without}
+    with_knob = evalgen.generate_run(0.4, 7, "s9w0", str(outdir), k=4, workload="w0")
+    assert with_knob == without
+    assert {path: Path(path).read_bytes() for path in with_knob} == before
+
+
+@pytest.mark.parametrize("p", sorted(_STAGE1_DIGESTS))
+def test_workload_w0_still_reproduces_stage_1(p: float):
+    """The same control one step stronger: with k = 1 and no choices, `workload="w0"`
+    reproduces stage 1's experiment, ReCefore config and agent configs byte for byte."""
+    assert _normalized_digest(evalgen.build_experiment(p, 7, "s1", "/out", workload="w0")) == _STAGE1_DIGESTS[p]
+
+
+@pytest.mark.parametrize("workload", ["wo", "wv"])
+def test_an_on_off_workload_ticks_every_2s_inside_a_block_and_stops_at_110s(workload: str):
+    """Tick shape, against hand-written numbers: the first ON starts in [13, 33] s, ticks
+    are 2.0 s apart inside an ON block (the spacing evalvalid's 1.5 s slack is set below),
+    a gap between blocks is wider than that and never narrower, nothing is scheduled above
+    110.0 s, and every `at_s` is a whole millisecond."""
+    raw = evalgen.build_experiment(0.4, 7, "s9", "/out", k=4, workload=workload)
+    for host in (0, 4):
+        ticks = _ticks_of(raw, host, 4)
+        assert 13.0 <= ticks[0] <= 33.0
+        assert ticks[-1] <= 110.0
+        for at_s in ticks:
+            assert round(at_s, 3) == at_s
+        gaps = [round(b - a, 6) for a, b in zip(ticks, ticks[1:])]
+        # Inside a block the step is exactly 2.0, so the narrowest gap of the whole
+        # schedule is 2.0: a wider intra-block step (2.5, say) would raise this minimum,
+        # a narrower one would lower it, and either would break evalvalid's 1.5 s slack.
+        assert min(gaps) == 2.0
+        # Every other gap crosses a block boundary, which is at least one OFF length
+        # (>= WV_LO_S = 4.0 s, and 20.0 s for WO) wide. So nothing lands in (2.0, 4.0):
+        # an off-grid tick inside a block would.
+        assert all(gap == 2.0 or gap >= 4.0 for gap in gaps)
+        assert max(gaps) >= 4.0  # the OFF stretches are there
+
+
+def test_wo_blocks_are_half_open_20s_ons_40s_apart():
+    """A WO ON block is [b, b+20): 10 ticks, the last 18 s into the block, and the instant
+    the block ends carries no tick. The next block starts 40 s later (20 s ON, 20 s OFF).
+    Only a block cut short by the 110 s end has fewer than 10 ticks."""
+    raw = evalgen.build_experiment(0.4, 7, "s9wo", "/out", k=4, workload="wo")
+    ticks = _ticks_of(raw, 0, 4)
+    start = ticks[0]
+    blocks: list[list[float]] = []
+    for at_s in ticks:
+        if not blocks or round(at_s - blocks[-1][-1], 6) > 2.0:
+            blocks.append([])
+        blocks[-1].append(at_s)
+    for i, block in enumerate(blocks):
+        assert block == [round(start + 40.0 * i + 2.0 * j, 3) for j in range(len(block))]
+        assert len(block) == 10 or (i == len(blocks) - 1 and len(block) < 10)
+        assert round(block[-1] - block[0], 6) <= 18.0  # 18 s, not 20 s: the end of the block is OFF
+
+
+@pytest.mark.parametrize("workload", ["wo", "wv"])
+@pytest.mark.parametrize("host", [0, 4])
+@pytest.mark.parametrize("seed", [11, 6])
+def test_the_tick_instants_are_the_ones_the_documented_seed_string_draws(workload: str, host: int, seed: int):
+    """The whole definition in one assertion: `random.Random(f"ev19:{NAME}:{seed}:{origin}")`
+    with NAME WO/WV and origin h0/h4, the first ON start drawn before any block length, and
+    (WV) the lengths drawn in order with ON first.
+
+    Two seeds, because the clips are what the second one is for: seed 11 draws no WV length
+    above WV_HI_S inside the window, so it cannot tell a 60 s upper clip from a 70 s one.
+    Seed 6's h4 does (31 ticks clipped, 35 unclipped), so this test fails if either end of
+    [WV_LO_S, WV_HI_S] moves.
+    """
+    raw = evalgen.build_experiment(0.4, seed, "s9", "/out", k=4, workload=workload)
+    assert _ticks_of(raw, host, 4) == _HAND_TICKS[workload](seed, f"h{host}")
+
+
+@pytest.mark.parametrize("workload", ["wo", "wv"])
+def test_each_seed_and_each_origin_draws_its_own_stream(workload: str):
+    """The origin is in the seed string, so h0 and h4 switch on and off independently;
+    the seed is, so two seeds are two different loads."""
+    raw = evalgen.build_experiment(0.4, 11, "s9", "/out", k=4, workload=workload)
+    other = evalgen.build_experiment(0.4, 12, "s9", "/out", k=4, workload=workload)
+    assert _ticks_of(raw, 0, 4) != _ticks_of(raw, 4, 4)
+    assert _ticks_of(raw, 0, 4) != _ticks_of(other, 0, 4)
+
+
+@pytest.mark.parametrize("workload", ["w0", "wo", "wv"])
+def test_the_schedule_is_the_same_at_one_seed_whatever_p_is(workload: str):
+    """`p` is not in the workload's seed string, so the 2026-10-23 rule -- the same seed
+    draws the same records whatever p is -- holds for the new loads too. Without it, a
+    comparison meant to isolate the disconnect rate would also change the load."""
+    raw1 = evalgen.build_experiment(0.2, 7, "s9", "/out", k=4, workload=workload)
+    raw2 = evalgen.build_experiment(0.4, 7, "s9", "/out", k=4, workload=workload)
+    assert json.dumps(raw1["schedule"], sort_keys=True) == json.dumps(raw2["schedule"], sort_keys=True)
+
+
+def test_an_unknown_workload_is_refused_once_at_the_sweep_head():
+    """validate_settings is what a sweep calls before its first run, so a misspelt load
+    fails once there instead of failing every (p, seed) the same way."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(4, None, workload="w1")
+    assert str(excinfo.value) == "workload must be one of w0, wo, wv, got 'w1'"
+
+
+def test_an_unknown_workload_is_refused_before_anything_is_written(tmp_path: Path):
+    """The same check on the per-run path: nothing is generated for a bad name."""
+    outdir = tmp_path / "run"
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.generate_run(0.4, 7, "s9", str(outdir), k=4, workload="WO")
+    assert str(excinfo.value) == "workload must be one of w0, wo, wv, got 'WO'"
+    assert not outdir.exists()
+
+
+def test_cli_workload_reaches_the_written_schedule(tmp_path: Path):
+    """--workload wo writes the on/off schedule; the flag's choices refuse any other name."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0.4", "--seed", "11", "--stage", "s9wo", "--out", str(outdir), "--k", "4", "--workload", "wo"]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s9wo_p040_seed11.experiment.json").read_text(encoding="utf-8"))
+    assert _ticks_of(raw, 0, 4) == _hand_wo_ticks(11, "h0")
+    with pytest.raises(SystemExit):
+        evalgen.parse_args(["--p", "0.4", "--seed", "1", "--stage", "s9", "--out", str(outdir), "--workload", "w1"])

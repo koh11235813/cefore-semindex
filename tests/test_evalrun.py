@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import stat
 import subprocess
@@ -1080,6 +1081,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "store_synchronous",
         "state_poll_policy",
         "state_poll_rule",
+        "workload",
         "disconnect_duration_s",
         "semindex_git_commit",
         "semindex_git_dirty",
@@ -1812,3 +1814,170 @@ def test_main_refuses_a_poll_rule_that_is_not_json_before_any_run(tmp_path: Path
     assert rc == 2
     assert calls == []
     assert capsys.readouterr().err == "semindex.evalrun: --poll-rule must be valid JSON\n"
+
+
+# -- the record-creation workload (meta key workload, 2026-11-19) ----------
+
+
+def test_run_one_generates_with_and_records_the_workload(tmp_path: Path, monkeypatch):
+    """--workload reaches the generated schedule and meta.json: the written schedule is the
+    WO draw of this (seed, origin), hand-computed here from the seed string, and not the
+    default load's 30 ticks from a fixed 13.0 s start.
+
+    The hand-computed instant and record count are what makes this test see a `workload`
+    that reaches meta.json but never reaches `evalgen.generate_run`: a bound like
+    `13.0 <= at_s[0] <= 33.0` admits 13.0, the default load's own start, so a run
+    labelled "wo" in meta.json while the default load was generated would pass it.
+    """
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.4,
+        3,
+        "s9wo",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        k=4,
+        workload="wo",
+    )
+
+    run_dir = store / "s9wo" / "p0.4" / "3"
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["workload"] == "wo"
+    experiment = json.loads((run_dir / "s9wo_p040_seed3.experiment.json").read_text(encoding="utf-8"))
+    at_s = [entry["at_s"] for entry in experiment["schedule"]["0"]]
+    # h0's first ON block starts at the one instant `random.Random("ev19:WO:3:h0")` draws,
+    # drawn here instead of read back from evalgen: 24.399 s, so the blocks are
+    # [24.399, 44.399), [64.399, 84.399) and [104.399, 110.0] -- 10 + 10 + 3 = 23 ticks,
+    # 4 records each. The default load would be 120 records starting at 13.0 s.
+    first = round(random.Random("ev19:WO:3:h0").uniform(13.0, 33.0), 3)
+    assert first == 24.399
+    assert at_s[:5] == [first] * 4 + [round(first + 2.0, 3)]
+    assert len(at_s) == 23 * 4
+    assert at_s[-1] == round(first + 80.0 + 4.0, 3)
+    # The workload shapes the schedule only; it is not an experiment key of its own,
+    # so semindex.gen and the agent configs stay untouched by it.
+    assert "workload" not in experiment
+
+
+def test_run_one_records_the_default_workload_when_the_knob_is_not_given(tmp_path: Path, monkeypatch):
+    """A run made without the knob records "w0", the load every run before the knob had."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.4,
+        3,
+        "s9w0",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        k=4,
+    )
+
+    meta = json.loads((store / "s9w0" / "p0.4" / "3" / "meta.json").read_text(encoding="utf-8"))
+    assert meta["workload"] == "w0"
+    experiment = json.loads(
+        (store / "s9w0" / "p0.4" / "3" / "s9w0_p040_seed3.experiment.json").read_text(encoding="utf-8")
+    )
+    assert [entry["at_s"] for entry in experiment["schedule"]["0"]][:5] == [13.0, 13.0, 13.0, 13.0, 15.0]
+
+
+def test_main_passes_the_workload_to_run_all_and_w0_when_not_given(tmp_path: Path, monkeypatch):
+    """--workload reaches run_all; without it, the default load."""
+    seen: dict = {}
+    monkeypatch.setattr(evalrun, "run_all", lambda *a, **kw: seen.update(kw) or [])
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    base = ["--stage", "s9wv", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+            str(tmp_path / "recefore"), "--staging", str(staging_parent)]
+    assert evalrun.main(base + ["--workload", "wv"]) == 0
+    assert seen["workload"] == "wv"
+    seen.clear()
+    assert evalrun.main(base) == 0
+    assert seen["workload"] == "w0"
+
+
+def test_run_all_refuses_an_unknown_workload_before_any_run(tmp_path: Path, monkeypatch, capsys):
+    """A misspelt load is refused once at the sweep head, with the exact diagnostic, and no
+    run is attempted. This calls `run_all` directly, so it says nothing about main's exit
+    code: from the CLI the flag's own `choices` refuses the name before `run_all` is called
+    at all (asserted below)."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    store = tmp_path / "store"
+    with pytest.raises(evalrun.gen.ExperimentError) as excinfo:
+        evalrun.run_all(
+            [0.4],
+            [1, 2],
+            "s9",
+            str(store),
+            str(tmp_path / "recefore"),
+            str(staging_parent),
+            allow_dirty=True,
+            workload="w1",
+        )
+    assert str(excinfo.value) == "workload must be one of w0, wo, wv, got 'w1'"
+    assert calls == []
+    assert not store.exists()  # refused before the sweep touched the store
+    # The CLI flag's own choices refuse the same name earlier still.
+    with pytest.raises(SystemExit):
+        evalrun.parse_args(
+            ["--stage", "s9", "--p", "0.4", "--seeds", "1", "--store", str(store), "--recefore",
+             str(tmp_path / "recefore"), "--workload", "w1"]
+        )
+
+
+def test_run_all_hands_every_run_the_sweeps_workload_and_poll_rule(tmp_path: Path, monkeypatch, capsys):
+    """The sweep's own settings reach each `run_one` call as keywords, not just `run_all`'s
+    validation. Without this, a sweep asked for "wv" would run the default load while every
+    meta.json recorded "wv", and the mislabelling would surface only as a whole campaign of
+    the wrong load. `state_poll_rule` rides the same call and had the same unpinned link,
+    so it is asserted here too."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        evalrun,
+        "run_one",
+        lambda *a, **kw: calls.append(kw) or evalrun.RunOutcome(a[0], a[1], "skipped"),
+    )
+    staging_root = tmp_path / "staging"
+    store = tmp_path / "store"
+
+    outcomes = evalrun.run_all(
+        [0.4],
+        [1, 2],
+        "s9wv",
+        str(store),
+        str(tmp_path / "recefore"),
+        str(staging_root),
+        allow_dirty=True,
+        k=4,
+        workload="wv",
+        state_poll_rule=_T37R,
+    )
+
+    assert capsys.readouterr().out == "p=0.4 seed=1 status=skipped\np=0.4 seed=2 status=skipped\n"
+    assert [(o.p, o.seed) for o in outcomes] == [(0.4, 1), (0.4, 2)]
+    assert [call["workload"] for call in calls] == ["wv", "wv"]
+    assert [call["state_poll_rule"] for call in calls] == [_T37R, _T37R]
