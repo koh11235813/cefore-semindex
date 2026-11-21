@@ -1,0 +1,88 @@
+Cell s6b10p043 p 0.2 W0, seeds 1 to 20, 5 Mode B replicates, through evidence/18's engine.
+
+Step 1, reproduction of evidence/18/bound_cells.csv (early-record delay and polls per run):
+  fix0.5       delay 5380.163292 ms (csv 5380.163292)  polls 1743.930000 (csv 1743.930000)  same
+  fix0.8       delay 6131.719000 ms (csv 6131.719000)  polls 1127.780000 (csv 1127.780000)  same
+  fix1.359     delay 7454.800667 ms (csv 7454.800667)  polls 682.660000 (csv 682.660000)  same
+  fix2.2       delay 9606.727833 ms (csv 9606.727833)  polls 424.240000 (csv 424.240000)  same
+  fix3.695     delay 13934.615000 ms (csv 13934.615000)  polls 256.090000 (csv 256.090000)  same
+  fix6.0       delay 21047.826333 ms (csv 21047.826333)  polls 159.250000 (csv 159.250000)  same
+  fix10.043    delay 30636.847373 ms (csv 30636.847373)  polls 95.780000 (csv 95.780000)  same
+  T37r         delay 18949.062833 ms (csv 18949.062833)  polls 166.130000 (csv 166.130000)  same
+  F_restricted gain +10.7 (bound.md +10.7)  delay 17936.641333 ms (csv 17936.641333)  polls 168.170000 (csv 168.170000)  same
+
+Reproduced to the printed digits of bound_cells.csv: the seven fixed arms' and T37r's early-record delay and polls per run, and F_restricted's pooled out-of-sample delay and polls per run, plus its pooled out-of-sample gain to the one digit bound.md prints.
+The two fold members were read from bound.md; the selection that chose them was not re-run, so the cross-fitted search itself is unchecked.
+
+T37r as an evidence/15 `on_timeout: reset` rule and as the member (3.695, 2.0, 10.043, 3.695, no cap): the same row.
+
+Step 2, coordinate ascent from T37r, 3 sweeps, ties to the earliest value, objective the early-record gain against the seven arms of the same 20 seeds. Family 48 members, 11 visited by the ascent.
+Family: i_min and i_max on evidence/18's arm grid inside [3.695, 10.043] s with i_max >= i_min, factor in [1.2, 1.5, 2.0, 3.0], jitter_frac 0.1, on a timeout keep or reset to i_min, no k_cap.
+
+What each of the three sweeps ended on, in order:
+  sweep 1: {"i_min_s": 3.695, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+           gain +11.1, coordinates that moved in this sweep: factor
+  sweep 2: {"i_min_s": 3.695, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+           gain +11.1, coordinates that moved in this sweep: none
+  sweep 3: {"i_min_s": 3.695, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+           gain +11.1, coordinates that moved in this sweep: none
+
+Winner (the pinned F):
+  --poll-rule '{"i_min_s": 3.695, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}'
+  I_min 3.695 m 1.5 I_max 10.043 jf 0.1, on a timeout I = 3.695, m stops after no cap empty replies
+  F pinned                                     gain +11.1 (+5.8 .. +15.5, 2000 resamples)  delay 16665.0 ms  polls 182.07 per run
+  The gain above is IN SAMPLE on seeds 1 to 20: the same 20 seeds chose this member and scored it.
+  It is not an estimate of this member's gain on new seeds, and the bootstrap interval does not make it one.
+
+Beside it, on the same 20 seeds and the same frontier:
+  T37r (i_min 3.695, m 2, i_max 10.043, reset) gain +6.6 (+2.2 .. +11.0, 2000 resamples)  delay 18949.1 ms  polls 166.13 per run
+  evidence/18 fold A winner I_min 6.0 m 1.2 I_max 10.043 jf 0.1, on a timeout I = 3.695, m stops after no cap empty replies
+    outside the family: its reset target is not i_min, and engine.StatePollRule resets to i_min_s only.
+  evidence/18 fold B winner                    gain +11.1 (+5.8 .. +15.5, 2000 resamples)  delay 16665.0 ms  polls 182.07 per run
+
+Top five of the members the ascent visited, in sample on seeds 1 to 20:
+  1. {"i_min_s": 3.695, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}  <- the pinned F
+                                               gain +11.1  delay 16665.0 ms  polls 182.07 per run
+  2. {"i_min_s": 3.695, "factor": 1.5, "i_max_s": 6.0, "jitter_frac": 0.1, "on_timeout": "reset"}
+                                               gain +9.3  delay 15155.4 ms  polls 207.82 per run
+  3. {"i_min_s": 3.695, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "keep"}
+                                               gain +7.3  delay 18880.3 ms  polls 165.34 per run
+  4. {"i_min_s": 3.695, "factor": 2.0, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+                                               gain +6.6  delay 18949.1 ms  polls 166.13 per run
+  5. {"i_min_s": 6.0, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}
+                                               gain +5.1  delay 23854.1 ms  polls 125.29 per run
+
+Every member of the family was scored as well, beyond the ascent's own path. The ascent's winner is also the best of the 48 scorable members on these 20 seeds.
+
+The family-wide top three, so that the winner's margin can be read here and not off the ascent's own path:
+  1. {"i_min_s": 3.695, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}  <- the pinned F
+                                               gain +11.1 (+5.8 .. +15.5, 2000 resamples)  delay 16665.0 ms  polls 182.07 per run
+  2. {"i_min_s": 6.0, "factor": 1.5, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "keep"}  (never visited by the ascent)
+                                               gain +10.0 (+4.4 .. +15.3, 2000 resamples)  delay 23511.3 ms  polls 118.82 per run
+  3. {"i_min_s": 3.695, "factor": 1.5, "i_max_s": 6.0, "jitter_frac": 0.1, "on_timeout": "reset"}
+                                               gain +9.3 (+4.5 .. +14.0, 2000 resamples)  delay 15155.4 ms  polls 207.82 per run
+  The winner leads the runner-up by 1.04 points. Both bootstrap intervals are printed above, and they are about 10 points wide, so these 20 seeds rank the two members without separating them.
+
+Where `on_timeout: reset` on the testbed and `i_timeout = i_min` in the replay differ,
+read by comparing src/semindex/engine.py with evidence/13/replay.py and
+evidence/18/bound.py line by line:
+  Same: a timeout resolves the newest poll only (engine.py _resolve_timed_out_poll,
+  replay.py resolve's first guard); the interval then goes to i_min; the next poll is
+  due at the poll's own send time plus that interval with the poll's own send-time
+  jitter draw, clamped forward to now (engine.py _redecide_next_poll, replay.py
+  resolve's `due_at = sent_at + applied * 1000.0` and `max(due_at, t)`); a reply that
+  brought nothing new multiplies by factor up to i_max, one that brought something new
+  drops to i_min (engine.py _advance_rule_interval, replay.py resolve).
+  One difference found: a reply that arrives and fails to decode hands the testbed
+  `empty is None`, which says a reply came back and could not be read. No branch of
+  engine.py _advance_rule_interval fires on it, so the testbed leaves the interval
+  where it is and a backed-off interval stays backed off. The replay's `if empty` is
+  falsy for None, so the replay drops the interval to i_min and lumps an unreadable
+  reply together with one that brought something new. The replay never produces that
+  case: evidence/13/replay.py's `no_new` returns a bool for every simulated reply, so
+  no number printed above moves. On the testbed a decode failure would leave the
+  interval backed off, so the rule would poll later than the replay says.
+  One difference in reach, not in behaviour: evidence/18's `i_timeout` may be any arm
+  interval, and `--poll-rule` can only reset to i_min_s. That is why evidence/18's
+  fold A winner cannot be launched, and why this family forces the reset target onto
+  i_min (see `norm`).
