@@ -349,6 +349,7 @@ def validate_settings(
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
+    state_poll_choice_redecide: bool | None = None,
     workload: str = DEFAULT_WORKLOAD,
 ) -> None:
     """Reject a records-per-generation count that is not an integer >= 1, a workload
@@ -358,6 +359,7 @@ def validate_settings(
     a store synchronous mode semindex.gen would refuse (see
     gen.parse_state_poll_interval_choices_s, gen.parse_state_poll_choice_jitter_frac,
     gen.parse_state_poll_policy, gen.parse_state_poll_rule,
+    gen.parse_state_poll_choice_redecide,
     gen.parse_max_in_flight_per_neighbor and
     gen.parse_store_synchronous), a poll policy or rule given together with choices or j
     included.
@@ -390,6 +392,11 @@ def validate_settings(
     gen.parse_state_poll_interval_choices_s(state_poll_interval_choices_s)
     gen.parse_state_poll_choice_jitter_frac(
         state_poll_choice_jitter_frac, have_choices=state_poll_interval_choices_s is not None
+    )
+    # 2026-11-22: after the choices, gen.parse_experiment's order again, so the knob
+    # without them reports its own "requires choices" and never a stale combination.
+    gen.parse_state_poll_choice_redecide(
+        state_poll_choice_redecide, have_choices=state_poll_interval_choices_s is not None
     )
     gen.parse_max_in_flight_per_neighbor(max_in_flight_per_neighbor)
     gen.parse_store_synchronous(store_synchronous)
@@ -723,6 +730,7 @@ def build_experiment(
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
+    state_poll_choice_redecide: bool | None = None,
     workload: str = DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> dict:
@@ -756,6 +764,9 @@ def build_experiment(
     {"i_min_s": ..., "factor": ..., "i_max_s": ..., "jitter_frac": ...,
     "on_timeout": ...}, is passed through the same way and cannot be combined
     with the policy, choices or j.
+    `state_poll_choice_redecide` (2026-11-22) makes a resolved poll re-draw the
+    choices interval; it is written only when True, requires choices, and None or
+    False writes nothing.
     `workload` (2026-11-19) is the record-creation shape: "w0", the default,
     is the 30 generation times 2 s apart this module has always used, and "wo"
     and "wv" switch generation on and off per origin (see `_onoff_ticks`). It
@@ -785,6 +796,7 @@ def build_experiment(
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
+        state_poll_choice_redecide=state_poll_choice_redecide,
         workload=workload,
     )
     name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
@@ -838,6 +850,11 @@ def build_experiment(
     # the key, so every earlier stage re-collected on this code generates its bytes.
     if state_poll_rule is not None:
         raw["state_poll_rule"] = state_poll_rule
+    # 2026-11-22: written only when on, never as an explicit false, so a choices run
+    # generated with the knob off stays byte for byte what this module generated
+    # before the key existed.
+    if state_poll_choice_redecide:
+        raw["state_poll_choice_redecide"] = True
     return raw
 
 
@@ -854,6 +871,7 @@ def generate_run(
     store_synchronous: str | None = None,
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
+    state_poll_choice_redecide: bool | None = None,
     workload: str = DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[str]:
@@ -879,8 +897,8 @@ def generate_run(
 
     `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac`,
     `max_in_flight_per_neighbor`, `store_synchronous`, `state_poll_policy`,
-    `state_poll_rule`, `workload` and `disconnect_duration_s` are passed
-    straight to `build_experiment`.
+    `state_poll_rule`, `state_poll_choice_redecide`, `workload` and
+    `disconnect_duration_s` are passed straight to `build_experiment`.
 
     Returns every path written, experiment description first.
     """
@@ -896,6 +914,7 @@ def generate_run(
         store_synchronous=store_synchronous,
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
+        state_poll_choice_redecide=state_poll_choice_redecide,
         workload=workload,
         disconnect_duration_s=disconnect_duration_s,
     )
@@ -971,6 +990,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         '"jitter_frac": 0.1, "on_timeout": "reset"}\'; not with --poll-policy/--interval-choices/--choice-jitter',
     )
     parser.add_argument(
+        "--choice-redecide",
+        action="store_true",
+        # None, not False, when the flag is absent: the key is then left out of the
+        # experiment description entirely, so a run generated without it keeps the
+        # bytes it had before the flag existed and is never refused for carrying a
+        # choices-only key without choices.
+        default=None,
+        dest="choice_redecide",
+        help="re-draw the interval when a poll is answered or times out; only with --interval-choices",
+    )
+    parser.add_argument(
         "--workload",
         choices=WORKLOADS,
         default=DEFAULT_WORKLOAD,
@@ -1006,6 +1036,7 @@ def main(argv: list[str] | None = None) -> int:
             store_synchronous=args.store_synchronous,
             state_poll_policy=parse_poll_policy_arg(args.poll_policy),
             state_poll_rule=parse_poll_rule_arg(args.poll_rule),
+            state_poll_choice_redecide=args.choice_redecide,
             workload=args.workload,
             disconnect_duration_s=parse_disconnect_duration_arg(args.disconnect_duration_s),
         )

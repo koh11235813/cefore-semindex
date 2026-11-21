@@ -2034,3 +2034,258 @@ def test_a_flat_rule_polls_exactly_like_the_same_one_row_policy(tmp_path: Path, 
     sent_policy = _run(f"policy-{on_timeout}", state_poll_policy=StatePollPolicy(intervals_s=(3.695,), jitter_frac=(0.1,)))
     assert sent_rule == sent_policy
     assert len(sent_rule) > 40 / (3.695 * 1.1)
+
+
+# -- re-deciding the choices draw when a poll resolves (state_poll_choice_redecide) ----
+
+# The three arms the live comparison runs are 3.695/6.0/10.043; these tests use 1/2/4
+# so that each draw's index, and the interval it maps to, can be read off by eye.
+_REDECIDE_CHOICES = (1.0, 2.0, 4.0)
+# The jitter factors the draws 0.75 and 0.0 map to at j = 0.1: neither is 1, so an
+# interval applied with the wrong draw shows up in the poll times.
+_J_UP = 1 + 0.1 * (2 * 0.75 - 1)
+_J_DOWN = 1 + 0.1 * (2 * 0.0 - 1)
+
+
+def _redecide_engine(
+    tmp_path: Path, choice: "_Cycle", choice_jitter: "_Cycle", *, redecide: bool = True, **overrides
+) -> tuple[SyncEngine, RecordingTransport, _Cycle]:
+    """A choices-mode engine over `_REDECIDE_CHOICES` with j = 0.1 holding seq 1 of its
+    own origin, drawing its index from `choice` and its jitter from `choice_jitter`;
+    the returned spy is stage 1's jitter rng, which must stay undrawn."""
+    store = Store(tmp_path / "h0.db")
+    transport = RecordingTransport()
+    spy = _Cycle(0.2)
+    config = SyncConfig(
+        group="g",
+        node="h0",
+        neighbors=("h1",),
+        state_poll_interval_choices_s=_REDECIDE_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=redecide,
+        **overrides,
+    )
+    engine = SyncEngine(
+        config, store, transport, poll_jitter_rng=spy, poll_choice_rng=choice, poll_choice_jitter_rng=choice_jitter
+    )
+    engine.create_record(content_name="c", zone="zone1", disaster="flood", media="image", observed_at=1)
+    engine.drain_events()
+    return engine, transport, spy
+
+
+def test_choices_without_redecide_never_reschedule(tmp_path: Path):
+    """The guard on the default: in choices mode with the knob off, a poll that passes
+    its lifetime and is then answered late re-decides nothing. No `state_poll_reschedule`
+    and no `state_poll_late_reply` is emitted -- that second event is the one a resolved
+    poll would produce -- and the next poll still goes at the send-time draw's own time,
+    4 * 1.05 after the first."""
+    choice, jitter = _Cycle(0.9), _Cycle(0.75)
+    engine, transport, spy = _redecide_engine(tmp_path, choice, jitter, redecide=False)
+    events = _drive(engine, [("tick", 0.0), ("tick", 2.0)])
+    engine.on_state("h1", _NOTHING_NEW, 2.5, poll_epoch_ms=0)
+    events += engine.drain_events()
+    assert _decisions(events, "state_poll_reschedule") == []
+    assert [e for e in events if e["event"] == "state_poll_late_reply"] == []
+    nxt = 4.0 * _J_UP
+    _drive(engine, [("tick", nxt - 0.001)])
+    assert _poll_names(transport) == [_state_name(0)]
+    _drive(engine, [("tick", nxt)])
+    assert _poll_names(transport) == [_state_name(0), _state_name(round(nxt * 1000))]
+    assert spy.calls == 0
+
+
+def test_redecide_draws_a_new_choice_on_an_answered_poll(tmp_path: Path):
+    """The poll at 0 draws 0.9 -> 4.0 and goes with 4 * 1.05. Its answer at 0.05
+    re-decides from a fresh draw, 0.0 -> 1.0, applied with that poll's own send-time
+    jitter (1.05, not the 0.25 the stream offers next) from that poll's own send time,
+    so the next poll is due at 1.05 and nothing is clamped. action_prob is 1/3, the
+    uniform draw's own probability, and the row carries the full decision state."""
+    choice, jitter = _Cycle(0.9, 0.0), _Cycle(0.75, 0.25)
+    engine, transport, spy = _redecide_engine(tmp_path, choice, jitter)
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    assert _decisions(engine.drain_events(), "state_poll_reschedule") == [
+        {
+            "event": "decision",
+            "ts_ms": 50,
+            "kind": "state_poll_reschedule",
+            "state": {
+                "in_flight": 0,
+                "last_timeout_s": None,
+                "truncated": False,
+                # h1's advertisement is already in: the re-decision happens after
+                # on_state has folded this reply into the tracker, so the row shows
+                # what the node knows once it has read the answer, which is what it
+                # knows at the moment it draws the next interval.
+                "origins": {"h0": {"hi": 1, "missing": 0, "advertised": {"h1": {"hi": 1, "notified_max": 1}}}},
+                "last_poll_status": "answered",
+                "consecutive_poll_timeouts": 0,
+            },
+            "action": {
+                "neighbor": "h1",
+                "poll_epoch_ms": 0,
+                "trigger": "answered",
+                "interval_s": 1.0,
+                "applied_interval_s": 1.0 * _J_UP,
+                "clamped": False,
+                "empty": True,
+            },
+            "action_prob": 1 / 3,
+        }
+    ]
+    assert engine._next_state_poll["h1"] == 1.0 * _J_UP
+    _drive(engine, [("tick", 1.0 * _J_UP - 0.001)])
+    assert _poll_names(transport) == [_state_name(0)]
+    _drive(engine, [("tick", 1.0 * _J_UP)])
+    assert _poll_names(transport)[-1] == _state_name(round(1.0 * _J_UP * 1000))
+    # Two index draws for the two polls plus one for the resolution; one jitter draw
+    # per poll and none for the resolution; stage 1's stream never.
+    assert (choice.calls, jitter.calls, spy.calls) == (3, 2, 0)
+
+
+def test_redecide_row_state_shows_what_the_reply_advertised_but_not_its_fetches(tmp_path: Path):
+    """Why the re-decision waits for the fold: the row's state has to show what this
+    very reply told the node, because that is what the node can observe when it draws
+    the next interval. h1 advertises hi 2 of h0 while h0 holds only seq 1, so the row
+    carries h1's advertisement and the backlog it creates -- a pre-fold snapshot would
+    show neither. `in_flight` is still 0 because the fetch this reply sets off is sent
+    after the row; the fetch_plan row proves that fetch did go out, so the 0 means
+    "before the plan" and not "nothing was planned"."""
+    engine, _, _ = _redecide_engine(tmp_path, _Cycle(0.9, 0.0), _Cycle(0.75, 0.25))
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _SOMETHING_NEW, 0.05, poll_epoch_ms=0)
+    events = engine.drain_events()
+    [row] = _decisions(events, "state_poll_reschedule")
+    assert row["state"] == {
+        "in_flight": 0,
+        "last_timeout_s": None,
+        "truncated": False,
+        "origins": {"h0": {"hi": 1, "missing": 1, "advertised": {"h1": {"hi": 2, "notified_max": 2}}}},
+        "last_poll_status": "answered",
+        "consecutive_poll_timeouts": 0,
+    }
+    assert row["action"]["empty"] is False
+    [plan] = _decisions(events, "fetch_plan")
+    assert plan["action"] == {"neighbor": "h1", "fetched": [["h0", 2]]}
+    assert plan["state"]["in_flight"] == 0
+    # The row's own timing is untouched by waiting for the fold: the fresh draw
+    # 0.0 -> 1.0, applied with the poll's send-time jitter, from the poll's send time.
+    assert (row["action"]["interval_s"], row["action"]["applied_interval_s"]) == (1.0, 1.0 * _J_UP)
+    assert (row["action"]["clamped"], row["action_prob"]) == (False, 1 / 3)
+    assert engine._next_state_poll["h1"] == 1.0 * _J_UP
+
+
+def test_redecide_draws_a_new_choice_on_a_timed_out_poll_and_clamps(tmp_path: Path):
+    """The poll at 0 draws 0.9 -> 4.0 and, with the jitter draw 0.0, goes with 3.6. Its
+    lifetime passes at 2.0, where the tick resolves it as timed out and re-draws
+    0.0 -> 1.0: 0 + 1 * 0.9 is already gone, so the row is clamped and the next poll is
+    held at now, which this same tick then polls."""
+    choice, jitter = _Cycle(0.9, 0.0, 0.5), _Cycle(0.0)
+    engine, transport, _ = _redecide_engine(tmp_path, choice, jitter)
+    events = _drive(engine, [("tick", 0.0), ("tick", 1.999)])
+    assert _decisions(events, "state_poll_reschedule") == []
+    events = _drive(engine, [("tick", 2.0)])
+    assert _decisions(events, "state_poll_reschedule") == [
+        {
+            "event": "decision",
+            "ts_ms": 2000,
+            "kind": "state_poll_reschedule",
+            "state": {
+                "in_flight": 0,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"h0": {"hi": 1, "missing": 0, "advertised": {}}},
+                "last_poll_status": "timed_out",
+                "consecutive_poll_timeouts": 1,
+            },
+            "action": {
+                "neighbor": "h1",
+                "poll_epoch_ms": 0,
+                "trigger": "timed_out",
+                "interval_s": 1.0,
+                "applied_interval_s": 1.0 * _J_DOWN,
+                "clamped": True,
+                "empty": None,
+            },
+            "action_prob": 1 / 3,
+        }
+    ]
+    # Held at `now`, not at the time already gone, so this same tick polls: the second
+    # state request carries epoch 2000, and its own draw (0.5 -> 2.0) then runs from there.
+    assert _poll_names(transport) == [_state_name(0), _state_name(2000)]
+    assert engine._next_state_poll["h1"] == 2.0 + 2.0 * _J_DOWN
+
+
+def test_redecide_row_carries_exactly_the_send_time_row_s_state_fields(tmp_path: Path):
+    """The whole point of re-deciding at resolution: the re-decision sees the same kind
+    of state the send-time decision does, so the two rows can be read as one question
+    asked twice. The field names are compared one by one, in order, not by count."""
+    engine, _, _ = _redecide_engine(tmp_path, _Cycle(0.9, 0.0), _Cycle(0.75))
+    events = _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    events += engine.drain_events()
+    [sent] = _decisions(events, "state_poll")
+    [reschedule] = _decisions(events, "state_poll_reschedule")
+    assert list(reschedule["state"]) == list(sent["state"])
+    assert list(reschedule["state"]["origins"]["h0"]) == list(sent["state"]["origins"]["h0"])
+
+
+def test_every_redecided_interval_is_one_of_the_choices_at_one_over_len(tmp_path: Path):
+    """Over eight answered polls whose draws walk the whole [0, 1) range, every
+    re-decided interval is one of the three choices, each index is reachable, and every
+    row's action_prob is exactly 1/3 -- the uniform draw a learner divides by."""
+    choice = _Cycle(0.0, 0.34, 0.67, 0.99, 0.5, 0.1, 0.8, 0.42)
+    engine, _, _ = _redecide_engine(tmp_path, choice, _Cycle(0.75))
+    rows = []
+    for _ in range(8):
+        rows += _decisions(_poll_cycle(engine, _NOTHING_NEW), "state_poll_reschedule")
+    assert {row["action"]["interval_s"] for row in rows} == set(_REDECIDE_CHOICES)
+    assert {row["action_prob"] for row in rows} == {1 / 3}
+    assert len(rows) == 8
+
+
+def test_redecide_draws_once_per_resolution_with_logging_off_as_well(tmp_path: Path):
+    """Stage 1's "logging adds no behavior" property, for the re-decision: with
+    log_decisions True and False the same Interests go out at the same times and the
+    index stream is drawn exactly as often -- once per poll plus once per resolved
+    poll. A decision event that drew its own value would shift every later interval."""
+
+    def _run(label: str, log_decisions: bool) -> tuple[list[str], int, int]:
+        """Drive one engine through four answered polls and one timeout; return the
+        state-request names it sent and both poll streams' draw counts."""
+        store = Store(tmp_path / f"{label}.db")
+        transport = RecordingTransport()
+        choice = _Cycle(0.1, 0.7, 0.4, 0.95, 0.25)
+        jitter = _Cycle(0.3, 0.8, 0.55)
+        engine = SyncEngine(
+            SyncConfig(
+                group="g",
+                node="h0",
+                neighbors=("h1",),
+                state_poll_interval_choices_s=_REDECIDE_CHOICES,
+                state_poll_choice_jitter_frac=0.1,
+                state_poll_choice_redecide=True,
+                log_decisions=log_decisions,
+            ),
+            store,
+            transport,
+            poll_choice_rng=choice,
+            poll_choice_jitter_rng=jitter,
+        )
+        for _ in range(4):
+            _poll_cycle(engine, _EMPTY_STATE_PAYLOAD)
+        due = engine._next_state_poll["h1"]
+        engine.on_tick(due)
+        engine.on_tick(due + 2.0)
+        engine.drain_events()
+        return _poll_names(transport), choice.calls, jitter.calls
+
+    sent_on, choice_on, jitter_on = _run("logging-on", True)
+    sent_off, choice_off, jitter_off = _run("logging-off", False)
+    assert sent_on == sent_off
+    assert (choice_on, jitter_on) == (choice_off, jitter_off)
+    # Six polls sent (the timeout's re-decided time falls in the past, so the tick that
+    # resolves it polls again at once) and five resolved: the index stream is drawn for
+    # both, the jitter stream only at send.
+    assert (choice_on, jitter_on) == (11, 6)
+    assert len(sent_on) == 6

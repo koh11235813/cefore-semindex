@@ -73,9 +73,9 @@ plotting tool can read a table directly, no reshaping:
   from that neighbor), `reschedule_answered`/`reschedule_timed_out` (the
   `state_poll_reschedule` lines by `trigger`) and `reschedule_clamped`
   (those with `clamped` true), and `late_replies`
-  (`state_poll_late_reply` events). The last four stay 0 for a run with
-  neither a state_poll_policy nor a state_poll_rule, whose agents never log
-  them. Same inclusive window
+  (`state_poll_late_reply` events). The last four stay 0 for a run whose
+  agents re-decided nothing -- no state_poll_policy, no state_poll_rule and
+  (2026-11-22) no state_poll_choice_redecide -- and never logged them. Same inclusive window
   cut on each line's ts_ms as decisions.csv (see `_poll_rows`).
 
 t0 (map.md "計測の窓"): every agent's own `elapsed_s` is `now -

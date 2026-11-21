@@ -82,7 +82,7 @@ class AgentConfig:
     schedule: tuple[ScheduledRecord, ...]
     probes: tuple[ScheduledProbe, ...]
     fault_drop_rec: dict[tuple[str, int], int]
-    sync_overrides: dict[str, float | int | tuple[float, ...] | StatePollPolicy | StatePollRule]
+    sync_overrides: dict[str, float | int | bool | tuple[float, ...] | StatePollPolicy | StatePollRule]
     receive_timeout_ms: int
     chunk_lifetime_ms: int
     # t0-relative seconds; None means never stop early (run until SIGTERM/SIGINT).
@@ -145,6 +145,7 @@ _ALLOWED_KEYS = (
         "seed",
         "state_poll_interval_choices_s",
         "state_poll_choice_jitter_frac",
+        "state_poll_choice_redecide",
         "state_poll_policy",
         "state_poll_rule",
         # A Store setting, not a SyncConfig field, so it is not in
@@ -371,6 +372,27 @@ def _validate_choice_jitter_frac(raw, *, have_choices: bool) -> float | None:
     return float(value)
 
 
+def _validate_choice_redecide(raw, *, have_choices: bool) -> bool | None:
+    """Validate the optional `state_poll_choice_redecide` (2026-11-22): whether a poll
+    that is answered or times out re-draws the choices interval instead of leaving the
+    draw made at the previous poll's send time standing.
+
+    Only meaningful with choices, so it is refused without them rather than silently
+    ignored, state_poll_choice_jitter_frac's own rule. Must be a real boolean: 1 or
+    "true" would turn the re-decision on through Python's truthiness while the config
+    says something this key never promised to read. Absent means SyncConfig's
+    default, which is off.
+    """
+    if "state_poll_choice_redecide" not in raw:
+        return None
+    if not have_choices:
+        raise ConfigError("state_poll_choice_redecide requires state_poll_interval_choices_s")
+    value = raw["state_poll_choice_redecide"]
+    if not isinstance(value, bool):
+        raise ConfigError("state_poll_choice_redecide must be a boolean")
+    return value
+
+
 def _validate_poll_policy(raw) -> StatePollPolicy | None:
     """Validate the optional `state_poll_policy` table (ADR 0004): an object with
     `intervals_s` and `jitter_frac`, equal-length lists of 1 to 4 numbers, row k
@@ -584,7 +606,7 @@ def validate_config(raw) -> AgentConfig:
 
     counters_snapshot_at_s = _validate_counters_snapshot_at_s(raw)
 
-    sync_overrides: dict[str, float | int | tuple[float, ...] | StatePollPolicy | StatePollRule] = {}
+    sync_overrides: dict[str, float | int | bool | tuple[float, ...] | StatePollPolicy | StatePollRule] = {}
     for key, kind in _SYNC_OVERRIDE_KEYS.items():
         if key in raw:
             _check_numeric(key, raw[key], kind, positive=key in _POSITIVE_NUMERIC_KEYS)
@@ -611,6 +633,13 @@ def validate_config(raw) -> AgentConfig:
     choice_jitter_frac = _validate_choice_jitter_frac(raw, have_choices=poll_interval_choices is not None)
     if choice_jitter_frac is not None:
         sync_overrides["state_poll_choice_jitter_frac"] = choice_jitter_frac
+    # 2026-11-22: the key rides on the choices, so it is validated after them, where
+    # whether they were given is already known. A table or a rule set beside it with
+    # no choices is reported by this key's own "requires" message; with choices, by
+    # the table's or the rule's own combination message, which runs first.
+    choice_redecide = _validate_choice_redecide(raw, have_choices=poll_interval_choices is not None)
+    if choice_redecide is not None:
+        sync_overrides["state_poll_choice_redecide"] = choice_redecide
     if poll_policy is not None:
         seed_required_by = "state_poll_policy"
     elif poll_rule is not None:

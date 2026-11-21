@@ -1568,3 +1568,117 @@ def test_cli_workload_reaches_the_written_schedule(tmp_path: Path):
     assert _ticks_of(raw, 0, 4) == _hand_wo_ticks(11, "h0")
     with pytest.raises(SystemExit):
         evalgen.parse_args(["--p", "0.4", "--seed", "1", "--stage", "s9", "--out", str(outdir), "--workload", "w1"])
+
+
+# -- re-deciding the choices draw (agent key state_poll_choice_redecide, 2026-11-22) --
+
+# The sweep this knob was added for: the three arms, j = 0.1, k = 4, the outage
+# disconnect shape and the default load.
+_REDECIDE_SETTINGS = dict(
+    k=4,
+    state_poll_interval_choices_s=[3.695, 6.0, 10.043],
+    state_poll_choice_jitter_frac=0.1,
+    store_synchronous="NORMAL",
+    workload="w0",
+    disconnect_duration_s=(8.0, 12.0),
+)
+# Computed with the same normalization as _normalized_digest on commit d009cfb,
+# before this knob existed, for seed 7 and `_REDECIDE_SETTINGS`. The knob off must
+# reproduce these: a stage already collected must not need re-running because this
+# code changed what it generates.
+_CHOICES_DIGESTS_BEFORE_THE_KNOB = {
+    0.2: "9d92188f6539876f2c8c0c270783bbeb3153be9723373acb3b8744e7c9121c25",
+    0.4: "06624b50dc50a532f218fcd5ef4c8e4e6861f0d2bca398faaaaa3d2c1ca2fec7",
+}
+
+
+@pytest.mark.parametrize("p", sorted(_CHOICES_DIGESTS_BEFORE_THE_KNOB))
+@pytest.mark.parametrize("redecide", [None, False])
+def test_the_redecide_knob_off_generates_the_bytes_it_did_before_the_key(p: float, redecide):
+    """Not passing it, and passing it as false, both generate exactly what this module
+    generated before the key existed -- experiment, ReCefore config and every agent
+    config -- for the settings the uniform-draw sweep uses."""
+    raw = evalgen.build_experiment(p, 7, "s11a", "/out", state_poll_choice_redecide=redecide, **_REDECIDE_SETTINGS)
+    assert "state_poll_choice_redecide" not in raw
+    assert _normalized_digest(raw) == _CHOICES_DIGESTS_BEFORE_THE_KNOB[p]
+
+
+def test_a_given_redecide_knob_reaches_every_agent_config():
+    """True is written into the experiment and into every agent config, beside the
+    choices and the run seed the re-decision draws from."""
+    raw = evalgen.build_experiment(0.2, 7, "s11a", "/out", state_poll_choice_redecide=True, **_REDECIDE_SETTINGS)
+    assert raw["state_poll_choice_redecide"] is True
+    configs = gen.generate(parse_experiment(raw), "/cfg").agent_configs
+    assert sorted(configs) == ["h0", "h1", "h2", "h3", "h4"]
+    for config in configs.values():
+        assert config["seed"] == 7
+        assert config["state_poll_choice_redecide"] is True
+        assert config["state_poll_interval_choices_s"] == [3.695, 6.0, 10.043]
+
+
+@pytest.mark.parametrize("redecide", [True, False])
+def test_validate_settings_rejects_the_redecide_knob_without_choices(redecide):
+    """The up-front sweep check refuses the knob without the choices it draws from, so
+    a misspelt sweep fails once here instead of at every (p, seed) run of it."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(1, None, state_poll_choice_redecide=redecide)
+    assert str(excinfo.value) == "state_poll_choice_redecide requires state_poll_interval_choices_s"
+
+
+def test_the_redecide_knob_without_choices_is_rejected_before_anything_is_written(tmp_path: Path):
+    """The refusal comes before any file is written, like every other bad setting."""
+    outdir = tmp_path / "run"
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.generate_run(0.2, 7, "s11a", str(outdir), state_poll_choice_redecide=True)
+    assert str(excinfo.value) == "state_poll_choice_redecide requires state_poll_interval_choices_s"
+    assert not outdir.exists()
+
+
+def test_cli_choice_redecide_reaches_the_written_agent_configs(tmp_path: Path):
+    """--choice-redecide goes through the CLI into the experiment JSON and every agent
+    config, and each written config loads as an agent config with the knob on."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        [
+            "--p", "0.2", "--seed", "1", "--stage", "s11a", "--out", str(outdir),
+            "--interval-choices", "3.695", "6.0", "10.043",
+            "--choice-jitter", "0.1",
+            "--choice-redecide",
+        ]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s11a_p020_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert raw["state_poll_choice_redecide"] is True
+    for host in evalgen.AGENTS:
+        path = outdir / "s11a_p020_seed1" / f"h{host}.json"
+        assert json.loads(path.read_text(encoding="utf-8"))["state_poll_choice_redecide"] is True
+        assert load_config(str(path), t0_ms=0).sync_overrides["state_poll_choice_redecide"] is True
+
+
+def test_cli_without_choice_redecide_writes_no_key(tmp_path: Path):
+    """Omitting the flag leaves the key out entirely rather than writing false: the
+    flag's own default is None, not False, for exactly that reason."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        [
+            "--p", "0.2", "--seed", "1", "--stage", "s11a", "--out", str(outdir),
+            "--interval-choices", "3.695", "6.0", "10.043",
+        ]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s11a_p020_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert "state_poll_choice_redecide" not in raw
+    for host in evalgen.AGENTS:
+        path = outdir / "s11a_p020_seed1" / f"h{host}.json"
+        assert "state_poll_choice_redecide" not in json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_cli_rejects_choice_redecide_without_interval_choices(tmp_path: Path, capsys):
+    """--choice-redecide alone exits 1 with the exact diagnostic, before anything is written."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(["--p", "0.2", "--seed", "1", "--stage", "s11a", "--out", str(outdir), "--choice-redecide"])
+    assert rc == 1
+    assert capsys.readouterr().err == (
+        "semindex.evalgen: state_poll_choice_redecide requires state_poll_interval_choices_s\n"
+    )
+    assert not outdir.exists()

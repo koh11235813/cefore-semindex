@@ -794,3 +794,58 @@ def test_parse_experiment_rejects_a_state_poll_rule_with_the_table_or_the_choice
     with pytest.raises(ExperimentError) as exc_info:
         parse_experiment(_minimal_raw(state_poll_rule=_RULE, **extra))
     assert str(exc_info.value) == message
+
+
+# -- state_poll_choice_redecide (agent key, 2026-11-22) ----------------------
+
+
+def test_the_redecide_knob_reaches_every_agent_config_with_the_choices_and_the_seed():
+    """Given true beside choices, every agent config carries the knob, the choices and
+    the run seed (the re-decision draws from the same seeded choice stream)."""
+    raw = _minimal_raw(seed=9, state_poll_interval_choices_s=[1.0, 2.0], state_poll_choice_redecide=True)
+    configs = generate(parse_experiment(raw), "/cfg").agent_configs
+    assert sorted(configs) == ["h0", "h1"]
+    for config in configs.values():
+        assert config["seed"] == 9
+        assert config["state_poll_interval_choices_s"] == [1.0, 2.0]
+        assert config["state_poll_choice_redecide"] is True
+
+
+def test_the_redecide_knob_off_writes_no_key_at_all():
+    """Absent, and spelled out as false, both write nothing, so an existing choices
+    experiment's agent configs stay byte for byte what they were before the key."""
+    for extra in ({}, {"state_poll_choice_redecide": False}):
+        raw = _minimal_raw(seed=9, state_poll_interval_choices_s=[1.0, 2.0], **extra)
+        for config in generate(parse_experiment(raw), "/cfg").agent_configs.values():
+            assert "state_poll_choice_redecide" not in config
+
+
+def test_a_written_redecide_knob_passes_the_agents_own_validation(tmp_path: Path):
+    """The written agent config loads, so gen's rules are no looser than the agent's."""
+    experiment = tmp_path / "exp.json"
+    raw = _minimal_raw(seed=9, state_poll_interval_choices_s=[1.0, 2.0], state_poll_choice_redecide=True)
+    experiment.write_text(json.dumps(raw), encoding="utf-8")
+    write_experiment(str(experiment), str(tmp_path / "out"))
+    config = load_config(str(tmp_path / "out" / "mini" / "h0.json"))
+    assert config.sync_overrides["state_poll_choice_redecide"] is True
+
+
+@pytest.mark.parametrize("extra", [{}, {"state_poll_policy": _POLICY}, {"state_poll_rule": _RULE}])
+def test_parse_experiment_rejects_the_redecide_knob_without_choices(extra: dict):
+    """The knob draws from the choices stream, so without the choices there is nothing
+    to re-draw and it is refused rather than silently ignored. Beside a table or a
+    rule the same message stands: neither of those has any choices to re-draw either,
+    and their own combination lists stay exactly the keys they already named."""
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(_minimal_raw(seed=9, state_poll_choice_redecide=True, **extra))
+    assert str(exc_info.value) == "state_poll_choice_redecide requires state_poll_interval_choices_s"
+
+
+@pytest.mark.parametrize("value", [1, 0, "true", [], {}])
+def test_parse_experiment_rejects_a_non_boolean_redecide_knob(value):
+    """Only a real boolean: 1 or "true" would turn the re-decision on through Python's
+    truthiness from a value this key never promised to read."""
+    raw = _minimal_raw(seed=9, state_poll_interval_choices_s=[1.0, 2.0], state_poll_choice_redecide=value)
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(raw)
+    assert str(exc_info.value) == "state_poll_choice_redecide must be a boolean"

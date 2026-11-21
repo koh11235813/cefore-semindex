@@ -2160,3 +2160,61 @@ def test_build_agent_draws_rule_jitter_from_the_seed_and_node_jitter_stream(tmp_
                 applied.append(event["action"]["applied_interval_s"])
                 now += event["action"]["applied_interval_s"]
     assert applied == [3.695 * (1 + 0.1 * (2 * stream() - 1)) for _ in range(5)]
+
+
+# -- state_poll_choice_redecide (re-draw the choices interval, 2026-11-22) ------------
+
+
+@pytest.mark.parametrize(
+    "overrides, message",
+    [
+        (
+            {"state_poll_choice_redecide": True},
+            "state_poll_choice_redecide requires state_poll_interval_choices_s",
+        ),
+        (
+            {"state_poll_choice_redecide": False},
+            "state_poll_choice_redecide requires state_poll_interval_choices_s",
+        ),
+        (
+            {"state_poll_policy": _POLICY, "seed": 1, "state_poll_choice_redecide": True},
+            "state_poll_choice_redecide requires state_poll_interval_choices_s",
+        ),
+        (
+            {"state_poll_rule": _RULE, "seed": 1, "state_poll_choice_redecide": True},
+            "state_poll_choice_redecide requires state_poll_interval_choices_s",
+        ),
+        (
+            {"state_poll_interval_choices_s": [1], "seed": 1, "state_poll_choice_redecide": 1},
+            "state_poll_choice_redecide must be a boolean",
+        ),
+        (
+            {"state_poll_interval_choices_s": [1], "seed": 1, "state_poll_choice_redecide": "true"},
+            "state_poll_choice_redecide must be a boolean",
+        ),
+    ],
+)
+def test_validate_config_rejects_the_redecide_knob_without_choices_or_as_a_non_boolean(
+    overrides: dict, message: str
+):
+    """The knob draws from the choices stream, so it means nothing without the choices
+    and is refused rather than silently ignored -- beside a table or a rule too, which
+    have no choices to re-draw. `false` is refused the same way: a config that names a
+    key that cannot apply is a config that does not mean what it says. 1 and "true"
+    are refused because Python's truthiness would turn the re-decision on from a value
+    this key never promised to read. Each fails with its own exact diagnostic."""
+    raw = _minimal_raw()
+    raw.update(overrides)
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == message
+
+
+def test_validate_config_carries_the_redecide_knob_and_defaults_it_to_off():
+    """A given true reaches SyncConfig; with choices and no key, SyncConfig's False
+    applies, which is what every choices run made before the key did."""
+    raw = _minimal_raw()
+    raw.update(state_poll_interval_choices_s=[0.5], seed=1, state_poll_choice_redecide=True)
+    assert build_sync_config(validate_config(raw)).state_poll_choice_redecide is True
+    del raw["state_poll_choice_redecide"]
+    assert build_sync_config(validate_config(raw)).state_poll_choice_redecide is False
