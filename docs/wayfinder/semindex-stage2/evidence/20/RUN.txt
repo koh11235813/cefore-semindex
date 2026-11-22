@@ -1,0 +1,95 @@
+Commands for the analysis half of evidence/20 (perrun.py, ana.py), in order, from this directory.
+Worktree /home/lab_shared/wt/semindex-ev20 on docs/stage2-evidence-20 at a8add2c; interpreter = the
+cefore-semindex checkout's venv; no bytecode written. Run on 2026-11-22.
+
+W=/home/lab_shared/wt/semindex-ev20
+PY=/home/lab_shared/cefore-semindex/.venv/bin/python3
+export PYTHONDONTWRITEBYTECODE=1
+export AGG=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev20ana/agg-full
+export MPLCONFIGDIR=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev20ana/mpl
+# (session scratch, not kept; AGG holds evalagg output, one dir per s10 stage; MPLCONFIGDIR only keeps
+#  evalagg's matplotlib import from making a /tmp/matplotlib-* cache of its own each call)
+mkdir -p $AGG $MPLCONFIGDIR
+for st in s10b3p695 s10b6p0 s10b10p043 s10t37r s10f; do
+  PYTHONPATH=$W/src $PY -B -m semindex.evalagg --store /home/lab_shared/semindex-eval --stage $st --out $AGG/$st
+done                                             # 3 min 42 s over the five stages
+# STORE defaults to /home/lab_shared/semindex-eval (perrun.py, ana.py)
+# PYTHONPATH=$W/src comes first everywhere: the venv's installed semindex points at another checkout,
+# so the evalagg loop and perrun.py would import the wrong package without it. `python -I` cannot be
+# used for the same reason, since it drops PYTHONPATH.
+
+PYTHONPATH=$W/src:../05:../07 $PY -B perrun.py   # 3 s; perrun.csv, per-stage dirs/done and sanity counters on stderr
+PYTHONPATH=$W/src $PY -B ana.py > /dev/null      # 4 s; results.csv, results.md (stdout = results.md)
+
+perrun.py imports evidence/09's perrun.py (the all-record half of each row), evidence/05's run_all and
+attrib, semindex.evalagg and semindex.evalgen. ana.py imports only csv, numpy and the standard library.
+
+perrun.py stops before writing in two cases, both of which would otherwise corrupt a stage's polls per
+run while leaving its delay right: a run whose discovery rows AGG has not seen yet ("AGG is older than
+the store"), and a DONE run that folds a number of polls.csv rows other than 8, which is the one row
+per directed neighbour pair of the line h0 .. h4. The fix for both is to rerun the evalagg loop and
+then perrun.py. All 200 runs folded 8 rows each, 320 per stage.
+
+perrun.py also prints on stderr how many runs have 4-hop sums from the discovery rows that differ from
+attrib's own censoring chain, and the totals of `sched_regen_diff`, `head_missing_disc` and
+`all_missing_disc`. All four were 0 over the 200 runs, so the headline scoring and the all-record
+scoring rest on the same censoring rule, no scheduled record is missing from the aggregation, and every
+run's instants are the generator's own draw.
+
+Check afterwards: git status --short shows nothing outside evidence/20 (no __pycache__ under
+evidence/05, 07, 09); uvx ruff@0.17.2 check docs/wayfinder/semindex-stage2/evidence/20/ from the
+worktree root is clean, then rm -rf .ruff_cache.
+A second run of both scripts gives byte-identical perrun.csv, results.csv and results.md. README.md is
+written by hand out of results.md and is not produced by either script.
+
+Which code the analysis ran on, against the code the runs were made with
+------------------------------------------------------------------------
+The runs were made with semindex d009cfb270909beda1f277943f99c93acb9e96e2; this worktree is at a8add2c,
+which is a descendant of it. What moved between the two under src:
+
+  git diff --stat d009cfb a8add2c -- src
+    agent.py 33, engine.py 194, evalagg.py 6, evalgen.py 35, evalrun.py 38, gen.py 35
+
+  git diff d009cfb a8add2c -- src/semindex/evalagg.py
+    three lines of the module docstring, describing when the four reschedule counters stay 0. No code.
+
+Which of those the analysis imports, checked by reading sys.modules after importing perrun.py: five of
+the six are in the chain (agent, engine, evalagg, evalgen, gen), because evalagg imports
+semindex.agent and evalgen imports semindex.gen. Only evalrun.py is outside it, and ana.py imports no
+semindex module at all. So these modules being imported is not in question; what matters is whether
+the changed lines are in anything the analysis calls, and they are not:
+
+  evalagg.discover_runs, evalagg.run_has_done_marker, evalagg.derive_t0_ms  (perrun.py, attrib.py)
+  evalgen.RECORD_ORIGIN_HOSTS, evalgen._record_schedule                     (perrun.py)
+  evalgen.WINDOW_START_S, evalgen.WINDOW_END_S                              (attrib.py)
+
+Every diff hunk outside evalagg's docstring adds the `state_poll_choice_redecide` knob: to gen's
+experiment parsing, to evalgen's validate_settings/build_experiment/generate_run/parse_args, to
+agent's config validation and to engine's poll arithmetic. None of them touches the names above.
+
+Measured rather than argued: perrun.py was run once more with PYTHONPATH pointing at a copy of src at
+d009cfb (`git archive d009cfb src` into session scratch, confirmed by printing
+semindex.evalgen.__file__ and semindex.evalagg.__file__ from that copy). The perrun.csv it wrote is
+byte-identical to the one committed here. ana.py needs no such check, since it imports no semindex
+module.
+
+Runs
+----
+sudo bash main10.run.sh sweep, from a scratch copy of this directory's main10.sh. The copy is
+byte-identical (`cmp`) both to main10.sh here and to main10.sh as committed at 47102b4. Start
+2026-11-22T02:30:19+09:00, finished 2026-11-22T11:22:01+09:00: 8 h 51 m 42 s for 200 runs, 159.5 s per
+run. From the detached clean checkout /home/lab_shared/wt/semindex-main10 at
+d009cfb270909beda1f277943f99c93acb9e96e2, dirty 0 at the start of the sweep; after the last run that
+checkout still reads d009cfb with an empty `git status --short`. recefore
+25ad4e94c55e006bdc8103de7c3edff3b6aba83c, dirty 0.
+
+The run log holds 200 `== exit 0` lines and 200 `valid=True flags=0` lines, 40 of each per stage. Its
+first line is the header
+  == commit d009cfb270909beda1f277943f99c93acb9e96e2 dirty=0 recefore 25ad4e94c55e006bdc8103de7c3edff3b6aba83c dirty=0 start 2026-11-22T02:30:19+09:00
+and its last is
+  == main10 sweep finished 2026-11-22T11:22:01+09:00
+The log itself is session scratch and is not committed:
+/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/ev20run/sweep.log
+
+Every one of the 200 stored meta.json files carries semindex d009cfb with dirty false; ana.py prints
+that per stage under pass line 1, so the "no gate stage" argument can be read off the runs.
