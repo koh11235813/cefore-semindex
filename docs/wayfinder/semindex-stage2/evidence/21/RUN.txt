@@ -1,0 +1,252 @@
+Commands of evidence/21 in the order they ran: the smoke gate, the 200-run sweep, then the analysis.
+The smoke runs and the sweep were made from the detached clean checkout /home/lab_shared/wt/semindex-main11
+at a8add2cff4275317ddceea0a6068e5a1dd18e3da; the analysis from this directory in the worktree
+/home/lab_shared/wt/semindex-ev21 on docs/stage2-evidence-21 at b7af1be. Interpreter = the cefore-semindex
+checkout's venv; no bytecode written. All of it on 2026-11-22.
+
+The clock times below come from the header and footer lines of the two run logs and from `date` lines
+printed around the analysis commands. The analysis command lines of section 3 are the ones that were
+typed, with their redirections. The files that caught evalagg's stdout and stderr are both empty: it
+printed nothing on either.
+
+W=/home/lab_shared/wt/semindex-ev21
+PY=/home/lab_shared/cefore-semindex/.venv/bin/python3
+export PYTHONDONTWRITEBYTECODE=1
+export SCR=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad
+# SCR is session scratch and is not kept in the repo. The run logs, the smoke gate's output and the
+# evalagg output of the stage all live under it; each is named where it is used below.
+
+1. The smoke gate, before the sweep
+-----------------------------------
+sudo bash $SCR/ev21run/main11.run.sh smoke       # 12:07:12 to 12:12:31, 5 m 19 s, 2 runs
+cd $W/docs/wayfinder/semindex-stage2/evidence/21
+$PY -B smoke.py                                  # 14 PASS lines, 7 per run
+
+main11.run.sh is a scratch copy of this directory's main11.sh. The copy is byte-identical (`cmp`) both to
+main11.sh here and to main11.sh as committed at 8b00f9a. Stage `s11smoke`, seed 101, one run at p 0.2 and
+one at p 0.4, with the sweep's settings exactly. Seed 101 lies outside the sweep's seeds 1 to 100 and
+outside evidence/20's held-out seeds 121 to 160, so neither set is spent on it.
+
+smoke.py printed PASS on all seven checks for both runs and nothing else: it prints no delay, no poll
+count and no row count, so no number out of a pilot run was read before the prediction was read. Its
+output is kept at $SCR/ev21run/smoke.check.txt and its last line is
+  every check passed; the sweep may start
+The sweep was started after that line.
+
+gate.py, the checks on the replay's copy of the re-decision branch, was run before the smoke runs.
+No file holding its output was found among the session scratch paths this file names, so its command line
+and its timings are not recorded here. What it found is written up in spec.md's `gate.py` section.
+
+2. The sweep
+------------
+sudo bash $SCR/ev21run/main11.run.sh sweep       # 12:12:48 to 21:04:25, 8 h 51 m 37 s for 200 runs
+
+Stage `s11a`, p outer: p 0.2 seeds 1 to 100 first, then p 0.4 seeds 1 to 100. One evalrun call per
+(p, seed), so a sweep stopped part way redoes one run only. Every call carried
+  --stage s11a --p <p> --seeds <seed> --k 4 --store-synchronous NORMAL --workload w0
+  --disconnect-duration-s 8 12 --interval-choices 3.695 6.0 10.043 --choice-jitter 0.1 --choice-redecide
+
+8 h 51 m 37 s over 200 runs is 159.5 s per run, which includes the teardown between runs. The runs
+themselves are shorter: over the 200 stored meta.json files, `wall_clock_end` minus `wall_clock_start` is
+157.6 s at the lowest, 158.5 s at the highest and 158.08 s on average (read for this file from the store,
+stored nowhere else).
+
+Counts in the log, $SCR/ev21run/sweep.log, which is session scratch and is not committed:
+  200 lines `== exit 0`, and no line with any other exit status;
+  200 lines `valid=True flags=0`;
+  first line
+    == commit a8add2cff4275317ddceea0a6068e5a1dd18e3da dirty=0 recefore 25ad4e94c55e006bdc8103de7c3edff3b6aba83c dirty=0 start 2026-11-22T12:12:48+09:00
+  last line
+    == main11 sweep finished 2026-11-22T21:04:25+09:00
+
+The checkout the runs loaded still reads a8add2cff4275317ddceea0a6068e5a1dd18e3da with an empty
+`git status --porcelain`, checked at 21:05 and read again while this file was written. The emulator
+checkout /home/lab_shared/cefore-emu-sslab stood at 25ad4e94c55e006bdc8103de7c3edff3b6aba83c, dirty 0.
+Every one of the 200 stored meta.json files carries that semindex commit with dirty false; ana.py prints
+it per cell under pass line 3, so it can be read off the runs and not only off this file.
+
+3. The analysis, after the sweep
+--------------------------------
+export AGG=$SCR/t21post/author/agg
+export MPLCONFIGDIR=$SCR/t21post/author/mpl
+# AGG holds the evalagg output, one directory per stage; MPLCONFIGDIR only keeps evalagg's matplotlib
+# import from making a /tmp/matplotlib-* cache of its own on each call.
+A=$SCR/t21post/author
+PYTHONPATH=$W/src $PY -B -m semindex.evalagg --store /home/lab_shared/semindex-eval --stage s11a \
+    --out $AGG/s11a > $A/evalagg.s11a.out 2> $A/evalagg.s11a.err    # 21:05:17 to 21:14:07, 8 m 50 s
+PYTHONPATH=$W/src $PY -B perrun.py > $A/perrun.s11a.out 2> $A/perrun.s11a.err
+                                                 # 21:14:07 to 21:14:17, 10 s; perrun.csv (200 rows), the
+                                                 #   per-stage line and the sanity counters on stderr
+$PY -B ana.py > $A/ana.s11a.out 2> $A/ana.s11a.err
+                                                 # a few seconds; results.csv, results.md. stdout is
+                                                 #   results.md (the caught file is byte-identical to it),
+                                                 #   stderr is empty
+
+STORE, STAGE, SEEDS and OUT were all left at their defaults (`/home/lab_shared/semindex-eval`, `s11a`,
+`1-100`, this directory), so neither output file carries the test banner the two scripts write when any of
+the four is overridden.
+
+PYTHONPATH=$W/src comes first because the venv's installed semindex points at another checkout, and both
+the evalagg call and perrun.py would import the wrong package without it. `python -I` cannot be used for
+the same reason, since it drops PYTHONPATH. Unlike evidence/20's perrun.py, this one puts ../05, ../07 and
+../09 on sys.path itself, by absolute path from its own location, so PYTHONPATH carries src alone and the
+script runs from any working directory.
+
+perrun.py imports evidence/20's perrun.py (loaded under the name `perrun20`, since this file has the same
+basename), through it evidence/09's perrun.py, evidence/05's run_all and attrib, and semindex.evalagg and
+semindex.evalgen. ana.py imports nothing outside the standard library (csv, json, math, os, re,
+statistics, sys, collections.Counter) and reads perrun.csv, the frozen predict.txt and the two smoke
+runs' meta.json.
+
+perrun.py stops before writing in three cases, each of which would otherwise leave a cell's counts wrong
+with nothing else saying so: a run whose discovery rows the evalagg output has not seen yet (the output is
+older than the store), a DONE run that folds a number of polls.csv rows other than 8, which is the one row
+per directed neighbour pair of the line h0 .. h4, and a reschedule row whose `trigger` is neither
+`answered` nor `timed_out`. All 200 runs folded 8 rows each, 800 per cell. The fix for the first two is to
+rerun the evalagg call and then perrun.py.
+
+4. Which code the analysis ran from, and when it was written
+------------------------------------------------------------
+perrun.py and ana.py were committed before this stage's data was opened:
+  9edb4f5  2026-11-22 18:53:20 +0900  adds both scripts
+  b7af1be  2026-11-22 19:01:00 +0900  the four fixes an outside review asked for
+Both were pushed at 19:01, when 153 of the 200 runs had finished: counted for this file from the
+`wall_clock_end` of the 200 stored meta.json files, 153 of which are at or before 19:01:00+09:00. The
+sweep ran to 21:04:25 and the analysis began at 21:05:17. Those 153 run directories were on disk and
+readable when the scripts were pushed; what this file can say is that the author opened none of them, and
+nothing under the stage's directory, before 21:05. The scripts were developed on the two smoke runs, on
+evidence/20's two rule stages and on fake stores built in session scratch.
+
+The analysis ran from b7af1be, which is a descendant of a8add2c, the commit the runs were made from.
+`git diff --stat a8add2c b7af1be -- src` prints nothing: no file under src differs between the commit the
+runs loaded and the commit the analysis ran from. Six commits lie between them, and all six touch docs
+only (8b00f9a, c923ef0, a8a42de, 8226c61, 9edb4f5, b7af1be). So the version check evidence/20's RUN.txt
+had to argue hunk by hunk does not arise here.
+
+5. The sanity counters on perrun.py's stderr
+--------------------------------------------
+Read after the run and recorded here. results.md says they are printed on stderr only. That sentence is
+incomplete: evidence/09's eleven counters and the three schedule counters are also columns of perrun.csv,
+one value per run, and the stderr line is their sum. ana.py does not read them back, so this file is where
+their totals are written down. The digits are the ones the script printed.
+
+  s11a dirs=200 done=200
+  wrote .../evidence/21/perrun.csv 200
+  s11a runs=200 exact_n=191300.0 exact_within1=191300.0 exact_maxerr=0.0 exact_censor_disagree=0
+    exact_missing_in_discovery=0 runs_without_discovery_rows=0 stored_without_learn=0 hop_no_gap_before=0
+    hop_gap_outside_window=1600.0 reply_before_any_poll=0 neg_fetch=0
+  sched_regen_diff over all runs: 0
+  head_missing_disc over all runs: 0
+  all_missing_disc over all runs: 0
+  node_logs over all runs: 1000
+  bad_action_prob over all runs: 0
+  bad_interval over all runs: 0
+  bad_draw_rows over all runs: 0
+  arm_other over all runs: 0
+
+What each of them says, and what a zero there means. The first ten are evidence/09's record-set
+counters, incremented in evidence/05/attrib.py at the lines named.
+
+  dirs=200 done=200       200 seed directories exist under the stage and all 200 carry a DONE marker. A
+                          smaller `done` would mean the analysis read a stage that is still being swept.
+  exact_n=191300.0        the (record, node) pairs whose delay both this analysis and evalagg's
+                          discovery.csv hold a time for (attrib.py:441).
+  exact_within1=191300.0  of those, how many agree to within 1 ms. Equal to exact_n, so every pair agrees
+                          (attrib.py:442).
+  exact_maxerr=0.0        the largest difference between the two times. A zero means the delay of pass
+                          line 5 is counted on exactly the arrivals evalagg counted (attrib.py:443).
+  exact_censor_disagree=0 pairs this analysis calls censored while discovery.csv does not, or the reverse.
+                          A zero means both sides leave the same records out of the delay
+                          (attrib.py:434).
+  exact_missing_in_discovery=0
+                          in-window records with no discovery.csv row at all. A zero means no record was
+                          timed against a row that is not there (attrib.py:430).
+  runs_without_discovery_rows=0
+                          runs with no discovery rows in the aggregation. A zero means every run's delay
+                          rests on its own rows (attrib.py:420).
+  stored_without_learn=0  records a node stored although no moment at which it learned of them is visible
+                          in its log. A zero means the wait-and-fetch split is complete for every stored
+                          record (attrib.py:376).
+  hop_no_gap_before=0     record arrivals with no decision row before them on that (node, neighbour)
+                          pair. A zero means every arrival has a decision to attribute it to
+                          (attrib.py:387).
+  reply_before_any_poll=0 state replies that arrived before that pair's first poll. A zero means no reply
+                          was folded into a poll that had not been sent (attrib.py:272).
+  neg_fetch=0             records whose fetch time came out negative, that is, stored before learned. A
+                          zero means no leg of the chain runs backwards (attrib.py:382).
+  sched_regen_diff 0      how many of a run's two record origins hold instants the committed generator
+                          does not draw again for that (host, seed, k, workload). A zero over all runs
+                          means the instants the testbed ran are the instants the prediction scored
+                          (evidence/20/perrun.py's docstring, the `sched_regen_diff` entry).
+  head_missing_disc 0     headline records with no discovery row, and
+  all_missing_disc 0      the same over every scheduled record. A zero means no record the schedule names
+                          vanished from the aggregation, which would deflate a run's counts in silence.
+  node_logs 1000          200 runs times the 5 hosts of the line. A run with fewer logged its decisions
+                          somewhere this analysis does not read, and its decision counts would be short.
+  bad_action_prob 0       reschedule rows whose `action_prob` is other than 1/3, and
+  bad_interval 0          reschedule rows whose `interval_s` is none of 3.695, 6.0, 10.043. Zeroes mean
+                          the share per arm of pass line 4 is counted on the uniform draw this step ran.
+  bad_draw_rows 0         the same two faults counted once per row, so a row wrong in both ways stays one
+                          row.
+  arm_other 0             reschedule rows that fell in neither of the three arm columns. The same
+                          property as bad_interval, counted on the column side.
+
+hop_gap_outside_window = 1600.0
+-------------------------------
+What it counts: while the per-hop breakdown is built, the decision row immediately before a record's
+arrival at a node is read, and if that row's timestamp lies outside the measurement window the record is
+skipped for the breakdown (evidence/05/attrib.py:390-392, the `continue` after the increment). It is
+carried into the CSV as a column by evidence/09/perrun.py:27. It enters neither the 4-hop delay nor the
+poll count, which is what evidence/16/README.md:93, evidence/17/README.md:111 and
+evidence/19/README.md:142 record about it as well. This step reads no per-hop breakdown, so nothing here
+is counted on the skipped records.
+
+Whether 8 per run is the expected value: no file states an expected value for this counter, so the
+question cannot be settled from the repository.
+  - evidence/20 recorded no value for it at all. It appears in that directory only as a column name in
+    perrun.csv; neither its README.md nor its RUN.txt names the counter. Summing that column for this file
+    gives 2272 over its 200 runs, made up of 0 for `s10b3p695`, 76 for `s10b6p0`, 244 for `s10b10p043`,
+    1412 for `s10t37r` and 540 for `s10f`.
+  - The earlier steps that did record it report a stage total and no expectation:
+    evidence/19/README.md:142 reports 380 over its 13 stages, evidence/17/README.md:111 reports
+    684 / 648 / 88 / 44 / 0 over its five stages, evidence/16/README.md:93 reports 640 and 652 for its two
+    rule stages.
+  - 1600 over 200 runs is 8 per run as a mean and not a per-run figure. Summed per cell the column holds
+    920 at p 0.2 and 680 at p 0.4, and per run it takes the values 0 (62 runs), 4 (29), 8 (39), 12 (32),
+    16 (15), 20 (9), 24 (9), 28 (3), 32 (1) and 36 (1). Those two lines were computed for this file from
+    perrun.csv's own column.
+So what is recorded here is the count, its spread and what the counter counts. Nothing in the repository
+says what it should have been.
+
+6. Checks afterwards
+--------------------
+`git status --short` from the worktree root shows evidence/21's five output files, this step's map.md
+entry and this step's ticket entry and nothing else, and no __pycache__ under evidence/05, 07, 09 or 20.
+
+Reproducibility, run for this file: perrun.py and ana.py were run a second time with OUT pointing into
+session scratch (10.2 s and under a second, AGG unchanged). The second perrun.csv is byte-identical to the
+one in this directory apart from the test banner, and the second results.md and results.csv are identical
+to theirs apart from the banner line and the one `test_input` row that carries it. The banner appears only
+because OUT differed from this directory; a run without it would write over the two scripts' own output,
+which is why it was not made.
+
+Not run a second time: the evalagg call, gate.py and smoke.py.
+
+7. The test suite, run after the analysis
+-----------------------------------------
+Acceptance items 1 and 2 of the ticket rest on the tests of the merged change. No record of a test run before
+the sweep was found for this file, so the suite was run after it, at 21:50:08 on 2026-11-22, from the
+worktree root $W:
+
+PYTHONPATH=$W/src $PY -B -m pytest tests -q -p no:cacheprovider      # 1046 passed in 23.88s
+PYTHONPATH=$W/src $PY -B -m pytest -q -p no:cacheprovider \
+    tests/test_engine.py::test_choices_without_redecide_never_reschedule \
+    tests/test_evalgen.py::test_the_redecide_knob_off_generates_the_bytes_it_did_before_the_key
+                                                                     # 5 passed in 0.58s
+uvx ruff@0.17.2 check src tests                                      # All checks passed!
+
+`git diff a8add2c HEAD -- src tests pyproject.toml` printed nothing at that moment, so the code and the
+tests that ran are the ones of the commit the 200 runs loaded. This shows the tests pass on that commit. It
+does not show that they were run before the sweep, and it is no testbed measurement of the knob-off path.
+
+README.md is written by hand out of results.md and is produced by neither script.

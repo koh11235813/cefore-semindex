@@ -1,0 +1,86 @@
+line,p,metric,value,note
+0,,predict_txt_rows_checked,6,
+0,,test_input,no,
+3,0.2,runs_done,100,
+3,0.2,runs_valid,100,
+3,0.2,runs_flagged,0,
+3,0.2,flag_names,none,
+3,0.4,runs_done,100,
+3,0.4,runs_valid,100,
+3,0.4,runs_flagged,0,
+3,0.4,flag_names,none,
+3,,runs_done_total,200,
+3,,runs_valid_total,200,
+3,0.2,semindex_git_commit,a8add2cff4275317ddceea0a6068e5a1dd18e3da,
+3,0.2,workload,w0,
+3,0.2,redecide,True,
+3,0.2,interval_choices_s,3.695;6.0;10.043,
+3,0.2,seeds,1 to 100,
+3,0.2,node_logs_per_run,5,
+3,0.4,semindex_git_commit,a8add2cff4275317ddceea0a6068e5a1dd18e3da,
+3,0.4,workload,w0,
+3,0.4,redecide,True,
+3,0.4,interval_choices_s,3.695;6.0;10.043,
+3,0.4,seeds,1 to 100,
+3,0.4,node_logs_per_run,5,
+3,,node_logs_ok,yes,
+3,0.2,smoke_run_valid,True,flags none
+3,0.4,smoke_run_valid,True,flags none
+3,,verdict,pass,
+4,0.2,send_rows_median,160.5,min 149 max 173
+4,0.2,resched_rows_median,160.0,min 148 max 173
+4,0.4,send_rows_median,160.0,min 149 max 173
+4,0.4,resched_rows_median,160.0,min 148 max 173
+4,0.2,arm_share[3.695],0.328549,"5265 of 16025 rows, distance -0.004784, tolerance 0.011172, inside yes"
+4,0.2,arm_share[6.0],0.338846,"5430 of 16025 rows, distance +0.005512, tolerance 0.011172, inside yes"
+4,0.2,arm_share[10.043],0.332605,"5330 of 16025 rows, distance -0.000728, tolerance 0.011172, inside yes"
+4,0.2,reschedule_rows,16025,
+4,0.2,arm_tolerance,0.011172,3*sqrt((2/9)/N) at the measured N
+4,0.4,arm_share[3.695],0.331188,"5301 of 16006 rows, distance -0.002145, tolerance 0.011178, inside yes"
+4,0.4,arm_share[6.0],0.335812,"5375 of 16006 rows, distance +0.002478, tolerance 0.011178, inside yes"
+4,0.4,arm_share[10.043],0.333000,"5330 of 16006 rows, distance -0.000333, tolerance 0.011178, inside yes"
+4,0.4,reschedule_rows,16006,
+4,0.4,arm_tolerance,0.011178,3*sqrt((2/9)/N) at the measured N
+4,0.2,timeout_share,0.188768,predicted 0.191
+4,0.2,clamped_share,0.000000,predicted 0.0
+4,0.2,truncated_send_rows,0,
+4,0.2,truncated_reschedule_rows,0,
+4,0.2,reschedule_rows_per_send_row,0.996394,"predicted 1.0, the replay's surplus past the stop instant 0.004"
+4,0.4,timeout_share,0.364551,predicted 0.368
+4,0.4,clamped_share,0.000000,predicted 0.0
+4,0.4,truncated_send_rows,0,
+4,0.4,truncated_reschedule_rows,0,
+4,0.4,reschedule_rows_per_send_row,0.994965,"predicted 1.0, the replay's surplus past the stop instant 0.006"
+4,0.2,schedule_checked_polls,15283,
+4,0.2,schedule_outside_slack,0,"window [applied - 0.002 s, applied + 0.5 s], the smoke gate's constants"
+4,0.2,empty_null_answered,0,
+4,0.2,late_reply_rows,0,
+4,0.2,rows_not_a_uniform_draw,0,"action_prob other than 0.3333333333333333 or interval_s outside [3.695, 6.0, 10.043], counted once per row; action_prob is wrong on 0 rows and interval_s on 0"
+4,0.4,schedule_checked_polls,15287,
+4,0.4,schedule_outside_slack,0,"window [applied - 0.002 s, applied + 0.5 s], the smoke gate's constants"
+4,0.4,empty_null_answered,0,
+4,0.4,late_reply_rows,0,
+4,0.4,rows_not_a_uniform_draw,0,"action_prob other than 0.3333333333333333 or interval_s outside [3.695, 6.0, 10.043], counted once per row; action_prob is wrong on 0 rows and interval_s on 0"
+4,0.2,arms_inside_tolerance,pass,
+4,0.4,arms_inside_tolerance,pass,
+4,,verdict,pass,
+5,0.2,headline delay s_measured,24.319655,
+5,0.2,headline delay s_band,inside,22.771 .. 25.678
+5,0.2,headline delay s_deviation_pct,0.3907,
+5,0.2,polls per run_measured,145.580000,
+5,0.2,polls per run_band,inside,136.78 .. 154.24
+5,0.2,polls per run_deviation_pct,0.0481,
+5,0.4,headline delay s_measured,34.738498,
+5,0.4,headline delay s_band,inside,32.835 .. 37.026
+5,0.4,headline delay s_deviation_pct,-0.5482,
+5,0.4,polls per run_measured,145.810000,
+5,0.4,polls per run_band,inside,136.96 .. 154.45
+5,0.4,polls per run_deviation_pct,0.0755,
+5,,values_between_the_two_band_readings,0,
+5,,values_inside,4,
+5,,values_outside,0,
+5,,verdict,predicted,
+5,0.2,censored_share_headline,0.001000,
+5,0.2,censored_share_all_records,0.001000,
+5,0.4,censored_share_headline,0.019333,
+5,0.4,censored_share_all_records,0.019333,
