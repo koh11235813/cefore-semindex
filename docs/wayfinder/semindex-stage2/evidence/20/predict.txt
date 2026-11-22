@@ -1,0 +1,62 @@
+Gate 1, evidence/18/bound_cells.csv, cell s6b10p043 p 0.2 W0, seeds 1 to 20, 5 replicates (early-record delay and polls per run):
+  s10b3p695   fix3.695   delay 13934.615000 ms (csv 13934.615000)  polls 256.090000 (csv 256.090000)  same
+  s10b6p0     fix6.0     delay 21047.826333 ms (csv 21047.826333)  polls 159.250000 (csv 159.250000)  same
+  s10b10p043  fix10.043  delay 30636.847373 ms (csv 30636.847373)  polls 95.780000 (csv 95.780000)  same
+  s10t37r     T37r       delay 18949.062833 ms (csv 18949.062833)  polls 166.130000 (csv 166.130000)  same
+  s10f        pinned F   delay 16665.0 ms (fpin.txt 16665.0)  polls 182.07 (fpin.txt 182.07)  same
+Reproduced to the printed digits: the three arms' and T37r's early-record delay and polls per run, and the pinned F member's delay and polls to the digits fpin.txt prints.
+
+Gate 2, the generator against the stored descriptions of seeds 1 to 20 at p 0.2: every outage event and every record schedule equal.
+  Compared as objects, not as files: `generate_run` would write a ReCefore yaml and a per-node config beside each description, and those configs carry key material.
+
+What the borrowed exogenous half costs, measured on seeds 1 to 20 at p 0.2:
+  realized against scheduled outage instant: at most 27 ms over every link event of the 20 runs. The held-out timeline is the scheduled one.
+  agent_start minus t0 over the 20 donors and 5 nodes: 382 .. 2090 ms, median 421. A held-out seed borrows donor seed 1 + (seed - 121) % 20, so each donor carries two held-out seeds.
+  the agent's creation lag, logged stamp minus scheduled instant, over 4800 records: median 52 ms, 5th to 95th percentile 5 .. 96. The replay creates a record at exactly the scheduled instant, so every delay below is measured from a start that the testbed reaches a little later.
+
+The substitution on the SAME seeds 1 to 20: five stages scored three times, median over the 40 streams. The held-out runs carry both replacements at once, so each column bounds one half of what they cost.
+  stage       | logged: delay s / polls | generated schedules, own clock | and a borrowed clock | schedules move | clock moves
+  s10b3p695   |  13.899 /  256.10       |  13.892 /  256.10                |  14.043 /  256.05      | delay  -0.1 % polls  +0.0 % | delay  +1.1 % polls  -0.0 %
+  s10b6p0     |  21.076 /  159.25       |  21.024 /  159.25                |  20.851 /  159.20      | delay  -0.3 % polls  +0.0 % | delay  -0.8 % polls  -0.0 %
+  s10b10p043  |  30.821 /   95.80       |  30.802 /   95.80                |  30.627 /   95.90      | delay  -0.1 % polls  +0.0 % | delay  -0.6 % polls  +0.1 %
+  s10t37r     |  18.909 /  166.35       |  18.938 /  166.25                |  18.888 /  166.53      | delay  +0.2 % polls  -0.1 % | delay  -0.3 % polls  +0.2 %
+  s10f        |  16.689 /  182.70       |  16.664 /  182.70                |  16.605 /  182.35      | delay  -0.1 % polls  +0.0 % | delay  -0.4 % polls  -0.2 %
+  "schedules move" is the generated timeline and creation stamps against the logged ones with the clock held fixed; "clock moves" is t0 and agent_start taken from seed 1 + seed mod 20 instead of the run's own, with the generated schedules held fixed. A held-out seed carries both.
+
+The held-out schedules, seeds 121 to 160, k 4, both origins:
+  records per run all 240.0 [240 .. 240] | headline (at_s <= 72 s) 240.0 [240 .. 240]
+  headline score equals all-record score on every stage and every stream: True. Under w0 the two scorings select the same records, so one delay per stage serves both.
+
+Prediction for seeds 121 to 160 at p 0.2, w0, the s6 outage shape: delay = pooled sum(lat4)/sum(n4) over the 40 runs of a stage, polls per run over [t0+10 s, t0+130 s].
+  stage       | delay s median [band] min..max        | polls median [band] min..max            | censored share median min..max
+  s10b3p695   |  13.908 [ 13.074.. 14.742] 13.557..14.174 | 256.68 [241.27..272.08] 256.48..256.80 | 0.000 0.000..0.000
+  s10b6p0     |  20.386 [ 19.162.. 21.609] 19.897..20.863 | 159.75 [150.16..169.34] 159.68..159.82 | 0.000 0.000..0.000
+  s10b10p043  |  30.437 [ 28.611.. 32.264] 30.034..30.952 |  96.08 [ 90.31..101.84]  95.92.. 96.22 | 0.000 0.000..0.005
+  s10t37r     |  18.517 [ 17.406.. 19.628] 18.014..18.915 | 165.01 [155.11..174.91] 164.25..165.60 | 0.000 0.000..0.000
+  s10f        |  17.047 [ 16.024.. 18.070] 16.694..17.372 | 180.95 [170.09..191.81] 180.20..181.70 | 0.000 0.000..0.001
+  the band is the median times 1 -+ 6 %. Pass line 4 reads these ten values, the delay and the polls of each of the five stages.
+  the three arms' polls values are near-tautological: a fixed arm's poll count follows from its interval and the window, so only the two rules' polls and the five delays are numbers the replay could get wrong.
+
+Gain against the three-arm log-log frontier (headline scoring), median of the 40 streams, 2000 resamples of the 40 seeds with default_rng(20261122):
+  s10t37r  gain  +7.17 % [ +2.28 .. +12.00] half width  5.01 pp | streams seen 36 / not seen 4 / reversed 0 | predicted word seen
+  s10f     gain  +7.80 % [ +3.95 .. +11.76] half width  3.92 pp | streams seen 40 / not seen 0 / reversed 0 | predicted word seen
+  F minus T37r  +0.72 pp [ -3.91 ..  +4.83] half width  4.52 pp | streams seen 0 / not seen 40 / reversed 0
+  resamples with no readable frontier: 0 of 80000
+  the all-record scoring gives these same digits, because under w0 it selects the same records (see the equality checked above). It is not printed again.
+
+F against T37r directly, no frontier, same resamples:
+  F vs T37r delay (headline scoring)    -7.91 % [-12.21 ..  -3.32] half width  4.54 pp
+  F vs T37r polls (whole window)        +9.81 % [ +8.95 .. +10.58] half width  0.80 pp
+
+Three sentences that belong beside every number above.
+  The pinned F's gain here is a three-arm frontier gain on seeds 121 to 160, which F has
+  never seen. It is not fpin.txt's +11.1, which is a seven-arm gain on the 20 seeds that
+  chose the member and is in sample there.
+  Each of the five stages is simulated on the held-out seeds with the outage timeline and
+  the record schedule the generator draws, and with t0 and agent_start borrowed from a
+  logged run. The three measured costs of that borrowing are printed above and none of
+  them is corrected for.
+  The replay has been held against a testbed measurement in this cell for the fixed
+  0.5, 1.359, 3.695 and 10.043 s arms and the short and wait policies only
+  (evidence/13/validate_cells.csv). The 6.0 s arm, T37r and F have no measurement in
+  this cell, which is what pass line 4 of this step is for.
