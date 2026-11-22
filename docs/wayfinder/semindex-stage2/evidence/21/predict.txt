@@ -1,0 +1,46 @@
+The gate, the generator against the stored descriptions of every seed that has a run with this outage shape
+  p 0.2: s6b10p043 seeds 1 to 20
+  p 0.4: s8b6p0 seeds 1 to 40
+  every outage event and every record schedule equal, compared as objects.
+
+The exogenous half of each run, per p:
+  p 0.2: 20 seeds from logged runs of s6b10p043 (seeds 1 to 20: realized outage instants, logged creation stamps, their own t0 and agent_start) and 80 generated (scheduled outage instants and scheduled creation stamps, t0 and agent_start borrowed from the logged seed at position (seed - 1) mod 20 of that list, which here is 1 + (seed - 1) mod 20).
+  p 0.4: 40 seeds from logged runs of s8b6p0 (seeds 1 to 40: realized outage instants, logged creation stamps, their own t0 and agent_start) and 60 generated (scheduled outage instants and scheduled creation stamps, t0 and agent_start borrowed from the logged seed at position (seed - 1) mod 40 of that list, which here is 1 + (seed - 1) mod 40).
+  The two halves are not separated in the numbers below: the sweep runs all 100 seeds of each p as one stage, and so does this prediction.
+
+Pass line 5. Seeds 1 to 100, w0, the s6 outage shape, the three arms re-drawn at every resolution.
+  headline delay = pooled sum(lat4)/sum(n4) over the 100 runs of a stream, over the records created at or before t0+72 s;
+  polls per run = mean over the 100 runs of the state_poll rows in [t0+10 s, t0+130 s]; a reschedule row is not a poll and is not counted here.
+  p   | delay s median [band]            min..max       | polls median [band]            min..max        | censored share
+  0.2 |  24.225 [ 22.771.. 25.678]  23.909.. 24.569 | 145.51 [136.78..154.24] 145.33..145.64 | 0.000
+  0.4 |  34.930 [ 32.835.. 37.026]  34.132.. 35.532 | 145.70 [136.96..154.45] 145.55..146.04 | 0.021
+  The band is the median times 1 -+ 6 %. These four values -- two delays and two poll counts -- are what pass line 5 reads.
+
+Pass line 4. Decisions per run, over the 4000 simulated runs of each p (100 seeds by 40 streams):
+  p   | send rows median min..max | reschedule rows median min..max | reschedule rows per send | of those, after the stop instant
+  0.2 |  160.0    148..176        |  160.0    148..176             | 1.000                   | 0.004 of the reschedule rows
+  0.4 |  161.0    146..174        |  161.0    146..174             | 1.000                   | 0.006 of the reschedule rows
+  A send row is one `state_poll` decision, a reschedule row one `state_poll_reschedule`. Ticket 08 read 174 to 280 decisions per run off three earlier stages and called that a guess to be re-measured; the send rows above are this replay's answer for the uniform draw.
+  The last column is the share of reschedule rows this replay writes at or after t0+130 s, where the testbed's agent has already stopped and writes nothing. The testbed's reschedule counts should sit that much BELOW the medians above, and this replay cannot show the gap any more closely.
+
+  Resolutions, per p, over the same runs:
+  p   | timeout share median min..max | clamped share | share per arm 3.695 / 6.0 / 10.043 | predicted N | tolerance at that N
+  0.2 | 0.191 0.189..0.192           | 0.000         | 0.329 / 0.337 / 0.333               |     16078 | 0.3333 +- 0.0112
+  0.4 | 0.368 0.366..0.369           | 0.000         | 0.331 / 0.336 / 0.333               |     16099 | 0.3333 +- 0.0111
+  The timeout share is the share of reschedule rows whose trigger was a timeout, the clamped share the share whose re-decided instant had already passed and was pulled forward to now.
+  N is the median number of reschedule rows one stream's 100 runs produce, and the tolerance beside it is 1/3 +- 3*sqrt((2/9)/N) read at that N. It is printed for information only: the pass line evaluates the same formula at the N counted after the run, per p, and that formula does not move.
+
+Three sentences that belong beside every number above.
+  This stage's delay is not a quantity anyone compares policies on. A uniform draw over
+  three arms is not a policy, and ticket 08 says so: the prediction exists only to check
+  that the replay and the testbed ran the same thing, and pass line 5 is that check and
+  nothing more.
+  The re-decision branch has no testbed measurement behind it, in this replay or in any
+  other step. Every delay and every poll count above therefore rests on a branch that was
+  read off the source and checked against the source's own single-choice behaviour
+  (gate.py), never against a measurement.
+  The two halves of the exogenous inputs are not corrected for: a seed with a logged run
+  carries realized outage instants and a logged clock, a generated seed carries the
+  scheduled instants and a borrowed clock. evidence/20 measured what that borrowing costs
+  on seeds 1 to 20 at p 0.2 -- at most 0.3 % in delay for the schedules and 1.1 % for the
+  clock -- and this step neither re-measures nor corrects it.
