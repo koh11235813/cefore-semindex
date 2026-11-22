@@ -113,7 +113,7 @@ STAMP_S = 0.002
 # The counts this file adds to evidence/20's row. Listed here so that a run whose logs
 # yielded nothing still carries every column.
 COUNT_COLS = ("node_logs", "send_rows", "resched_rows", "resched_answered",
-              "resched_timed_out", "resched_clamped", "arm_3695", "arm_6000", "arm_10043",
+              "resched_timed_out", "resched_trigger_other", "resched_clamped", "arm_3695", "arm_6000", "arm_10043",
               "arm_other", "trunc_send", "trunc_resched", "empty_null_answered",
               "late_reply_rows", "sched_checked", "sched_outside", "bad_action_prob",
               "bad_interval", "bad_draw_rows")
@@ -184,9 +184,9 @@ def decision_counts(run_dir):
                     x["bad_draw_rows"] += bad_prob or bad_arm
                     # The engine resolves a poll as exactly "answered" or "timed_out"
                     # (`engine.py::_redecide_next_poll` has those two callers and no
-                    # other), so the else branch below is the timeout and not a catch-all.
-                    # A third trigger value would be counted as a timeout here, and no
-                    # column of this file would say that it had appeared.
+                    # other). spec.md defines the timeout share on the rows whose trigger
+                    # is `timed_out`, so a third value gets a column of its own instead of
+                    # being folded into the timeouts, and main() stops on it.
                     if a["trigger"] == "answered":
                         x["resched_answered"] += 1
                         # `empty` is what the reply advertised. Null on an answer means the
@@ -196,8 +196,10 @@ def decision_counts(run_dir):
                         # `empty` field at all is counted here too and cannot be told from
                         # an explicit null; ana.py says so where it prints the count.
                         x["empty_null_answered"] += a.get("empty") is None
-                    else:
+                    elif a["trigger"] == "timed_out":
                         x["resched_timed_out"] += 1
+                    else:
+                        x["resched_trigger_other"] += 1
                     if not a["clamped"]:
                         applied[(a["neighbor"], a["poll_epoch_ms"])] = a["applied_interval_s"]
         for nb, stamps in sends.items():
@@ -294,6 +296,15 @@ def main():
         print(f"these DONE runs folded a number of polls.csv rows other than "
               f"{P20.POLLROWS_PER_RUN} (p, seed, rows folded); rebuild AGG for them:",
               wrong, file=sys.stderr)
+        raise SystemExit(1)
+    # A trigger this analysis does not know is a resolution spec.md's timeout share has no
+    # place for. Writing the CSV would let ana.py print a share whose two parts no longer
+    # sum to the rows, so the script stops and the rows are looked at first.
+    odd = [(r["p"], r["seed"], r["resched_trigger_other"]) for r in rows
+           if r["resched_trigger_other"]]
+    if odd:
+        print("reschedule rows with a trigger other than answered or timed_out "
+              "(p, seed, rows); perrun.csv not written:", odd, file=sys.stderr)
         raise SystemExit(1)
     path = os.path.join(OUT, "perrun.csv")
     with open(path, "w", newline="", encoding="utf-8") as fh:

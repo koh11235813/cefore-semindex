@@ -211,6 +211,15 @@ def check_prediction(path):
     if bad:
         raise SystemExit("the predicted constants in ana.py no longer match predict.txt:\n  "
                          + "\n  ".join(bad))
+    # The tolerance formula itself, held against the value predict.txt prints beside its
+    # own N. PRED_RES carries those digits for display only and the pass word of line 4 is
+    # read off `tolerance()` at the measured N, so without this a mistyped formula would
+    # pass every comparison above and still move every inside-or-outside word.
+    for p in PS:
+        n, printed = PRED_RES[p][5], PRED_RES[p][7]
+        if round(tolerance(n), 4) != printed:
+            raise SystemExit(f"tolerance({n}) is {tolerance(n):.6f} in ana.py, "
+                             f"predict.txt prints {printed} at p {p}")
     return matched
 
 
@@ -439,7 +448,9 @@ def main():
           "unflagged. Lines 4 and 5 below are counted on the valid and unflagged runs "
           "only: a flagged run is one evalvalid says did not run as specified, and "
           "counting its decisions among the rest would put rows from a run nobody can read "
-          "into the share per arm.", ""]
+          "into the share per arm. Leaving a run out also lowers N, which widens the "
+          "tolerance on the share per arm, so a cell read on fewer runs is checked less "
+          "tightly than spec.md's 100 runs would check it.", ""]
     rec(3, "", "runs_done_total", done_total)
     rec(3, "", "runs_valid_total", ok_total)
 
@@ -630,7 +641,8 @@ def main():
           "testbed's agent has already left its loop: predict.txt puts those at "
           f"{PRED_ROWS[0.2][7]:.3f} of the reschedule rows at p 0.2 and "
           f"{PRED_ROWS[0.4][7]:.3f} at p 0.4, and that is the size of the gap below 1.000 "
-          "to expect here.", "",
+          "to expect here. spec.md records that the same surplus biases the predicted "
+          "reschedule count and the predicted timeout share upward.", "",
           "The clamped share is predicted as zero for a structural reason: the shortest "
           "applied interval is 3.695 x 0.9 = 3.3255 s measured from the send, and a "
           "resolution lands at most 2.1 s after the send, so the re-decided instant is "
@@ -715,15 +727,17 @@ def main():
           "All 4 inside reads `predicted`, 1 or 2 outside `mixed`, 3 or more outside "
           "`missed`.", "",
           "The band ends below are the digits predict.txt itself prints. They part from "
-          "the printed median times 1 -+ 6 % by at most 0.008, which is under 0.006 % of "
-          "the value, because that file forms the band from the unrounded median; inside "
-          "or outside is decided on the printed ends.", "",
+          "the printed median times 1 -+ 6 % by at most 0.008 (the upper end of the polls "
+          "per run at p 0.4), which is under 0.006 % of that value, because that file "
+          "forms the band from the unrounded median; inside or outside is decided on the "
+          "printed ends, and a value on which the two would disagree is named below the "
+          "table.", "",
           "| p | quantity | runs | measured | predicted | band | inside or outside | "
           "deviation % |", "|---|---|---|---|---|---|---|---|"]
     # Counted apart rather than as 4 minus the other: a cell with no run has a value that
     # is neither inside nor outside, and calling it outside would read as a measurement
     # that missed the band while calling it inside would read as one that hit it.
-    n_inside, n_outside, outside_list = 0, 0, []
+    n_inside, n_outside, outside_list, edge_list = 0, 0, [], []
     for p in PS:
         runs = cells[p]
         hn, hlat = total(runs, "hn4"), total(runs, "hlat4")
@@ -736,6 +750,12 @@ def main():
                     else "inside" if lo <= value <= hi else "outside")
             n_inside += word == "inside"
             n_outside += word == "outside"
+            # The other reading of spec.md's band, the printed median times 1 -+ 6 %. A
+            # measured value lying between the two sets of ends would get its word from
+            # the choice of reading and not from the measurement, so it is named.
+            alt = mid * (1 - BAND_PCT / 100) <= value <= mid * (1 + BAND_PCT / 100)
+            if word != "not measured" and alt != (word == "inside"):
+                edge_list.append(f"p {p} {name} {fmt(value, 4)}")
             dev = 100 * (value / mid - 1) if mid else float("nan")
             if word == "outside":
                 outside_list.append((p, name, value, mid, dev, lo, hi))
@@ -764,6 +784,11 @@ def main():
     L += ["", f"{n_inside} of 4 values inside their band, {n_outside} outside, "
               f"{n_missing} not measured. Verdict: **{word5}**.", "",
           TEXT5["incomplete" if not complete else key5], ""]
+    L += ["Values lying between the printed band ends and the printed median times "
+          "1 -+ 6 %, which would read the other way on the second: "
+          + ("; ".join(edge_list) if edge_list else "none, so the choice between the two "
+             "decides nothing here") + ".", ""]
+    rec(5, "", "values_between_the_two_band_readings", len(edge_list), "; ".join(edge_list))
     rec(5, "", "values_inside", n_inside)
     rec(5, "", "values_outside", n_outside)
     rec(5, "", "verdict", word5)
@@ -820,6 +845,11 @@ def main():
           "- No stage here is run from two source versions, so nothing in this step shows "
           "on the testbed that the knob-off path is unchanged since evidence/20's commit. "
           "That rests on the merged change's own tests.", "",
+          "- Nothing here says which decision maker is better, or whether a policy can be "
+          "estimated off these rows. This stage draws uniformly and runs no policy, and "
+          "this step stops at leaving the data.", "",
+          "- Nothing about p 0.5, p 0.6, p 0, the no-outage cell, the on/off loads, or "
+          "finer arms.", "",
           "- Every number in the prediction is simulated. A predicted band says what the "
           "replay expects the testbed to measure and is itself no measurement.", ""]
 
