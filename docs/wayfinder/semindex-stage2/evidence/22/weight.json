@@ -1,0 +1,18 @@
+{
+  "arms_s": [
+    3.695,
+    10.043
+  ],
+  "cell": {
+    "nrep": 40,
+    "outage_shape": "s6 8-12 s",
+    "p": 0.2,
+    "seeds": [
+      1,
+      100
+    ],
+    "workload": "w0"
+  },
+  "path": "the decider port, constant deciders, per-pair lag streams on",
+  "weight_ms_per_poll": 100.62168514446252
+}

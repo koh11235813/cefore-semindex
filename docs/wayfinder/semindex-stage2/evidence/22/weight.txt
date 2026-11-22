@@ -1,0 +1,45 @@
+The weight that levels the two outer arms
+=========================================
+Cell: p 0.2, workload w0, the s6 outage shape, seeds 1 to 100, 40 Mode B replicate streams, run dicts built by ../21/predict.py's own run_dict.
+Arms: 3.695 s and 10.043 s, as constant deciders over the choice set [3.695, 6.0, 10.043] with the re-decision on, per-pair lag streams on.
+Delay is evidence/14's early-record scorer pooled sum(lat4)/sum(n4) per stream, polls is that scorer's windowed poll count per run; both are the median over the streams.
+
+Main cell, through the port
+  fixed 3.695 s                      delay  14390.655 ms   polls 256.500   censored 0.00000
+  fixed 10.043 s                     delay  30548.485 ms   polls  95.920   censored 0.00400
+  weight = (30548.484867 - 14390.654667) / (256.500000 - 95.920000)
+  WEIGHT = 100.62168514446252 ms per poll
+         = 100.621685 ms per poll, to six decimals
+
+The two scores under that weight
+  score(3.695 s) = 40200.116906221301
+  score(10.043 s) = 40200.116906221301
+  difference = 0 (relative 0.000e+00)
+  they agree to every digit of a double: the difference is exactly 0
+  This agreement is an arithmetic identity: the weight was solved for it, so it is a statement about the arithmetic and not about the arms. What carries information is the spread below.
+
+The same weight computed inside each stream (the spread the median hides)
+  median 100.694   min 96.711   max 102.373   over 40 streams
+  The weight above is the one taken from the median delay and the median poll count, which is the definition; this line says how far one experiment's own answer can sit from it.
+
+p 0.4, for information only; not used for the weight
+  fixed 3.695 s                      delay  21256.812 ms   polls 256.570   censored 0.00000
+  fixed 10.043 s                     delay  41945.763 ms   polls  96.010   censored 0.05458
+  weight at p 0.4 = 128.854951 ms per poll, i.e. 1.28 times the main cell's
+  Whether a weight fixed on the main cell flips a label at p 0.4 is not answered here: that needs the labels themselves.
+
+Main cell, the old fixed-arm path (no decider, no per-pair lag streams)
+  fixed 3.695 s                      delay  14428.471 ms   polls 256.510   censored 0.00000
+  fixed 10.043 s                     delay  30529.423 ms   polls  95.940   censored 0.00400
+  weight = 100.273719 ms per poll, -0.348 ms (-0.35 %) against the port's
+
+The ticket's estimate, recomputed from ../18/bound_cells.csv
+  fix3.695 row                       delay  13934.615 ms   polls 256.090
+  fix10.043 row                      delay  30636.847 ms   polls  95.780
+  weight = 104.187090 ms per poll (the ticket writes it as 104 ms)
+  It is a different set of runs: seeds 1 to 20 and 5 replicates, not 1 to 100 and 40, and the arms there are the old fixed-arm path. The three values above are therefore three different questions, not three tries at one.
+
+Provisional timers that fired before their own poll had resolved: 0, over the 24000 simulations of this script, of which the 16000 port simulations are the ones that can show any (the old fixed-arm path arms no provisional timer at all: its send-time timer is final).
+  The resolution-time decision is the one that takes effect, so a fired provisional timer is a poll whose send-time interval decided the next send on its own, and a label on that decision would be a label on the wrong instant.
+
+wall 91.2 s on 5 workers

@@ -81,6 +81,16 @@ RETRY_LAG_MS = 2.0
 
 MAX_IN_FLIGHT = 8                 # max_in_flight_per_neighbor (engine.py:94)
 MAX_MISSING_PER_ORIGIN = 1024     # tracker.py
+
+# 2026-11-23: the two bounds a decision row of the testbed is built under.  The origin
+# cap is the source's own (tracker.DECISION_STATE_MAX_ORIGINS); the history length is
+# this replay's choice, since the source keeps no bounded exchange history at all -- its
+# per-neighbour poll list is bounded in TIME by the Interest lifetime plus a grace
+# second, and only two scalars of it ever reach a logged row.  A decider therefore gets
+# the last DECIDER_HISTORY resolution rows of its own pair, rebuilt here from the rows a
+# real node writes, and nothing that is not on one of those rows.
+DECISION_STATE_MAX_ORIGINS = 8
+DECIDER_HISTORY = 8
 BACKOFF_INIT_S = 2.0
 BACKOFF_MULT = 2.0
 BACKOFF_MAX_S = 16.0
@@ -267,7 +277,7 @@ class _Origin:
 
 class Node:
     def __init__(self, name, neighbors, seed, policy, choices, choice_jitter, rule=None,
-                 redecide=False):
+                 redecide=False, decider=None):
         # `rule` is spec2 Part 2's "lengthen the interval while replies are empty":
         # {"i_min", "m", "i_max", "jf"}.  It replaces the policy table as the source of
         # the interval and keeps one number per neighbor, `ival`, starting at i_min.
@@ -282,6 +292,27 @@ class Node:
         # re-decision that has nothing to re-draw.  Every branch below then tests this
         # one flag instead of repeating the pair of conditions.
         self.redecide = bool(redecide) and choices is not None
+        # 2026-11-23: `decider` is a callable that reads the decision state and returns
+        # the interval, in place of the uniform draw over `choices`.  It rides the
+        # re-decision path and nothing else, so it is refused here, at construction,
+        # unless that path is actually the one this node will take.  Caught here rather
+        # than at the first decision because a bad combination would otherwise simulate
+        # in silence on whichever branch decide_interval reaches first -- a node with a
+        # decider and a `rule` would run the rule for a whole sweep and the numbers
+        # would be filed as the decider's.
+        if decider is not None:
+            # The exclusivity is tested first because a `rule` silences `choices` one
+            # frame up, so a decider beside a rule would otherwise be reported as a
+            # decider with nothing to pick from, which names the wrong mistake.
+            if rule is not None or policy is not None:
+                raise ValueError(
+                    f"{name}: a decider is exclusive with `rule` and `policy`; one node"
+                    " cannot have two sources for its interval")
+            if choices is None or not redecide:
+                raise ValueError(
+                    f"{name}: a decider needs `choices` to pick from and `redecide=True`"
+                    f" (choices={choices!r}, redecide={redecide!r})")
+        self.decider = decider
         self.ival = {nb: rule["i_min"] for nb in neighbors} if rule else {}
         self.name = name
         self.neighbors = neighbors
@@ -297,6 +328,67 @@ class Node:
         self.choice_jitter = choice_jitter
         self.jitter_rng = random.Random(f"state_poll_interval_jitter:{seed}:{name}").random
         self.choice_rng = random.Random(f"state_poll_interval:{seed}:{name}").random
+        # 2026-11-23: the per-neighbour poll bookkeeping a real node reports beside a
+        # decision and this replay did not keep.  All four are maintained in every mode,
+        # so that one definition serves a decider run and an old-mode run, and none of
+        # them is read by any existing branch: `consec` is deliberately left alone (see
+        # resolve) and no emitted row of an old mode names any of these fields.
+        self.real_consec = {nb: 0 for nb in neighbors}       # consecutive_poll_timeouts
+        self.last_status = {nb: None for nb in neighbors}    # last_poll_status
+        self.last_timeout_ms = {nb: None for nb in neighbors}  # last FETCH timeout, ms
+        self.poll_hist = {nb: [] for nb in neighbors}        # resolved polls, oldest first
+
+    def decision_state(self, nb) -> dict:
+        """The `state` a real node logs beside one decision about neighbour `nb`.
+
+        The six keys of a testbed `decision` row of kind `state_poll`, and of kind
+        `state_poll_reschedule` while `state_poll_choice_redecide` is on: the four of
+        `tracker.decision_state` (tracker.py:264-308) plus the two the engine adds from
+        its poll-reply bookkeeping (engine.py:529-533 at a send, engine.py:680-684 at a
+        resolution).  Nothing else may enter it: this is the whole input a decider on
+        this port is allowed, and a field only the simulator knows would make every
+        score measured through the port unreachable by a live node.
+
+        Read field by field against the source, because three of them are traps:
+        - `missing` is `missing_total` (tracker.py:205-236), the UNCAPPED backlog over
+          the span up to the all-neighbour `notified_max`, not the fetch-planning list
+          `Node.missing` caps at MAX_MISSING_PER_ORIGIN;
+        - `notified_max` inside `advertised` is PER NEIGHBOUR (tracker.py:297), while
+          `Node.notified_max` maxes over every neighbour, so it is computed inline here;
+        - `consecutive_poll_timeouts` is the real count, which `Node.consec` is not
+          under the re-decision path (resolve leaves it at 0 there on purpose).
+
+        A neighbour's `_Origin.hist` is not read, and neither is any other node: that
+        history is the simulator's device for answering a reply with the store as it
+        stood, and a real node cannot see its neighbour's store history at all.
+        """
+        origins = sorted(self.origins)
+        rows = {}
+        for origin in origins[:DECISION_STATE_MAX_ORIGINS]:
+            st = self.origins[origin]
+            advertised = {}
+            for other in sorted(st.advertised):
+                hi, extra = st.advertised[other]
+                advertised[other] = {"hi": hi, "notified_max": max(hi, max(extra, default=0))}
+            upper = self.notified_max(origin)
+            missing = (0 if upper <= st.hi else
+                       (upper - st.hi) - sum(1 for s in st.extra if st.hi < s <= upper))
+            rows[origin] = {"hi": st.hi, "missing": missing, "advertised": advertised}
+        last_timeout_ms = self.last_timeout_ms[nb]
+        return {
+            "in_flight": self.in_flight.get(nb, 0),
+            # The source reports an ABSOLUTE instant in seconds (engine.py stamps rows in
+            # epoch ms, tracker keeps `now` in epoch seconds), so the replay's own
+            # millisecond clock is divided rather than turned into an age.  A decider
+            # that wants an age has to carry its own notion of now; the state carries
+            # none, exactly as the testbed rows carry none.
+            "last_timeout_s": (None if last_timeout_ms is None
+                               else last_timeout_ms / 1000.0),
+            "truncated": len(origins) > DECISION_STATE_MAX_ORIGINS,
+            "origins": rows,
+            "last_poll_status": self.last_status[nb],
+            "consecutive_poll_timeouts": self.real_consec[nb],
+        }
 
     def org(self, origin) -> _Origin:
         o = self.origins.get(origin)
@@ -478,12 +570,23 @@ class _Engine:
                     # 2026-11-22: `.get`, because a caller that builds a run dict by hand
                     # (evidence/18 and evidence/20 both do) wrote it before this key
                     # existed, and such a run must keep running the path it ran before.
-                    run.get("redecide", False))
+                    run.get("redecide", False),
+                    # 2026-11-23: `.get` for the same reason.  A run dict without the key
+                    # is a run without a decider, which is every run made before the port
+                    # existed.  NOT silenced by `rule`, unlike policy and choices above: a
+                    # caller that puts a rule on a run that carries a decider has asked
+                    # for two interval sources at once, and Node refuses that outright
+                    # rather than running the rule under a decider's name.
+                    run.get("decider"))
             for n in NODES
         }
         self.events = {n: [] for n in NODES}
         self.heap = []
         self.counter = 0
+        # 2026-11-23: how many decider calls of each kind this run has made, in call
+        # order.  It is handed to the decider as `where["ordinal"]` so that a tool can
+        # name one decision of a run again on a later pass; a learner must not read it.
+        self.decider_ord = {"state_poll": 0, "state_poll_reschedule": 0}
 
     # link -------------------------------------------------------------
     def delivers(self, a, b, t_send, t_arrive):
@@ -541,6 +644,18 @@ class _Engine:
             return MODE_A_TICK_LAG_MS
         return self.rng.uniform(0.0, TICK_PERIOD_MS)
 
+    def start_lag(self, node):
+        """Mode B's first-poll offset of one node, drawn once and shared by its neighbours.
+
+        2026-11-23: split out of `go` so that a subclass can own this draw as well as
+        the per-tick one.  It is the only Mode B draw site outside `tick_lag`, and `go`
+        cannot be overridden for one line without copying its whole loop, so a subclass
+        that wants every lag of a run to come from its own streams needs this hook.  The
+        draw itself, the stream it comes from and its position in `go`'s node loop are
+        unchanged.
+        """
+        return self.rng.uniform(0.0, TICK_PERIOD_MS)
+
     def emit(self, node, ev):
         self.events[node].append(ev)
 
@@ -555,7 +670,7 @@ class _Engine:
                 lag0 = {nb: (self.lags[(n, nb)][0] if self.lags.get((n, nb))
                              else MODE_A_TICK_LAG_MS) for nb in nbs}
             else:
-                shared = self.rng.uniform(0.0, TICK_PERIOD_MS)
+                shared = self.start_lag(n)
                 lag0 = {nb: shared for nb in nbs}
             for nb in nbs:
                 self.push(start + lag0[nb], P_POLL, n, nb,
@@ -586,15 +701,32 @@ class _Engine:
         if t - self.t0 >= STOP_AT_MS:
             return   # agent._on_receive_boundary: elapsed >= stop_at_s takes the
                      # early return BEFORE on_tick, so no further Interest is sent
-        u_j, interval, jf = self.decide_interval(nd, nb)
+        # 2026-11-23: with a decider the state is built ONCE, before the decision, and
+        # the row carries the very dict the decider was handed, so that a row of these
+        # runs is readable as the decider's input.  Without one the row keeps the single
+        # field it has always carried: widening it would rewrite the rows of every stage
+        # already measured against the testbed.  The source's own status snapshot is
+        # taken before this poll is recorded as sent (engine.py:508-510), which is why
+        # `last_status` is moved to "pending" only below.
+        state = (nd.decision_state(nb) if nd.decider is not None
+                 else {"consecutive_poll_timeouts": nd.consec[nb]})
+        u_j, interval, jf = self.decide_interval(nd, nb, t=t, state=state)
         applied = interval * (1.0 + jf * (2.0 * u_j - 1.0))
         ts = int(round(t))
         action = {"neighbor": nb, "interval_s": interval, "applied_interval_s": applied}
         self.emit(node, {"event": "decision", "kind": "state_poll", "ts_ms": ts,
-                         "action": action,
-                         "state": {"consecutive_poll_timeouts": nd.consec[nb]}})
+                         "action": action, "state": state})
         nd.poll_ord[nb] += 1
         pend = nd.pending[nb] = [t, u_j, False, None, None]
+        # This poll is now the newest and unanswered, which is the status the source's
+        # own snapshot would report for it at the next send.  A poll that is superseded
+        # before it resolves therefore stays "pending" here where the source, judging
+        # status off the clock, would say "timed_out"; `resolve` writes the real status
+        # of every poll that does resolve.  That divergence is unreachable while
+        # min(choices) * (1 - choice_jitter) > POLL_TIMEOUT_MS + TICK_PERIOD_MS, which is
+        # the bound `resolve` states; outside it the port would be reporting a status the
+        # source would not report.
+        nd.last_status[nb] = "pending"
         nd.due[nb] = t + applied * 1000.0
         nd.gen[nb] += 1
         g = nd.gen[nb]
@@ -672,8 +804,58 @@ class _Engine:
         self.push(t + self.tick_lag(node, nb, "poll"), P_POLL, node, nb,
                   lambda tt, nn=node, b=nb, gg=gen: self.ev_poll(tt, nn, b, gg))
 
-    def decide_interval(self, nd, nb):
-        """One draw per poll from each stream the mode uses (facts-timers §4/§4b)."""
+    def ask_decider(self, nd, nb, kind, t, state):
+        """Hand one decision to this node's decider and check what comes back.
+
+        `obs` is everything a real node could read at this instant, and nothing else:
+        - `state`, the six fields of a testbed decision row (Node.decision_state);
+        - `history`, the earlier RESOLVED polls of this pair, oldest first, at most
+          DECIDER_HISTORY, each one built only from fields a real node writes on its own
+          `state_poll_reschedule` row.  The decision being made is not in it;
+        - `where`, which exists SO THAT A TOOL can name this decision again on a later
+          pass.  A learner must never read it: a policy that keyed on the node name, the
+          neighbour or the ordinal would score on something the live loop cannot hand
+          it, and the score would not transfer to the testbed at all.
+
+        A returned interval outside `choices` is refused.  Every reader of these runs
+        indexes the choice set with the interval (the per-arm counters of the prediction
+        scripts do), so a stray value would raise far from here, or be counted as an arm
+        it is not.
+
+        **A decider must not write into `obs["state"]`.**  The state is handed over by
+        reference and is the very dict the emitted row carries, so a mutation would
+        change the published row as well as the next decision's input.  `history` IS
+        copied per call, and the two are treated differently on purpose: the history is
+        a list this node keeps and appends to for the rest of the run, so one mutated
+        element would travel to every later decision of the pair, while the state is
+        rebuilt from the store at every call and a deep copy of it -- `origins` is
+        nested, so a shallow one would guard nothing -- costs millions of nested copies
+        over a sweep.  The cheap guard is this contract, not a copy.
+        """
+        ordinal = self.decider_ord[kind]
+        self.decider_ord[kind] = ordinal + 1
+        obs = {
+            "state": state,
+            # Copied per call: the history is this node's own list and a decider that
+            # mutated what it was handed would change the next decision's input.
+            "history": [dict(row) for row in nd.poll_hist[nb]],
+            "where": {"node": nd.name, "neighbor": nb, "kind": kind,
+                      "ts_ms": int(round(t)), "ordinal": ordinal},
+        }
+        interval = nd.decider(obs)
+        if interval not in nd.choices:
+            raise ValueError(
+                f"{nd.name}->{nb} {kind} ordinal {ordinal}: the decider returned"
+                f" {interval!r}, which is not one of {nd.choices!r}")
+        return interval
+
+    def decide_interval(self, nd, nb, t=None, state=None):
+        """One draw per poll from each stream the mode uses (facts-timers §4/§4b).
+
+        2026-11-23: `t` and `state` carry the send instant and the decision state to a
+        decider on the choices branch; both are None for every other caller and for
+        every mode without a decider, and nothing but that branch reads them.
+        """
         if nd.rule is not None:
             # spec2 Part 2, at send: applied = I * (1 + jf*(2u-1)), one jitter draw per
             # poll, I the rule's current per-neighbor interval.  Only the jitter stream
@@ -689,6 +871,15 @@ class _Engine:
             jf = nd.policy["jitter_frac"][row]
             return nd.jitter_rng(), interval, jf
         if nd.choices is not None:
+            if nd.decider is not None:
+                # 2026-11-23: the decider replaces the draw and the draw only.  The
+                # choice stream is NOT drawn -- a dummy draw would make the two sides of
+                # a comparison consume different amounts of one stream for no gain --
+                # while the jitter draw stays exactly where it was, because every later
+                # jitter value of this node would otherwise shift and the run would no
+                # longer be the same run with one decision moved.
+                interval = self.ask_decider(nd, nb, "state_poll", t, state)
+                return nd.jitter_rng(), interval, nd.choice_jitter
             u_c = nd.choice_rng()
             interval = nd.choices[int(u_c * len(nd.choices))]
             return nd.jitter_rng(), interval, nd.choice_jitter
@@ -781,6 +972,23 @@ class _Engine:
         if pend is None or pend[0] != sent_at or pend[2]:
             return
         pend[2] = True
+        # 2026-11-23: the real poll bookkeeping, updated HERE because the source
+        # snapshots it after the resolution (engine.py:663) and before the send
+        # (engine.py:508-510), so the reschedule row reports the outcome just learned
+        # while the next send row reports the same outcome as the previous poll's.  It
+        # is written in every mode and read only when a decider is set.  What it does
+        # not count: a poll superseded before it resolved never reaches this line, while
+        # the source's own count would fold it in as an expired timeout.  Such a poll
+        # cannot exist while the SMALLEST APPLIED interval of the choice set,
+        # min(choices) * (1 - choice_jitter), is longer than POLL_TIMEOUT_MS plus one
+        # TICK_PERIOD_MS: the poll then times out AND its detection lag elapses, so it
+        # resolves, before the next send can supersede it.  The tick period is in the
+        # bound because the timeout is detected at sent + POLL_TIMEOUT_MS +
+        # tick_lag("timeout"), not at sent + POLL_TIMEOUT_MS.  A choice set that breaks
+        # the bound would need this divergence modelled instead.
+        nd.last_status[nb] = status
+        nd.real_consec[nb] = 0 if status == "answered" else nd.real_consec[nb] + 1
+        state = None
         if nd.redecide:
             # 2026-11-22: one draw from the choice stream per resolved newest poll, out
             # of the stream the send draws from and with the same index arithmetic
@@ -798,7 +1006,15 @@ class _Engine:
             # count, and the `state_poll` row already reported 0 in choices mode before
             # this knob existed, since the resolution was unreachable there.  No metric,
             # no pass line and no scheduling decision of this replay reads the field.
-            interval = nd.choices[int(nd.choice_rng() * len(nd.choices))]
+            if nd.decider is not None:
+                # 2026-11-23: built after the resolution above, so the state the decider
+                # reads already holds this reply's own advertisement (ev_rx folds before
+                # calling here under the re-decision) and this poll's own outcome.  As at
+                # the send, the choice stream is not drawn.
+                state = nd.decision_state(nb)
+                interval = self.ask_decider(nd, nb, "state_poll_reschedule", t, state)
+            else:
+                interval = nd.choices[int(nd.choice_rng() * len(nd.choices))]
             jf = nd.choice_jitter
         else:
             nd.consec[nb] = 0 if status == "answered" else nd.consec[nb] + 1
@@ -820,13 +1036,33 @@ class _Engine:
         due_at = sent_at + applied * 1000.0
         clamped = due_at < t
         due = max(due_at, t)
+        action = {"neighbor": nb, "poll_epoch_ms": int(round(sent_at)),
+                  "trigger": status, "interval_s": interval,
+                  "applied_interval_s": applied, "clamped": clamped}
+        if nd.decider is None:
+            row_state = {"last_poll_status": status,
+                         "consecutive_poll_timeouts": nd.consec[nb]}
+        else:
+            # 2026-11-23: in decider mode the row carries the full state and `empty`,
+            # which is what makes it readable like a testbed row of this kind with
+            # `state_poll_choice_redecide` on (the source adds `empty` under a rule or
+            # that knob, engine.py:700-707).  Neither is added to the old modes: their
+            # rows are already compared, whole, against the testbed and against each
+            # other.
+            row_state = state
+            action["empty"] = empty
         self.emit(node, {"event": "decision", "kind": "state_poll_reschedule",
-                         "ts_ms": int(round(t)),
-                         "action": {"neighbor": nb, "poll_epoch_ms": int(round(sent_at)),
-                                    "trigger": status, "interval_s": interval,
-                                    "applied_interval_s": applied, "clamped": clamped},
-                         "state": {"last_poll_status": status,
-                                   "consecutive_poll_timeouts": nd.consec[nb]}})
+                         "ts_ms": int(round(t)), "action": action, "state": row_state})
+        # 2026-11-23: the history grows HERE, after the row and before the early return
+        # below, and holds only this row's own fields plus its stamp.  Before the return,
+        # because a poll whose provisional timer already pointed at this instant takes
+        # that return, and a history that skipped exactly those polls would hide the
+        # cheapest decisions of the run from every decider.
+        hist = nd.poll_hist[nb]
+        hist.append({"ts_ms": int(round(t)), "poll_epoch_ms": int(round(sent_at)),
+                     "trigger": status, "empty": empty, "interval_s": interval,
+                     "applied_interval_s": applied, "clamped": clamped})
+        del hist[:-DECIDER_HISTORY]
         if (nd.rule is not None or nd.redecide) and pend[4] is not None and due == pend[4]:
             # The provisional timer this poll armed at send already points at exactly
             # this instant, so engine.py:522's `_next_state_poll[neighbor] = max(due_at,
@@ -874,6 +1110,14 @@ class _Engine:
         wait = nd.fail_fetch(origin, seq, nb, t)
         if wait is None:
             return
+        # 2026-11-23: `last_timeout_s` of a real decision row is the instant of the most
+        # recent FETCH timeout this node actually resolved on that neighbour
+        # (tracker.py:251-262, written in _fail at tracker.py:454).  It is neither a poll
+        # timeout nor a deadline, and a stale timeout -- the one fail_fetch above reports
+        # as None by returning before this line -- must not move it, which is why it sits
+        # after that guard.  A rejected reply must not move it either; this replay has no
+        # rejection path at all, so there is nothing to exclude.
+        nd.last_timeout_ms[nb] = t
         self.emit(node, {"event": "fetch_timeout", "origin": origin, "seq": seq,
                          "neighbor": nb, "ts_ms": int(round(t))})
         self.emit(node, {"event": "decision", "kind": "fetch_backoff", "ts_ms": int(round(t)),
