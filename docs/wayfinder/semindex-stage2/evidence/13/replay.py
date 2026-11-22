@@ -193,6 +193,11 @@ def load_run(stage: str, p: float, seed: int) -> dict:
         policy=meta.get("state_poll_policy"),
         choices=meta.get("state_poll_interval_choices_s"),
         choice_jitter=meta.get("state_poll_choice_jitter_frac"),
+        # 2026-11-22: with this on, choices mode re-decides the next poll time when a
+        # poll resolves, the way a policy and a rule do.  evalrun writes the key only
+        # when the knob was on, so every run recorded before the knob existed loads as
+        # False and takes exactly the paths it took before.
+        redecide=bool(meta.get("state_poll_choice_redecide", False)),
         # No run in the store was produced by a spec2 rule; a caller that wants one
         # simulated sets this key (or passes `rule=` to _sim_run), the way
         # mine/swap.py already overwrites policy/choices to put another stage's rule
@@ -261,7 +266,8 @@ class _Origin:
 
 
 class Node:
-    def __init__(self, name, neighbors, seed, policy, choices, choice_jitter, rule=None):
+    def __init__(self, name, neighbors, seed, policy, choices, choice_jitter, rule=None,
+                 redecide=False):
         # `rule` is spec2 Part 2's "lengthen the interval while replies are empty":
         # {"i_min", "m", "i_max", "jf"}.  It replaces the policy table as the source of
         # the interval and keeps one number per neighbor, `ival`, starting at i_min.
@@ -270,6 +276,12 @@ class Node:
         # jitter draw), which is why the simulator branches on `policy is not None or
         # rule is not None` wherever the resolution matters.
         self.rule = rule
+        # 2026-11-22: `state_poll_choice_redecide`.  It is a knob ON the choices mode,
+        # so it is dropped here whenever this node has no choices to draw from -- a
+        # caller that replaces the run's poll rule by a `rule=` must not be left with a
+        # re-decision that has nothing to re-draw.  Every branch below then tests this
+        # one flag instead of repeating the pair of conditions.
+        self.redecide = bool(redecide) and choices is not None
         self.ival = {nb: rule["i_min"] for nb in neighbors} if rule else {}
         self.name = name
         self.neighbors = neighbors
@@ -462,7 +474,11 @@ class _Engine:
         self.nodes = {
             n: Node(n, run["neighbors"][n], run["seed"],
                     None if rule else run["policy"],
-                    None if rule else run["choices"], run["choice_jitter"], rule)
+                    None if rule else run["choices"], run["choice_jitter"], rule,
+                    # 2026-11-22: `.get`, because a caller that builds a run dict by hand
+                    # (evidence/18 and evidence/20 both do) wrote it before this key
+                    # existed, and such a run must keep running the path it ran before.
+                    run.get("redecide", False))
             for n in NODES
         }
         self.events = {n: [] for n in NODES}
@@ -582,10 +598,10 @@ class _Engine:
         nd.due[nb] = t + applied * 1000.0
         nd.gen[nb] += 1
         g = nd.gen[nb]
-        if nd.policy is None and nd.rule is None:
+        if nd.policy is None and nd.rule is None and not nd.redecide:
             self.push(nd.due[nb] + self.tick_lag(node, nb, "poll"), P_POLL, node, nb,
                       lambda tt, nn=node, b=nb, gg=g: self.ev_poll(tt, nn, b, gg))
-        elif nd.rule is not None:
+        elif nd.rule is not None or nd.redecide:
             # The spec2 rule runs the policy MECHANISM but draws its tick lag HERE, at
             # send time, exactly where the choices path above draws it, and remembers
             # both the lag and the provisional due instant.  The resolution then re-arms
@@ -594,6 +610,12 @@ class _Engine:
             # I_min = I_max = X the interval never changes, so the rule path consumes
             # the single shared `sim_rng` stream in the same order, at the same instants,
             # as the fixed-interval arm X.
+            # 2026-11-22: re-deciding choices take this same path, for the same reason
+            # and with the same payoff: a single choice X re-drawn from a one-value set
+            # recomputes the due instant it already has, so the timer is not re-armed,
+            # no second lag is drawn, and the arm X is reproduced draw for draw.  Taking
+            # the policy path instead would defer the lag draw to the due instant and
+            # shift every later lag of the run.
             lag = self.tick_lag(node, nb, "poll")
             pend[3], pend[4] = lag, nd.due[nb]
             self.push(nd.due[nb] + lag, P_POLL, node, nb,
@@ -694,6 +716,16 @@ class _Engine:
             self.resolve(t, node, nb, sent_at, "answered", empty=empty)
         for origin, hi in hi_map.items():
             nd.org(origin).advertised[nb] = (hi, holder.extras_asof(origin, serve_ms))
+        if nd.redecide:
+            # 2026-11-22: a re-deciding choice resolves the poll one step later than a
+            # policy or a rule, AFTER the fold just above and still before plan(), which
+            # is where engine.py puts it: the source's reschedule row reports the
+            # tracker's state, and that state has to include what this very reply
+            # advertised.  The row this replay writes carries no tracker state, so the
+            # position moves no value it logs; it is held here anyway, so that the two
+            # sides describe one order of events and a later ticket can put the state on
+            # the row without moving the call.
+            self.resolve(t, node, nb, sent_at, "answered", empty=empty)
         self.plan(t + STATE_RX_TO_PLAN_MS, node, nb)
 
     def no_new(self, nd, hi_map):
@@ -720,7 +752,7 @@ class _Engine:
 
     def ev_poll_timeout(self, t, node, nb, sent_at):
         nd = self.nodes[node]
-        if nd.policy is None and nd.rule is None:
+        if nd.policy is None and nd.rule is None and not nd.redecide:
             return
         self.resolve(t, node, nb, sent_at, "timed_out")
 
@@ -735,27 +767,55 @@ class _Engine:
         longer a corner case -- the provisional timer has then already sent the next
         poll -- so under the spec2 rule whole polls go out unresolved and the rule's
         interval simply does not move on them.
+
+        2026-11-22: the interval comes from the policy table, from the rule's
+        per-neighbour value, or -- with `state_poll_choice_redecide` -- from a fresh
+        uniform draw over the interval choices.  A reply that reaches a poll already
+        resolved as timed out is dropped by the guard above; the source logs it as a
+        `state_poll_late_reply`, which this replay has never emitted and still does not.
+        No such reply can arise here in any case: delivery is decided at send time, so a
+        reply either lands one RTT after its poll or never.
         """
         nd = self.nodes[node]
         pend = nd.pending.get(nb)
         if pend is None or pend[0] != sent_at or pend[2]:
             return
         pend[2] = True
-        nd.consec[nb] = 0 if status == "answered" else nd.consec[nb] + 1
-        if nd.rule is not None:
-            r = nd.rule
-            if status == "answered":
-                # spec2 Part 2: EMPTY lengthens by m up to I_max, a reply with anything
-                # new resets to I_min.  On a timeout I is left alone -- the rule says
-                # nothing about outages, and the short/wait policies are the arms that
-                # answer that question.
-                nd.ival[nb] = (min(nd.ival[nb] * r["m"], r["i_max"]) if empty
-                               else r["i_min"])
-            interval, jf = nd.ival[nb], r["jf"]
+        if nd.redecide:
+            # 2026-11-22: one draw from the choice stream per resolved newest poll, out
+            # of the stream the send draws from and with the same index arithmetic
+            # (engine.py re-draws from `poll_choice_rng` there as well).  The jitter is
+            # not re-drawn: `pend[1]`, the poll's own send-time draw, is applied below.
+            #
+            # `consec` is deliberately left where it is.  The source reads its timeout
+            # count off the poll history and reports the same count with the knob off
+            # and with it on, so the knob moves no `consecutive_poll_timeouts` there.
+            # Here the counter exists for the policy table that reads it, and the
+            # choices path has never maintained it; moving it under the knob would make
+            # the knob rewrite the `state_poll` rows of every run it is on in, which is
+            # exactly what the single-choice identity would then stop showing.  What it
+            # costs: the reschedule row reports 0 where the source reports the real
+            # count, and the `state_poll` row already reported 0 in choices mode before
+            # this knob existed, since the resolution was unreachable there.  No metric,
+            # no pass line and no scheduling decision of this replay reads the field.
+            interval = nd.choices[int(nd.choice_rng() * len(nd.choices))]
+            jf = nd.choice_jitter
         else:
-            row = min(nd.consec[nb], len(nd.policy["intervals_s"]) - 1)
-            interval = nd.policy["intervals_s"][row]
-            jf = nd.policy["jitter_frac"][row]
+            nd.consec[nb] = 0 if status == "answered" else nd.consec[nb] + 1
+            if nd.rule is not None:
+                r = nd.rule
+                if status == "answered":
+                    # spec2 Part 2: EMPTY lengthens by m up to I_max, a reply with
+                    # anything new resets to I_min.  On a timeout I is left alone -- the
+                    # rule says nothing about outages, and the short/wait policies are
+                    # the arms that answer that question.
+                    nd.ival[nb] = (min(nd.ival[nb] * r["m"], r["i_max"]) if empty
+                                   else r["i_min"])
+                interval, jf = nd.ival[nb], r["jf"]
+            else:
+                row = min(nd.consec[nb], len(nd.policy["intervals_s"]) - 1)
+                interval = nd.policy["intervals_s"][row]
+                jf = nd.policy["jitter_frac"][row]
         applied = interval * (1.0 + jf * (2.0 * pend[1] - 1.0))
         due_at = sent_at + applied * 1000.0
         clamped = due_at < t
@@ -767,7 +827,7 @@ class _Engine:
                                     "applied_interval_s": applied, "clamped": clamped},
                          "state": {"last_poll_status": status,
                                    "consecutive_poll_timeouts": nd.consec[nb]}})
-        if nd.rule is not None and pend[4] is not None and due == pend[4]:
+        if (nd.rule is not None or nd.redecide) and pend[4] is not None and due == pend[4]:
             # The provisional timer this poll armed at send already points at exactly
             # this instant, so engine.py:522's `_next_state_poll[neighbor] = max(due_at,
             # now)` writes back the value that is already there.  Re-arming it here
