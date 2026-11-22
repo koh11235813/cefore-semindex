@@ -1,0 +1,483 @@
+line,stage,metric,value,note
+0,,predict_txt_rows_checked,10,
+1,s10b3p695,runs_done,40,
+1,s10b3p695,runs_valid,40,
+1,s10b3p695,runs_flagged,0,
+1,s10b3p695,flag_names,none,
+1,s10b6p0,runs_done,40,
+1,s10b6p0,runs_valid,40,
+1,s10b6p0,runs_flagged,0,
+1,s10b6p0,flag_names,none,
+1,s10b10p043,runs_done,40,
+1,s10b10p043,runs_valid,40,
+1,s10b10p043,runs_flagged,0,
+1,s10b10p043,flag_names,none,
+1,s10t37r,runs_done,40,
+1,s10t37r,runs_valid,40,
+1,s10t37r,runs_flagged,0,
+1,s10t37r,flag_names,none,
+1,s10f,runs_done,40,
+1,s10f,runs_valid,40,
+1,s10f,runs_flagged,0,
+1,s10f,flag_names,none,
+1,,runs_done_total,200,
+1,,runs_valid_total,200,
+1,,seeds_used,40,
+1,s10b3p695,interval_s_allowed,3.695,
+1,s10b3p695,interval_s_seen,3.695=11219,
+1,s10b3p695,interval_s_exact,yes,"40 runs read, 11219 decision rows"
+1,s10b6p0,interval_s_allowed,6.0,
+1,s10b6p0,interval_s_seen,6.0=7033,
+1,s10b6p0,interval_s_exact,yes,"40 runs read, 7033 decision rows"
+1,s10b10p043,interval_s_allowed,10.043,
+1,s10b10p043,interval_s_seen,10.043=4231,
+1,s10b10p043,interval_s_exact,yes,"40 runs read, 4231 decision rows"
+1,s10t37r,interval_s_allowed,3.695;7.39;10.043,
+1,s10t37r,interval_s_seen,3.695=8772;7.39=2447;10.043=3277,
+1,s10t37r,interval_s_exact,yes,"40 runs read, 14496 decision rows"
+1,s10f,interval_s_allowed,3.695;5.5424999999999995;8.313749999999999;10.043,
+1,s10f,interval_s_seen,3.695=9504;5.5424999999999995=2496;8.313749999999999=1882;10.043=1862,
+1,s10f,interval_s_exact,yes,"40 runs read, 15744 decision rows"
+1,s10b3p695,seeds_are_wanted,yes,"40 DONE, wanted 121 to 160"
+1,s10b3p695,workloads_seen,w0,
+1,s10b3p695,workload_is_wanted,yes,w0
+1,s10b3p695,semindex_git_commit,d009cfb270909beda1f277943f99c93acb9e96e2,
+1,s10b3p695,semindex_git_dirty_runs,0,
+1,s10b3p695,one_clean_commit,yes,
+1,s10b6p0,seeds_are_wanted,yes,"40 DONE, wanted 121 to 160"
+1,s10b6p0,workloads_seen,w0,
+1,s10b6p0,workload_is_wanted,yes,w0
+1,s10b6p0,semindex_git_commit,d009cfb270909beda1f277943f99c93acb9e96e2,
+1,s10b6p0,semindex_git_dirty_runs,0,
+1,s10b6p0,one_clean_commit,yes,
+1,s10b10p043,seeds_are_wanted,yes,"40 DONE, wanted 121 to 160"
+1,s10b10p043,workloads_seen,w0,
+1,s10b10p043,workload_is_wanted,yes,w0
+1,s10b10p043,semindex_git_commit,d009cfb270909beda1f277943f99c93acb9e96e2,
+1,s10b10p043,semindex_git_dirty_runs,0,
+1,s10b10p043,one_clean_commit,yes,
+1,s10t37r,seeds_are_wanted,yes,"40 DONE, wanted 121 to 160"
+1,s10t37r,workloads_seen,w0,
+1,s10t37r,workload_is_wanted,yes,w0
+1,s10t37r,semindex_git_commit,d009cfb270909beda1f277943f99c93acb9e96e2,
+1,s10t37r,semindex_git_dirty_runs,0,
+1,s10t37r,one_clean_commit,yes,
+1,s10f,seeds_are_wanted,yes,"40 DONE, wanted 121 to 160"
+1,s10f,workloads_seen,w0,
+1,s10f,workload_is_wanted,yes,w0
+1,s10f,semindex_git_commit,d009cfb270909beda1f277943f99c93acb9e96e2,
+1,s10f,semindex_git_dirty_runs,0,
+1,s10f,one_clean_commit,yes,
+1,s10f,pinned_F[i_min_s],3.695,"fpin.txt 3.695, spec.md 3.695, agree yes"
+1,s10f,pinned_F[factor],1.5,"fpin.txt 1.5, spec.md 1.5, agree yes"
+1,s10f,pinned_F[i_max_s],10.043,"fpin.txt 10.043, spec.md 10.043, agree yes"
+1,s10f,pinned_F[jitter_frac],0.1,"fpin.txt 0.1, spec.md 0.1, agree yes"
+1,s10f,pinned_F[on_timeout],'reset',"fpin.txt 'reset', spec.md 'reset', agree yes"
+1,s10f,pinned_F_floor_ok,yes,floor 3.695 s
+1,s10f,pinned_F_extra_keys,none,
+1,,verdict,pass,
+2,s10b3p695,delay_s[headline],13.782581,
+2,s10b3p695,censored_share[headline],0.000000,
+2,s10b3p695,polls_per_run[headline],256.475000,
+2,s10b3p695,delay_s[all records],13.782581,
+2,s10b3p695,censored_share[all records],0.000000,
+2,s10b3p695,polls_per_run[all records],256.475000,
+2,s10b6p0,delay_s[headline],20.334986,
+2,s10b6p0,censored_share[headline],0.000000,
+2,s10b6p0,polls_per_run[headline],159.825000,
+2,s10b6p0,delay_s[all records],20.334986,
+2,s10b6p0,censored_share[all records],0.000000,
+2,s10b6p0,polls_per_run[all records],159.825000,
+2,s10b10p043,delay_s[headline],30.140416,
+2,s10b10p043,censored_share[headline],0.004583,
+2,s10b10p043,polls_per_run[headline],96.425000,
+2,s10b10p043,delay_s[all records],30.140416,
+2,s10b10p043,censored_share[all records],0.004583,
+2,s10b10p043,polls_per_run[all records],96.425000,
+2,s10t37r,delay_s[headline],18.342770,
+2,s10t37r,censored_share[headline],0.000000,
+2,s10t37r,polls_per_run[headline],165.475000,
+2,s10t37r,delay_s[all records],18.342770,
+2,s10t37r,censored_share[all records],0.000000,
+2,s10t37r,polls_per_run[all records],165.475000,
+2,s10f,delay_s[headline],17.459522,
+2,s10f,censored_share[headline],0.000000,
+2,s10f,polls_per_run[headline],180.975000,
+2,s10f,delay_s[all records],17.459522,
+2,s10f,censored_share[all records],0.000000,
+2,s10f,polls_per_run[all records],180.975000,
+2,s10b3p695,censored_records[headline],0,of 9600 records
+2,s10b3p695,censored_seeds[headline],none,
+2,s10b3p695,censored_records[all records],0,of 9600 records
+2,s10b3p695,censored_seeds[all records],none,
+2,s10b6p0,censored_records[headline],0,of 9600 records
+2,s10b6p0,censored_seeds[headline],none,
+2,s10b6p0,censored_records[all records],0,of 9600 records
+2,s10b6p0,censored_seeds[all records],none,
+2,s10b10p043,censored_records[headline],44,of 9600 records
+2,s10b10p043,censored_seeds[headline],135=40;149=4,
+2,s10b10p043,censored_records[all records],44,of 9600 records
+2,s10b10p043,censored_seeds[all records],135=40;149=4,
+2,s10t37r,censored_records[headline],0,of 9600 records
+2,s10t37r,censored_seeds[headline],none,
+2,s10t37r,censored_records[all records],0,of 9600 records
+2,s10t37r,censored_seeds[all records],none,
+2,s10f,censored_records[headline],0,of 9600 records
+2,s10f,censored_seeds[headline],none,
+2,s10f,censored_records[all records],0,of 9600 records
+2,s10f,censored_seeds[all records],none,
+2,s10b10p043,uneven_uncensored_counts,135=200;149=236,other seeds 240
+2,,frontier_segment[T37r],6.0 s to 3.695 s arms,
+2,,frontier_segment_resamples[T37r],6.0 s to 3.695 s arms=2000,
+2,,frontier_segment[F],6.0 s to 3.695 s arms,
+2,,frontier_segment_resamples[F],6.0 s to 3.695 s arms=2000,
+2,,frontier_arm_never_read,B10,"no gain, full sample or resample, is read off a segment touching it"
+2,,arms_monotone[headline],yes,
+2,,gain[T37r:headline],0.071828,
+2,,word[T37r:headline],seen,"joint drop rule, predict.py's own"
+2,,predicted_word[T37r:headline],seen,
+2,,gain_lo[T37r:headline:joint],0.017669,
+2,,gain_hi[T37r:headline:joint],0.125085,
+2,,gain_half_width_pp[T37r:headline:joint],5.3708,
+2,,boot_dropped[T37r:headline:joint],0,none
+2,,gain_lo[T37r:headline:per quantity],0.017669,
+2,,gain_hi[T37r:headline:per quantity],0.125085,
+2,,gain_half_width_pp[T37r:headline:per quantity],5.3708,
+2,,boot_dropped[T37r:headline:per quantity],0,none
+2,,gain[F:headline],0.049013,
+2,,word[F:headline],seen,"joint drop rule, predict.py's own"
+2,,predicted_word[F:headline],seen,
+2,,gain_lo[F:headline:joint],0.005457,
+2,,gain_hi[F:headline:joint],0.092146,
+2,,gain_half_width_pp[F:headline:joint],4.3345,
+2,,boot_dropped[F:headline:joint],0,none
+2,,gain_lo[F:headline:per quantity],0.005457,
+2,,gain_hi[F:headline:per quantity],0.092146,
+2,,gain_half_width_pp[F:headline:per quantity],4.3345,
+2,,boot_dropped[F:headline:per quantity],0,none
+2,,diff[headline],-0.022815,
+2,,diff_word[headline],not seen,"joint drop rule, predict.py's own"
+2,,diff_lo[headline:joint],-0.060969,
+2,,diff_hi[headline:joint],0.015010,
+2,,diff_dropped[headline:joint],0,
+2,,diff_lo[headline:per quantity],-0.060969,
+2,,diff_hi[headline:per quantity],0.015010,
+2,,diff_dropped[headline:per quantity],0,
+2,,arms_monotone[all records],yes,
+2,,gain[T37r:all records],0.071828,
+2,,word[T37r:all records],seen,"joint drop rule, predict.py's own"
+2,,predicted_word[T37r:all records],seen,
+2,,gain_lo[T37r:all records:joint],0.017669,
+2,,gain_hi[T37r:all records:joint],0.125085,
+2,,gain_half_width_pp[T37r:all records:joint],5.3708,
+2,,boot_dropped[T37r:all records:joint],0,none
+2,,gain_lo[T37r:all records:per quantity],0.017669,
+2,,gain_hi[T37r:all records:per quantity],0.125085,
+2,,gain_half_width_pp[T37r:all records:per quantity],5.3708,
+2,,boot_dropped[T37r:all records:per quantity],0,none
+2,,gain[F:all records],0.049013,
+2,,word[F:all records],seen,"joint drop rule, predict.py's own"
+2,,predicted_word[F:all records],seen,
+2,,gain_lo[F:all records:joint],0.005457,
+2,,gain_hi[F:all records:joint],0.092146,
+2,,gain_half_width_pp[F:all records:joint],4.3345,
+2,,boot_dropped[F:all records:joint],0,none
+2,,gain_lo[F:all records:per quantity],0.005457,
+2,,gain_hi[F:all records:per quantity],0.092146,
+2,,gain_half_width_pp[F:all records:per quantity],4.3345,
+2,,boot_dropped[F:all records:per quantity],0,none
+2,,diff[all records],-0.022815,
+2,,diff_word[all records],not seen,"joint drop rule, predict.py's own"
+2,,diff_lo[all records:joint],-0.060969,
+2,,diff_hi[all records:joint],0.015010,
+2,,diff_dropped[all records:joint],0,
+2,,diff_lo[all records:per quantity],-0.060969,
+2,,diff_hi[all records:per quantity],0.015010,
+2,,diff_dropped[all records:per quantity],0,
+2,,spec_text[T37r],"spec.md: seen is the reading when the whole interval of the gain lies above zero, and seen is the prediction for both rules.",
+2,,spec_text[F],"spec.md: seen is the reading when the whole interval of the gain lies above zero, and seen is the prediction for both rules.",
+2,s10f,spec_text_F_only,"The pinned F's row only: spec.md's prediction for F is a three-arm gain on seeds F has never seen. fpin.txt's +11.1 is a different quantity, a seven-arm gain in sample on the 20 seeds that chose the member, and this row is not read against it.",
+3,,ratio_pct[delay:headline],-4.815236,
+3,,spans_zero[delay:headline],no,"joint drop rule, predict.py's own"
+3,,ratio_lo_pct[delay:headline:joint],-8.749033,
+3,,ratio_hi_pct[delay:headline:joint],-0.530620,
+3,,ratio_half_width_pp[delay:headline:joint],4.1092,
+3,,ratio_dropped[delay:headline:joint],0,
+3,,ratio_lo_pct[delay:headline:per quantity],-8.749033,
+3,,ratio_hi_pct[delay:headline:per quantity],-0.530620,
+3,,ratio_half_width_pp[delay:headline:per quantity],4.1092,
+3,,ratio_dropped[delay:headline:per quantity],0,
+3,,ratio_pct[delay:all records],-4.815236,
+3,,spans_zero[delay:all records],no,"joint drop rule, predict.py's own"
+3,,ratio_lo_pct[delay:all records:joint],-8.749033,
+3,,ratio_hi_pct[delay:all records:joint],-0.530620,
+3,,ratio_half_width_pp[delay:all records:joint],4.1092,
+3,,ratio_dropped[delay:all records:joint],0,
+3,,ratio_lo_pct[delay:all records:per quantity],-8.749033,
+3,,ratio_hi_pct[delay:all records:per quantity],-0.530620,
+3,,ratio_half_width_pp[delay:all records:per quantity],4.1092,
+3,,ratio_dropped[delay:all records:per quantity],0,
+3,,ratio_pct[polls:headline],9.366974,
+3,,spans_zero[polls:headline],no,"joint drop rule, predict.py's own"
+3,,ratio_lo_pct[polls:headline:joint],8.385782,
+3,,ratio_hi_pct[polls:headline:joint],10.314814,
+3,,ratio_half_width_pp[polls:headline:joint],0.9645,
+3,,ratio_dropped[polls:headline:joint],0,
+3,,ratio_lo_pct[polls:headline:per quantity],8.385782,
+3,,ratio_hi_pct[polls:headline:per quantity],10.314814,
+3,,ratio_half_width_pp[polls:headline:per quantity],0.9645,
+3,,ratio_dropped[polls:headline:per quantity],0,
+3,,ratio_pct[polls:all records],9.366974,
+3,,spans_zero[polls:all records],no,"joint drop rule, predict.py's own"
+3,,ratio_lo_pct[polls:all records:joint],8.385782,
+3,,ratio_hi_pct[polls:all records:joint],10.314814,
+3,,ratio_half_width_pp[polls:all records:joint],0.9645,
+3,,ratio_dropped[polls:all records:joint],0,
+3,,ratio_lo_pct[polls:all records:per quantity],8.385782,
+3,,ratio_hi_pct[polls:all records:per quantity],10.314814,
+3,,ratio_half_width_pp[polls:all records:per quantity],0.9645,
+3,,ratio_dropped[polls:all records:per quantity],0,
+4,s10b3p695,delay s_measured,13.782581,
+4,s10b3p695,delay s_band,inside,13.074 .. 14.742
+4,s10b3p695,delay s_deviation_pct,-0.9018,
+4,s10b3p695,delay s_informative,yes,
+4,s10b3p695,polls per run_measured,256.475000,
+4,s10b3p695,polls per run_band,inside,241.27 .. 272.08
+4,s10b3p695,polls per run_deviation_pct,-0.0799,
+4,s10b3p695,polls per run_informative,no,
+4,s10b6p0,delay s_measured,20.334986,
+4,s10b6p0,delay s_band,inside,19.162 .. 21.609
+4,s10b6p0,delay s_deviation_pct,-0.2502,
+4,s10b6p0,delay s_informative,yes,
+4,s10b6p0,polls per run_measured,159.825000,
+4,s10b6p0,polls per run_band,inside,150.16 .. 169.34
+4,s10b6p0,polls per run_deviation_pct,0.0469,
+4,s10b6p0,polls per run_informative,no,
+4,s10b10p043,delay s_measured,30.140416,
+4,s10b10p043,delay s_band,inside,28.611 .. 32.264
+4,s10b10p043,delay s_deviation_pct,-0.9744,
+4,s10b10p043,delay s_informative,yes,
+4,s10b10p043,polls per run_measured,96.425000,
+4,s10b10p043,polls per run_band,inside,90.31 .. 101.84
+4,s10b10p043,polls per run_deviation_pct,0.3591,
+4,s10b10p043,polls per run_informative,no,
+4,s10t37r,delay s_measured,18.342770,
+4,s10t37r,delay s_band,inside,17.406 .. 19.628
+4,s10t37r,delay s_deviation_pct,-0.9409,
+4,s10t37r,delay s_informative,yes,
+4,s10t37r,polls per run_measured,165.475000,
+4,s10t37r,polls per run_band,inside,155.11 .. 174.91
+4,s10t37r,polls per run_deviation_pct,0.2818,
+4,s10t37r,polls per run_informative,yes,
+4,s10f,delay s_measured,17.459522,
+4,s10f,delay s_band,inside,16.024 .. 18.07
+4,s10f,delay s_deviation_pct,2.4199,
+4,s10f,delay s_informative,yes,
+4,s10f,polls per run_measured,180.975000,
+4,s10f,polls per run_band,inside,170.09 .. 191.81
+4,s10f,polls per run_deviation_pct,0.0138,
+4,s10f,polls per run_informative,yes,
+4,,values_inside,10,
+4,,values_informative_inside,7,
+4,,values_informative,7,
+4,,seeds_used,40,
+4,,verdict,predicted,
+0,s10b3p695,headline_delay_s,13.782581,
+0,s10b3p695,all_delay_s,13.782581,
+0,s10b3p695,headline_censored_share,0.000000,
+0,s10b3p695,all_censored_share,0.000000,
+0,s10b3p695,polls_per_run,256.475000,
+0,s10b3p695,headline_equals_all_records,yes,
+0,s10b6p0,headline_delay_s,20.334986,
+0,s10b6p0,all_delay_s,20.334986,
+0,s10b6p0,headline_censored_share,0.000000,
+0,s10b6p0,all_censored_share,0.000000,
+0,s10b6p0,polls_per_run,159.825000,
+0,s10b6p0,headline_equals_all_records,yes,
+0,s10b10p043,headline_delay_s,30.140416,
+0,s10b10p043,all_delay_s,30.140416,
+0,s10b10p043,headline_censored_share,0.004583,
+0,s10b10p043,all_censored_share,0.004583,
+0,s10b10p043,polls_per_run,96.425000,
+0,s10b10p043,headline_equals_all_records,yes,
+0,s10t37r,headline_delay_s,18.342770,
+0,s10t37r,all_delay_s,18.342770,
+0,s10t37r,headline_censored_share,0.000000,
+0,s10t37r,all_censored_share,0.000000,
+0,s10t37r,polls_per_run,165.475000,
+0,s10t37r,headline_equals_all_records,yes,
+0,s10f,headline_delay_s,17.459522,
+0,s10f,all_delay_s,17.459522,
+0,s10f,headline_censored_share,0.000000,
+0,s10f,all_censored_share,0.000000,
+0,s10f,polls_per_run,180.975000,
+0,s10f,headline_equals_all_records,yes,
+0,,sched_regen_diff_total,0,0 of 200 runs nonzero
+0,,head_missing_disc_total,0,0 of 200 runs nonzero
+0,,all_missing_disc_total,0,0 of 200 runs nonzero
+0,,sched_all[seed 121],240,
+0,,sched_head[seed 121],240,
+0,,sched_all[seed 122],240,
+0,,sched_head[seed 122],240,
+0,,sched_all[seed 123],240,
+0,,sched_head[seed 123],240,
+0,,sched_all[seed 124],240,
+0,,sched_head[seed 124],240,
+0,,sched_all[seed 125],240,
+0,,sched_head[seed 125],240,
+0,,sched_all[seed 126],240,
+0,,sched_head[seed 126],240,
+0,,sched_all[seed 127],240,
+0,,sched_head[seed 127],240,
+0,,sched_all[seed 128],240,
+0,,sched_head[seed 128],240,
+0,,sched_all[seed 129],240,
+0,,sched_head[seed 129],240,
+0,,sched_all[seed 130],240,
+0,,sched_head[seed 130],240,
+0,,sched_all[seed 131],240,
+0,,sched_head[seed 131],240,
+0,,sched_all[seed 132],240,
+0,,sched_head[seed 132],240,
+0,,sched_all[seed 133],240,
+0,,sched_head[seed 133],240,
+0,,sched_all[seed 134],240,
+0,,sched_head[seed 134],240,
+0,,sched_all[seed 135],240,
+0,,sched_head[seed 135],240,
+0,,sched_all[seed 136],240,
+0,,sched_head[seed 136],240,
+0,,sched_all[seed 137],240,
+0,,sched_head[seed 137],240,
+0,,sched_all[seed 138],240,
+0,,sched_head[seed 138],240,
+0,,sched_all[seed 139],240,
+0,,sched_head[seed 139],240,
+0,,sched_all[seed 140],240,
+0,,sched_head[seed 140],240,
+0,,sched_all[seed 141],240,
+0,,sched_head[seed 141],240,
+0,,sched_all[seed 142],240,
+0,,sched_head[seed 142],240,
+0,,sched_all[seed 143],240,
+0,,sched_head[seed 143],240,
+0,,sched_all[seed 144],240,
+0,,sched_head[seed 144],240,
+0,,sched_all[seed 145],240,
+0,,sched_head[seed 145],240,
+0,,sched_all[seed 146],240,
+0,,sched_head[seed 146],240,
+0,,sched_all[seed 147],240,
+0,,sched_head[seed 147],240,
+0,,sched_all[seed 148],240,
+0,,sched_head[seed 148],240,
+0,,sched_all[seed 149],240,
+0,,sched_head[seed 149],240,
+0,,sched_all[seed 150],240,
+0,,sched_head[seed 150],240,
+0,,sched_all[seed 151],240,
+0,,sched_head[seed 151],240,
+0,,sched_all[seed 152],240,
+0,,sched_head[seed 152],240,
+0,,sched_all[seed 153],240,
+0,,sched_head[seed 153],240,
+0,,sched_all[seed 154],240,
+0,,sched_head[seed 154],240,
+0,,sched_all[seed 155],240,
+0,,sched_head[seed 155],240,
+0,,sched_all[seed 156],240,
+0,,sched_head[seed 156],240,
+0,,sched_all[seed 157],240,
+0,,sched_head[seed 157],240,
+0,,sched_all[seed 158],240,
+0,,sched_head[seed 158],240,
+0,,sched_all[seed 159],240,
+0,,sched_head[seed 159],240,
+0,,sched_all[seed 160],240,
+0,,sched_head[seed 160],240,
+0,s10b3p695,extra_answered,0,
+0,s10b3p695,extra_clamped,0,
+0,s10b3p695,extra_empty_false,0,
+0,s10b3p695,extra_empty_null_answered,0,
+0,s10b3p695,extra_empty_true,0,
+0,s10b3p695,extra_late,0,
+0,s10b3p695,extra_polls,11219,
+0,s10b3p695,extra_resched,0,
+0,s10b3p695,extra_rows,11219,
+0,s10b3p695,extra_timed_out,0,
+0,s10b3p695,extra_empty_true_share_of_answered,nan,
+0,s10b6p0,extra_answered,0,
+0,s10b6p0,extra_clamped,0,
+0,s10b6p0,extra_empty_false,0,
+0,s10b6p0,extra_empty_null_answered,0,
+0,s10b6p0,extra_empty_true,0,
+0,s10b6p0,extra_late,0,
+0,s10b6p0,extra_polls,7033,
+0,s10b6p0,extra_resched,0,
+0,s10b6p0,extra_rows,7033,
+0,s10b6p0,extra_timed_out,0,
+0,s10b6p0,extra_empty_true_share_of_answered,nan,
+0,s10b10p043,extra_answered,0,
+0,s10b10p043,extra_clamped,0,
+0,s10b10p043,extra_empty_false,0,
+0,s10b10p043,extra_empty_null_answered,0,
+0,s10b10p043,extra_empty_true,0,
+0,s10b10p043,extra_late,0,
+0,s10b10p043,extra_polls,4231,
+0,s10b10p043,extra_resched,0,
+0,s10b10p043,extra_rows,4231,
+0,s10b10p043,extra_timed_out,0,
+0,s10b10p043,extra_empty_true_share_of_answered,nan,
+0,s10t37r,extra_answered,5690,
+0,s10t37r,extra_clamped,0,
+0,s10t37r,extra_empty_false,2688,
+0,s10t37r,extra_empty_null_answered,0,
+0,s10t37r,extra_empty_true,3002,
+0,s10t37r,extra_late,0,
+0,s10t37r,extra_polls,7259,
+0,s10t37r,extra_resched,7237,
+0,s10t37r,extra_rows,14496,
+0,s10t37r,extra_timed_out,1547,
+0,s10t37r,extra_empty_true_share_of_answered,0.527592,
+0,s10f,extra_answered,6191,
+0,s10f,extra_clamped,0,
+0,s10f,extra_empty_false,2928,
+0,s10f,extra_empty_null_answered,0,
+0,s10f,extra_empty_true,3263,
+0,s10f,extra_late,0,
+0,s10f,extra_polls,7879,
+0,s10f,extra_resched,7865,
+0,s10f,extra_rows,15744,
+0,s10f,extra_timed_out,1674,
+0,s10f,extra_empty_true_share_of_answered,0.527055,
+0,bootstrap,draw_1,40,2000 resamples
+0,,dropped[headline:diff:joint],0,none
+0,,dropped[headline:diff:per quantity],0,none
+0,,dropped[headline:gain_F:joint],0,none
+0,,dropped[headline:gain_F:per quantity],0,none
+0,,dropped[headline:gain_T37r:joint],0,none
+0,,dropped[headline:gain_T37r:per quantity],0,none
+0,,dropped[headline:ratio_delay:joint],0,none
+0,,dropped[headline:ratio_delay:per quantity],0,none
+0,,dropped[headline:ratio_polls:joint],0,none
+0,,dropped[headline:ratio_polls:per quantity],0,none
+0,,dropped[all records:diff:joint],0,none
+0,,dropped[all records:diff:per quantity],0,none
+0,,dropped[all records:gain_F:joint],0,none
+0,,dropped[all records:gain_F:per quantity],0,none
+0,,dropped[all records:gain_T37r:joint],0,none
+0,,dropped[all records:gain_T37r:per quantity],0,none
+0,,dropped[all records:ratio_delay:joint],0,none
+0,,dropped[all records:ratio_delay:per quantity],0,none
+0,,dropped[all records:ratio_polls:joint],0,none
+0,,dropped[all records:ratio_polls:per quantity],0,none
+0,,same_resample_set[headline:diff],yes,"joint 0, per quantity 0"
+0,,same_resample_set[headline:gain_F],yes,"joint 0, per quantity 0"
+0,,same_resample_set[headline:gain_T37r],yes,"joint 0, per quantity 0"
+0,,same_resample_set[headline:ratio_delay],yes,"joint 0, per quantity 0"
+0,,same_resample_set[headline:ratio_polls],yes,"joint 0, per quantity 0"
+0,,same_resample_set[all records:diff],yes,"joint 0, per quantity 0"
+0,,same_resample_set[all records:gain_F],yes,"joint 0, per quantity 0"
+0,,same_resample_set[all records:gain_T37r],yes,"joint 0, per quantity 0"
+0,,same_resample_set[all records:ratio_delay],yes,"joint 0, per quantity 0"
+0,,same_resample_set[all records:ratio_polls],yes,"joint 0, per quantity 0"
