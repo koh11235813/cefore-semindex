@@ -147,6 +147,9 @@ class ExperimentSpec:
     counters_snapshot_at_s: tuple[float, ...]
     state_poll_interval_choices_s: tuple[float, ...] | None
     state_poll_choice_jitter_frac: float | None
+    # True to re-decide the choices interval when a poll resolves, or None if the key
+    # was absent (2026-11-22; see parse_state_poll_choice_redecide).
+    state_poll_choice_redecide: bool | None
     # {"intervals_s": [...], "jitter_frac": [...]}, both lists of floats, or None.
     state_poll_policy: dict[str, list[float]] | None
     # {"i_min_s": ..., "factor": ..., "i_max_s": ..., "jitter_frac": ..., "on_timeout": "keep"|"reset"}, or None.
@@ -176,6 +179,7 @@ _TOP_LEVEL_OPTIONAL = (
     "counters_snapshot_at_s",
     "state_poll_interval_choices_s",
     "state_poll_choice_jitter_frac",
+    "state_poll_choice_redecide",
     "state_poll_policy",
     "state_poll_rule",
     "max_in_flight_per_neighbor",
@@ -542,6 +546,25 @@ def parse_state_poll_choice_jitter_frac(raw, *, have_choices: bool) -> float | N
     return value
 
 
+def parse_state_poll_choice_redecide(raw, *, have_choices: bool) -> bool | None:
+    """Validate the optional `state_poll_choice_redecide` top-level key, or None if absent.
+
+    Forwarded verbatim into every generated agent config, where it makes a poll that
+    is answered or times out re-draw the choices interval instead of leaving the draw
+    made at the previous poll's send time standing (engine.SyncConfig). 2026-11-22:
+    checked here as well as by the agent (a real boolean, only with choices) so a bad
+    value fails at generation, not after a full run. The structural and combination
+    messages are the agent's text, as for the choice jitter.
+    """
+    if raw is None:
+        return None
+    if not have_choices:
+        raise ExperimentError("state_poll_choice_redecide requires state_poll_interval_choices_s")
+    if not isinstance(raw, bool):
+        raise ExperimentError("state_poll_choice_redecide must be a boolean")
+    return raw
+
+
 def parse_state_poll_policy(raw, *, have_choices: bool, have_choice_jitter: bool) -> dict[str, list[float]] | None:
     """Validate the optional `state_poll_policy` top-level key, or None if absent.
 
@@ -758,6 +781,12 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
     state_poll_choice_jitter_frac = parse_state_poll_choice_jitter_frac(
         raw.get("state_poll_choice_jitter_frac"), have_choices=state_poll_interval_choices_s is not None
     )
+    # 2026-11-22: after the choices, whose presence decides whether this key is legal
+    # at all; the table and the rule are parsed before them and already refuse the
+    # choices, so no combination reaches here unreported.
+    state_poll_choice_redecide = parse_state_poll_choice_redecide(
+        raw.get("state_poll_choice_redecide"), have_choices=state_poll_interval_choices_s is not None
+    )
     max_in_flight_per_neighbor = parse_max_in_flight_per_neighbor(raw.get("max_in_flight_per_neighbor"))
     store_synchronous = parse_store_synchronous(raw.get("store_synchronous"))
 
@@ -787,6 +816,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         counters_snapshot_at_s=counters_snapshot_at_s,
         state_poll_interval_choices_s=state_poll_interval_choices_s,
         state_poll_choice_jitter_frac=state_poll_choice_jitter_frac,
+        state_poll_choice_redecide=state_poll_choice_redecide,
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
         max_in_flight_per_neighbor=max_in_flight_per_neighbor,
@@ -912,6 +942,11 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
         config["state_poll_interval_choices_s"] = list(spec.state_poll_interval_choices_s)
     if spec.state_poll_choice_jitter_frac is not None:
         config["state_poll_choice_jitter_frac"] = spec.state_poll_choice_jitter_frac
+    # 2026-11-22: written only when on, not when the experiment spelled out `false`,
+    # so a config made with the knob off is byte for byte what it was before the key
+    # existed and every choices run collected before this code regenerates its bytes.
+    if spec.state_poll_choice_redecide:
+        config["state_poll_choice_redecide"] = True
     # Same rule as the choices (2026-11-03): the policy draws its jitter from an
     # rng seeded from (seed, node), and leaving both out without a policy keeps
     # every existing agent config byte for byte. parse_experiment never lets

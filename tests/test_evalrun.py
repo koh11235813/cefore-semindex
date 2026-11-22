@@ -1981,3 +1981,119 @@ def test_run_all_hands_every_run_the_sweeps_workload_and_poll_rule(tmp_path: Pat
     assert [(o.p, o.seed) for o in outcomes] == [(0.4, 1), (0.4, 2)]
     assert [call["workload"] for call in calls] == ["wv", "wv"]
     assert [call["state_poll_rule"] for call in calls] == [_T37R, _T37R]
+
+
+# -- re-deciding the choices draw (--choice-redecide, 2026-11-22) ---------------------
+
+_REDECIDE_CHOICES = [3.695, 6.0, 10.043]
+
+
+@pytest.mark.parametrize("redecide, written", [(True, True), (None, False)])
+def test_run_one_generates_with_and_records_the_redecide_knob(tmp_path: Path, monkeypatch, redecide, written):
+    """With the knob on, the generated run and meta.json both say so. With it unset,
+    neither carries the key at all -- unlike the table and the rule, which record null,
+    because a run made before the key existed could not have used it and "absent" and
+    "off" are the same run here."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.4,
+        3,
+        "s11a",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        k=4,
+        state_poll_interval_choices_s=_REDECIDE_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=redecide,
+    )
+
+    run_dir = store / "s11a" / "p0.4" / "3"
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    # Present and exactly True when on, absent altogether when unset -- never false.
+    assert meta.get("state_poll_choice_redecide", "absent") == (True if written else "absent")
+    assert meta["state_poll_interval_choices_s"] == _REDECIDE_CHOICES
+    assert meta["state_poll_policy"] is None
+    assert meta["state_poll_rule"] is None
+    assert meta["validity"]["valid"] is True
+    experiment = json.loads((run_dir / "s11a_p040_seed3.experiment.json").read_text(encoding="utf-8"))
+    assert ("state_poll_choice_redecide" in experiment) is written
+    h0 = json.loads((run_dir / "s11a_p040_seed3" / "h0.json").read_text(encoding="utf-8"))
+    assert ("state_poll_choice_redecide" in h0) is written
+    assert h0["seed"] == 3
+
+
+def test_main_passes_the_redecide_knob_to_run_all_and_none_when_not_given(tmp_path: Path, monkeypatch):
+    """--choice-redecide reaches run_all as True; without it, None rather than False, so
+    nothing downstream writes the key or refuses it for having no choices."""
+    seen: dict = {}
+    monkeypatch.setattr(evalrun, "run_all", lambda *a, **kw: seen.update(kw) or [])
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    base = ["--stage", "s11a", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+            str(tmp_path / "recefore"), "--staging", str(staging_parent),
+            "--interval-choices", "3.695", "6.0", "10.043"]
+    assert evalrun.main(base + ["--choice-redecide"]) == 0
+    assert seen["state_poll_choice_redecide"] is True
+    seen.clear()
+    assert evalrun.main(base) == 0
+    assert seen["state_poll_choice_redecide"] is None
+
+
+def test_main_refuses_the_redecide_knob_without_choices_before_any_run(tmp_path: Path, monkeypatch, capsys):
+    """--choice-redecide without --interval-choices is refused once, up front (exit 2),
+    with the exact diagnostic, and no run is attempted."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s11a", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--choice-redecide"]
+    )
+    assert rc == 2
+    assert calls == []
+    assert capsys.readouterr().err == (
+        "semindex.evalrun: state_poll_choice_redecide requires state_poll_interval_choices_s\n"
+    )
+
+
+def test_run_all_hands_every_run_the_redecide_knob(tmp_path: Path, monkeypatch, capsys):
+    """The knob reaches each `run_one` call as a keyword, not just `run_all`'s validation:
+    a sweep asked for the re-decision would otherwise run without it while every
+    meta.json recorded it."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        evalrun,
+        "run_one",
+        lambda *a, **kw: calls.append(kw) or evalrun.RunOutcome(a[0], a[1], "skipped"),
+    )
+
+    evalrun.run_all(
+        [0.4],
+        [1, 2],
+        "s11a",
+        str(tmp_path / "store"),
+        str(tmp_path / "recefore"),
+        str(tmp_path / "staging"),
+        allow_dirty=True,
+        k=4,
+        state_poll_interval_choices_s=_REDECIDE_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+    )
+
+    assert capsys.readouterr().out == "p=0.4 seed=1 status=skipped\np=0.4 seed=2 status=skipped\n"
+    assert [call["state_poll_choice_redecide"] for call in calls] == [True, True]

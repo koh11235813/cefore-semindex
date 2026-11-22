@@ -102,6 +102,15 @@ class SyncConfig:
     # 1's policy has its own state_poll_jitter_frac); 0 reproduces jitter-free
     # choices exactly.
     state_poll_choice_jitter_frac: float = 0.1
+    # 2026-11-22: with choices, re-decide the pending next-poll time when the newest
+    # poll is answered or passes its lifetime, instead of leaving the draw made at
+    # the previous poll's send time standing. Without it the choices draw and the
+    # state recorded beside it sit one poll earlier than a state_poll_rule's, so a
+    # rule and a uniform draw cannot be compared as two answers to the same
+    # question asked at the same moment. False (the default) runs none of that
+    # code, so choices mode keeps its exact behaviour and event streams. Only
+    # meaningful with state_poll_interval_choices_s, which agent.py enforces.
+    state_poll_choice_redecide: bool = False
     # 2026-11-03 (ADR 0004 "Consequences", re-decision): when set, each poll's
     # interval comes from this table, and the pending next-poll time is decided
     # again when the newest poll is answered or passes its lifetime -- a policy
@@ -135,7 +144,8 @@ class SyncConfig:
     # points SyncEngine actually chooses something (state-poll target/time, fetch
     # backoff wait, fetch-plan target/count) -- four with a state_poll_policy
     # (2026-11-03) or a state_poll_rule (2026-11-18), which also logs each re-decided next-poll time
-    # (`state_poll_reschedule`). True in every production config; a test
+    # (`state_poll_reschedule`) -- and four in choices mode too once
+    # state_poll_choice_redecide is on (2026-11-22). True in every production config; a test
     # sets it False on an otherwise-identical engine to prove logging adds no
     # behavior of its own.
     log_decisions: bool = True
@@ -153,14 +163,15 @@ POLL_REPLY_GRACE_S = 1.0
 @dataclass
 class _Poll:
     """One state poll sent to a neighbor: its name's epoch_ms, when it was sent,
-    whether its own reply has arrived and, under a state_poll_policy or a
-    state_poll_rule only, its send-time jitter draw and how it was resolved."""
+    whether its own reply has arrived and, except under stage 1's jittered interval,
+    its send-time jitter draw and how it was resolved."""
 
     epoch_ms: int
     sent_at: float
     replied: bool = False
-    # 2026-11-03: state_poll_policy, and since 2026-11-18 state_poll_rule, only (both
-    # stay None otherwise). The jitter
+    # 2026-11-03: state_poll_policy, since 2026-11-18 state_poll_rule and since
+    # 2026-11-22 choices mode (None only under stage 1's interval, whose draw is a
+    # +/- offset on one fixed value and is never reused). The jitter
     # draw made when this poll was sent, reused unchanged when its next-poll
     # time is re-decided -- redrawing would make a one-row table diverge from
     # the single-choice policy it equals, and shift every later draw -- and how
@@ -177,7 +188,9 @@ class _PollReplies:
     (2026-11-03), its snapshot also feeds the policy table, at send time and when
     the newest poll is resolved (see SyncEngine._redecide_next_poll). A
     state_poll_rule (2026-11-18) is re-decided at the same two points from these
-    polls' resolution, but reads no part of the snapshot.
+    polls' resolution, but reads no part of the snapshot; choices mode with
+    state_poll_choice_redecide (2026-11-22) re-decides there too, drawing uniformly,
+    and records the snapshot without reading it.
 
     2026-10-26 fix: replies used to be attributed to the latest poll. Each reply
     is now matched to its own poll by the epoch_ms in the reply's name: with
@@ -226,8 +239,10 @@ class _PollReplies:
 
         2026-11-03: returns (the accepted poll, whether it is the newest poll) so
         a state_poll_policy can re-decide on it, or None when the reply was not
-        accepted; callers with neither a policy nor a rule ignore it, as they did
-        the old None.
+        accepted. Read by every mode that re-decides on resolution (see
+        SyncEngine._redecides_on_resolution; since 2026-11-22 choices mode with
+        state_poll_choice_redecide reads it too); a caller in any other mode ignores
+        it, as it did the old None.
         """
         for index, poll in enumerate(self.polls):
             if poll.epoch_ms != epoch_ms:
@@ -316,7 +331,11 @@ class SyncEngine:
         `poll_choice_rng` must also return a float in [0, 1); it picks the
         index into config.state_poll_interval_choices_s and is drawn only
         when that is set -- poll_jitter_rng is then never drawn, so the two
-        policies never share or perturb one stream. Its constant default
+        policies never share or perturb one stream. Once per poll, and
+        (2026-11-22) once more per resolved poll with
+        config.state_poll_choice_redecide, from this same stream: a second
+        stream would be one more thing a replay has to reproduce in order.
+        Its constant default
         0.0 always picks the first choice, deterministic like the jitter
         default. `poll_choice_jitter_rng` (also [0, 1)) is the separate stream
         for config.state_poll_choice_jitter_frac, drawn once per poll in
@@ -379,8 +398,10 @@ class SyncEngine:
         """Queue one `decision` event (map.md "判断の記録"): the state visible at the
         moment this engine actually chose `action`, plus action_prob -- the
         probability the policy gave `action`. 1.0 for every stage-1 policy (each
-        picks its one deterministic action); only a state poll drawing from
-        state_poll_interval_choices_s passes anything else.
+        picks its one deterministic action); only a draw from
+        state_poll_interval_choices_s passes anything else -- at send time, and
+        (2026-11-22, state_poll_choice_redecide) on the state_poll_reschedule row of a
+        re-decided poll, which carries the same 1/len.
 
         A no-op when config.log_decisions is False (test/analysis-only; every
         production config leaves it at its default True). Assumes a real decision
@@ -465,12 +486,12 @@ class SyncEngine:
     def on_tick(self, now: float) -> None:
         """Send due state requests and due record fetches to every neighbor.
 
-        With a state_poll_policy or a state_poll_rule, a newest poll whose lifetime
+        In a mode that re-decides on resolution, a newest poll whose lifetime
         has passed is resolved first, so a re-decided next time already in the past
         (clamped to `now`) is polled in this same tick rather than one tick late.
         """
         for neighbor in self._config.neighbors:
-            if self._config.state_poll_policy is not None or self._config.state_poll_rule is not None:
+            if self._redecides_on_resolution():
                 self._resolve_timed_out_poll(neighbor, now)
             due_at = self._next_state_poll.get(neighbor, now)
             if now >= due_at:
@@ -487,9 +508,8 @@ class SyncEngine:
         # The reply status is snapshotted before this poll itself is recorded as
         # sent, so the decision shows how the *previous* poll to this neighbor
         # fared, not the trivially-pending poll being sent right now.
-        jitter_u = None
         if self._config.state_poll_policy is None and self._config.state_poll_rule is None:
-            action, applied_interval, action_prob = self._choose_poll_interval(neighbor)
+            action, applied_interval, action_prob, jitter_u = self._choose_poll_interval(neighbor)
             last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, lifetime_s)
         else:
             # 2026-11-03: the table is looked up with that previous poll's state,
@@ -519,8 +539,9 @@ class SyncEngine:
         replies.sent(epoch_ms, now, jitter_u=jitter_u)
         # The jittered interval runs from this poll's own send time, so jitter
         # accumulates poll after poll instead of being pulled back to a grid --
-        # the point is that two agents' phases drift apart. Final in stage 1 and
-        # choices mode; with a state_poll_policy or a state_poll_rule only provisional, until this
+        # the point is that two agents' phases drift apart. Final in stage 1, and in
+        # choices mode with state_poll_choice_redecide off; with a state_poll_policy, a
+        # state_poll_rule or (2026-11-22) that knob on, only provisional, until this
         # poll is resolved (_redecide_next_poll), which also measures from here.
         self._next_state_poll[neighbor] = now + applied_interval
 
@@ -574,9 +595,31 @@ class SyncEngine:
         self._rule_interval_s[neighbor] = interval
         return interval
 
+    def _redecides_after_decode(self) -> bool:
+        """Whether a reply's own poll is resolved only after the reply has been read.
+
+        A state_poll_rule asks what the reply held, so it has to wait for the decode.
+        2026-11-22: choices mode with state_poll_choice_redecide waits for the decode
+        as well, and then for one step more -- on_state resolves it only once the reply
+        has been folded into the tracker, because its reschedule row reports the
+        tracker's state and that state has to include what this reply said. A
+        state_poll_policy resolves before the decode, as it has from the start.
+        """
+        return self._config.state_poll_rule is not None or self._config.state_poll_choice_redecide
+
+    def _redecides_on_resolution(self) -> bool:
+        """Whether a resolved poll re-decides its neighbor's pending next-poll time at all.
+
+        Asked in one place so the gates that let a resolution through cannot drift
+        apart from _redecide_next_poll's own branches: a mode reaching that method
+        without a branch there would be scheduled from the wrong setting.
+        """
+        return self._config.state_poll_policy is not None or self._redecides_after_decode()
+
     def _resolve_timed_out_poll(self, neighbor: str, now: float) -> None:
         """Re-decide `neighbor`'s next poll if its newest poll has just passed its
-        lifetime unresolved (state_poll_policy or state_poll_rule only).
+        lifetime unresolved (only in a mode that re-decides at all, see
+        _redecides_on_resolution).
 
         The same clock rule as _PollReplies._status (send time + lifetime <= now),
         not the transport's timeout callback, for the reason its docstring gives.
@@ -601,8 +644,9 @@ class SyncEngine:
         empty: bool | None = None,
     ) -> None:
         """Resolve `poll` (the newest to `neighbor`) as `trigger` and decide its next
-        poll's time again from the policy table, or from the rule's per-neighbor
-        interval, logging a `state_poll_reschedule`.
+        poll's time again from the policy table, from the rule's per-neighbor
+        interval, or (2026-11-22, state_poll_choice_redecide) from a fresh uniform
+        draw over the interval choices, logging a `state_poll_reschedule`.
 
         The state is snapshotted *after* the resolution -- the opposite of send time
         -- since the outcome just learned is what the policy reacts to. The interval
@@ -617,7 +661,28 @@ class SyncEngine:
         poll.resolved = trigger
         last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, self._config.interest_lifetime_ms / 1000.0)
         rule = self._config.state_poll_rule
-        if rule is None:
+        action_prob = 1.0
+        # The table and the rule read none of the tracker's per-origin state, and
+        # carrying it would make every reschedule row as large as a state_poll row.
+        state = {"last_poll_status": last_poll_status, "consecutive_poll_timeouts": consecutive_poll_timeouts}
+        if self._config.state_poll_choice_redecide:
+            # 2026-11-22: checked first, and before the table's branch, because that
+            # branch reads self._config.state_poll_policy, which choices mode leaves
+            # None. Exactly one draw from the choice stream per resolution, made
+            # before _emit_decision so logging never changes which value is drawn.
+            choices = self._config.state_poll_interval_choices_s
+            interval = choices[int(self._poll_choice_rng() * len(choices))]
+            applied_interval = interval * (1 + self._config.state_poll_choice_jitter_frac * (2 * poll.jitter_u - 1))
+            action_prob = 1.0 / len(choices)
+            # Every field the send-time row carries, so the two rows of one poll can
+            # be read as the same question asked twice. The learner this row exists
+            # for needs the per-origin progress the two fields above cannot show.
+            state = {
+                **self._tracker.decision_state(neighbor),
+                "last_poll_status": last_poll_status,
+                "consecutive_poll_timeouts": consecutive_poll_timeouts,
+            }
+        elif rule is None:
             interval, applied_interval = self._policy_interval(consecutive_poll_timeouts, poll.jitter_u)
         else:
             interval = self._advance_rule_interval(neighbor, trigger, empty)
@@ -632,25 +697,26 @@ class SyncEngine:
             "applied_interval_s": applied_interval,
             "clamped": due_at < now,
         }
-        if rule is not None:
+        if rule is not None or self._config.state_poll_choice_redecide:
             # 2026-11-18: on an answer, what the reply held is what moves a rule's
-            # interval, so a row without it cannot be read back. Added under a
-            # rule alone: a policy's rows are compared whole by tests that pin the
-            # shape its analysis already expects.
+            # interval, so a row without it cannot be read back. Not added under a
+            # policy: its rows are compared whole by tests that pin the shape its
+            # analysis already expects. 2026-11-22: carried in choices mode too --
+            # the uniform draw does not react to it, but a learner reading these
+            # rows beside a rule's needs the same column there.
             action["empty"] = empty
-        self._emit_decision(
-            "state_poll_reschedule",
-            # Without the tracker's per-origin state: the table does not read it,
-            # and it would make every reschedule row as large as a state_poll row.
-            {"last_poll_status": last_poll_status, "consecutive_poll_timeouts": consecutive_poll_timeouts},
-            action,
-            now,
-        )
+        self._emit_decision("state_poll_reschedule", state, action, now, action_prob)
 
-    def _choose_poll_interval(self, neighbor: str) -> tuple[dict, float, float]:
+    def _choose_poll_interval(self, neighbor: str) -> tuple[dict, float, float, float | None]:
         """Draw the interval until `neighbor`'s next state poll: the decision's
-        `action`, the interval actually applied, and the probability the policy gave
-        the action.
+        `action`, the interval actually applied, the probability the policy gave
+        the action, and the jitter draw it was applied with.
+
+        2026-11-22: the jitter draw is returned so the poll can keep it, which is
+        what a re-decision under state_poll_choice_redecide applies -- redrawing it
+        there would shift every later draw in the stream. None under stage 1's
+        interval: that draw is a +/- offset on one fixed value, nothing re-decides
+        it, and reusing it would mean nothing.
 
         In choices mode the action is the chosen value (`interval_s`, the thing
         action_prob is the probability of) and the jitter only perturbs how it is
@@ -668,16 +734,22 @@ class SyncEngine:
             # which is exactly what action_prob claims.
             index = int(self._poll_choice_rng() * len(choices))
             chosen = choices[index]
-            factor = 1 + self._config.state_poll_choice_jitter_frac * (2 * self._poll_choice_jitter_rng() - 1)
+            jitter_u = self._poll_choice_jitter_rng()
+            factor = 1 + self._config.state_poll_choice_jitter_frac * (2 * jitter_u - 1)
             applied = chosen * factor
-            return {"neighbor": neighbor, "interval_s": chosen, "applied_interval_s": applied}, applied, 1.0 / len(choices)
+            return (
+                {"neighbor": neighbor, "interval_s": chosen, "applied_interval_s": applied},
+                applied,
+                1.0 / len(choices),
+                jitter_u,
+            )
         # Map the injected [0, 1) rng to +/- state_poll_jitter_frac around the
         # configured interval, so "2s +/-20%" is reproducible in tests yet real
         # under a real rng. action_prob stays 1.0, as in stage 1's data (stage-1
         # map's 2026-10-26 correction: those lines are not off-policy usable).
         offset = self._config.state_poll_jitter_frac * (2 * self._poll_jitter_rng() - 1)
         interval = self._config.state_poll_interval_s * (1 + offset)
-        return {"neighbor": neighbor, "interval_s": interval}, interval, 1.0
+        return {"neighbor": neighbor, "interval_s": interval}, interval, 1.0, None
 
     def _send_fetch_plan(self, neighbor: str, now: float) -> None:
         """Send a fetch Interest for every due, not-in-flight missing record on `neighbor`.
@@ -739,7 +811,7 @@ class SyncEngine:
             decoded = holder_state.decode(payload)
         except holder_state.HolderStateError:
             self._emit({"event": "state_rx", "ts_ms": ts_ms, "neighbor": neighbor, "hi": {}})
-            if replies is not None and accepted is not None and self._config.state_poll_rule is not None:
+            if replies is not None and accepted is not None and self._redecides_after_decode():
                 # Nothing could be read off this reply, so the rule has no emptiness to
                 # react to -- but the poll is still resolved as answered, exactly as
                 # under a policy, since Data did come back from this neighbor.
@@ -748,17 +820,36 @@ class SyncEngine:
         self._emit(
             {"event": "state_rx", "ts_ms": ts_ms, "neighbor": neighbor, "hi": {o: e["hi"] for o, e in decoded.items()}}
         )
-        if replies is not None and accepted is not None and self._config.state_poll_rule is not None:
-            # 2026-11-18: a rule asks what the reply brought, so its
-            # re-decision waits until the reply has been read -- the one thing it does
-            # differently from a policy, which re-decides above, before the decode, as
-            # it has from the start. Emptiness compares against what this node holds,
-            # which the fold below never touches (that records what the neighbor
-            # advertised), so it is asked here, where the answer is plainly about the
-            # holdings this poll was answered against.
-            self._on_policy_reply(neighbor, replies, *accepted, now, empty=self._reply_is_empty(decoded))
+        empty: bool | None = None
+        # 2026-11-22: choices mode resolves the poll one step later than a rule does,
+        # past the fold below, so both gates are decided here, before anything moves.
+        resolves_here = replies is not None and accepted is not None and self._redecides_after_decode()
+        waits_for_fold = resolves_here and self._config.state_poll_choice_redecide
+        if resolves_here:
+            # Emptiness compares against what this node holds, which the fold below
+            # never touches (that records what the neighbor advertised), so it is asked
+            # here, where the answer is plainly about the holdings this poll was
+            # answered against.
+            empty = self._reply_is_empty(decoded)
+            if not waits_for_fold:
+                # 2026-11-18: a rule asks what the reply brought, so its
+                # re-decision waits until the reply has been read -- the one thing it does
+                # differently from a policy, which re-decides above, before the decode, as
+                # it has from the start. It stays ahead of the fold: its reschedule row
+                # carries no tracker state, so no part of what it logs could move.
+                self._on_policy_reply(neighbor, replies, *accepted, now, empty=empty)
         for origin, entry in decoded.items():
             self._tracker.observe_state(origin, neighbor, entry["hi"], entry["extra"])
+        if waits_for_fold:
+            # 2026-11-22: choices mode re-decides only here, after the fold, because its
+            # reschedule row does carry the tracker's decision_state, and a learner reads
+            # that row as everything the node could observe at the instant it chose the
+            # next interval. By that instant the node has read this reply, so a pre-fold
+            # snapshot would hide what this very reply advertised. Still ahead of
+            # _send_fetch_plan, which puts fetches in flight: the send-time state_poll
+            # row is snapshotted before the fetch plan too, so `in_flight` counts the
+            # same thing in both rows of one poll.
+            self._on_policy_reply(neighbor, replies, *accepted, now, empty=empty)
         self._send_fetch_plan(neighbor, now)
 
     def _reply_is_empty(self, decoded: dict[str, dict]) -> bool:
@@ -784,8 +875,9 @@ class SyncEngine:
         *,
         empty: bool | None = None,
     ) -> None:
-        """Act on an accepted reply under a state_poll_policy (2026-11-03) or a
-        state_poll_rule (2026-11-18), which passes what the reply held as `empty`.
+        """Act on an accepted reply under a state_poll_policy (2026-11-03), a
+        state_poll_rule (2026-11-18) or state_poll_choice_redecide (2026-11-22); the
+        latter two pass what the reply held as `empty`.
 
         An unresolved newest poll is resolved as answered. A reply to a poll already
         resolved as timed out does not re-decide (one resolution per poll; the
