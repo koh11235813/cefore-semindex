@@ -1,0 +1,88 @@
+The stability of a label under a change of Mode B passes
+========================================================
+Seeds 1 to 10 of p 0.2 and p 0.4, every resolution-time decision, two disjoint sets of 8 passes (A = 0 to 7, B = 8 to 15).
+No pass line: this is the first measurement of the residue, not a threshold on it.
+
+p 0.2: 1586 decisions over 10 runs
+   J   agreement all     non-tie (n)          larger-margin half (n)   that half, both sides labelled (n)
+   1    0.6683            0.6847 ( 1183)       0.6066 (  793)    0.6312 (  762)
+   2    0.7055            0.7016 ( 1287)       0.6431 (  793)    0.6448 (  791)
+   4    0.7377            0.7296 ( 1335)       0.6948 (  793)    0.6948 (  793)
+   8    0.7623            0.7577 ( 1366)       0.7276 (  793)    0.7276 (  793)
+
+p 0.4: 1623 decisions over 10 runs
+   J   agreement all     non-tie (n)          larger-margin half (n)   that half, both sides labelled (n)
+   1    0.6328            0.6717 ( 1252)       0.5845 (  811)    0.6156 (  770)
+   2    0.6648            0.6778 ( 1372)       0.6128 (  811)    0.6182 (  804)
+   4    0.7135            0.7123 ( 1439)       0.6535 (  811)    0.6543 (  810)
+   8    0.7585            0.7522 ( 1473)       0.7411 (  811)    0.7411 (  811)
+
+The larger-margin half is ranked over ALL decisions, so it holds decisions that tie on one side and carry a label on the other; each of those is a forced disagreement. The last column is that same half with those members removed, and its (n) against the half's (n) is how many they are.
+
+The J the full labelling runs with
+  rule: the smallest J in [1, 2, 4, 8] whose non-tie agreement on the main cell (p 0.2) is at least 0.90, and 8 if none reaches it.
+  CHOSEN J = 8 -- and NOT because it reached the bar: no J in [1, 2, 4, 8] did, so the rule's fallback took it.
+  at J = 8 on the main cell: agreement over all decisions 0.7623, over the 1366 non-tie decisions 0.7577, over the larger-margin half 0.7276 (0.7276 over the 793 of that half that carry a label on both sides)
+  at J = 8 on p 0.4: 0.7585 / 0.7522 / 0.7411 (all / non-tie / larger-margin half), which the rule does not read
+  Read the non-tie share as what it is: 0.2423 of the decisions that got a label from both sets got a DIFFERENT label, on seeds 1 to 10. That is the disagreement between two INDEPENDENT 8-pass labellings, so it BOUNDS FROM ABOVE the share of the labels on disk that are pass noise: a disagreement needs only ONE of the two sides to be wrong, so the share of one side's labels that are an artefact of which passes were drawn is between half of this number and all of it.
+
+Two breakdowns of the same agreement, at J = 8, over ALL decisions of each cell
+  Why: the larger-margin half above agrees LESS than the whole, so the margin is not a confidence. These two ask whether anything else about a decision says whether its label survives a change of passes. The bins were fixed before these numbers existed. Agreement is `set A's label == set B's label`, so two ties agree and a one-sided tie disagrees, as in the `all` column.
+  Every bucket prints how many of its decisions TIE on set A -- those carry no label on disk, and the two sides of such a decision agree by both staying unlabelled -- and the agreement over the decisions that carry a label on BOTH sides, which is the population a learner can train on, beside the agreement over all of them.
+
+  p 0.2, by set A's own paired t over its 8 passes (t = mean(d) / (sd(d) / sqrt(J)), d = the per-pass gap between the two best arms; a decision that TIES on set A has the two arms' pass means equal, so its mean(d) is zero to the last bits of a double and it falls in the first bin, in the sd = 0 bucket, or -- if that rounding comes out below zero -- in no bin, which the line under the table counts)
+     t bin                  n  ties on A  label both   agreement   over those
+    [0,1)                 413         5        405    0.4625    0.4716
+    [1,2)                 277         0        259    0.6426    0.6873
+    [2,3)                 167         0        164    0.8383    0.8537
+    [3,inf)               472         0        472    0.9746    0.9746
+    sd = 0, labelled       66         0         66    1.0000    1.0000
+    sd = 0, tie on A      191       191          0    0.9110        --
+    the two sd = 0 lines: `labelled` is every pass separating the two arms by the same NON-ZERO amount, so there is no t and the decision carries a label; `tie on A` is every pass scoring the two best arms equally, so set A has no label at all and its agreement with set B is two nulls matching.
+  the table covers 1586 of the cell's 1586 decisions; matching no bin: 0
+  t >= 3 or (sd = 0 and labelled): 538 decisions, 538 of them carrying a set-A label (0.3392 of the cell's 1586 decisions, 0.3871 of its 1390 labelled ones), at 0.9777 agreement over all of them and 0.9777 over the 538 that carry a label on BOTH sides, against 0.7623 over everything
+  the wider t >= 3 or sd = 0: 729 decisions (0.4596 of the cell) at 0.9602 agreement, of which 191 tie on set A and carry no label, so that share is NOT a retention a learner can read: it keeps unlabelled decisions and counts their two nulls as agreement.
+  what the paired t says: the agreement runs from 0.4625 to 1.0000 across the buckets, a spread of 0.5375.
+  the same over the decisions labelled on both sides: the agreement runs from 0.4716 to 1.0000 across the buckets, a spread of 0.5284.
+
+  p 0.4, by set A's own paired t over its 8 passes (t = mean(d) / (sd(d) / sqrt(J)), d = the per-pass gap between the two best arms; a decision that TIES on set A has the two arms' pass means equal, so its mean(d) is zero to the last bits of a double and it falls in the first bin, in the sd = 0 bucket, or -- if that rounding comes out below zero -- in no bin, which the line under the table counts)
+     t bin                  n  ties on A  label both   agreement   over those
+    [0,1)                 466         4        460    0.4700    0.4761
+    [1,2)                 294         0        283    0.6667    0.6926
+    [2,3)                 144         0        142    0.8750    0.8873
+    [3,inf)               535         0        535    0.9607    0.9607
+    sd = 0, labelled       53         0         53    1.0000    1.0000
+    sd = 0, tie on A      129       129          0    0.9457        --
+    the two sd = 0 lines: `labelled` is every pass separating the two arms by the same NON-ZERO amount, so there is no t and the decision carries a label; `tie on A` is every pass scoring the two best arms equally, so set A has no label at all and its agreement with set B is two nulls matching.
+  the table covers 1621 of the cell's 1623 decisions; matching no bin: 2 (t -1.46e-14, -1.88e-14, a tie's rounding below zero)
+  t >= 3 or (sd = 0 and labelled): 588 decisions, 588 of them carrying a set-A label (0.3623 of the cell's 1623 decisions, 0.3952 of its 1488 labelled ones), at 0.9643 agreement over all of them and 0.9643 over the 588 that carry a label on BOTH sides, against 0.7585 over everything
+  the wider t >= 3 or sd = 0: 717 decisions (0.4418 of the cell) at 0.9609 agreement, of which 129 tie on set A and carry no label, so that share is NOT a retention a learner can read: it keeps unlabelled decisions and counts their two nulls as agreement.
+  what the paired t says: the agreement runs from 0.4700 to 1.0000 across the buckets, a spread of 0.5300.
+  the same over the decisions labelled on both sides: the agreement runs from 0.4761 to 1.0000 across the buckets, a spread of 0.5239.
+
+  p 0.2, by the decision's position in its run (equal-count quartiles of ts_rel_ms)
+     quartile   ts_rel_ms range            n  ties on A  label both   agreement   over those   median margin ms   at or past the stop
+    Q1               391 to     30251    396          0         396      0.5101       0.5101           282.2121                     0
+    Q2             30296 to     63762    397          0         397      0.7330       0.7330           213.5172                     0
+    Q3             63768 to     97106    396         36         345      0.8460       0.9130           104.2960                     0
+    Q4             97189 to    131907    397        160         228      0.9597       0.9956            52.1480                     4
+  4 of this cell's decisions sit at or after ts_rel_ms 130000, the instant a live agent stops, and the table above holds them in Q4: 4 of them agree, 4 tie on set A and 0 carry a label on both sides, the latest at 131907. A poll scheduled after that instant falls outside the scoring window, so the arms score identically and the decision carries no label.
+  what the position says: the agreement runs from 0.5101 to 0.9597 across the buckets, a spread of 0.4496.
+  the same over the decisions labelled on both sides: the agreement runs from 0.5101 to 0.9956 across the buckets, a spread of 0.4855.
+
+  p 0.4, by the decision's position in its run (equal-count quartiles of ts_rel_ms)
+     quartile   ts_rel_ms range            n  ties on A  label both   agreement   over those   median margin ms   at or past the stop
+    Q1               423 to     31523    405          0         405      0.5012       0.5012           289.7590                     0
+    Q2             31585 to     63928    406          0         405      0.6897       0.6914           241.5358                     0
+    Q3             63994 to     98390    406         10         388      0.8744       0.9046           104.2960                     0
+    Q4             98446 to    131378    406        125         275      0.9680       0.9964           104.2960                     9
+  9 of this cell's decisions sit at or after ts_rel_ms 130000, the instant a live agent stops, and the table above holds them in Q4: 9 of them agree, 9 tie on set A and 0 carry a label on both sides, the latest at 131378. A poll scheduled after that instant falls outside the scoring window, so the arms score identically and the decision carries no label.
+  what the position says: the agreement runs from 0.5012 to 0.9680 across the buckets, a spread of 0.4667.
+  the same over the decisions labelled on both sides: the agreement runs from 0.5012 to 0.9964 across the buckets, a spread of 0.4951.
+
+Ties, at the chosen J (a decision where one side or the other scored two arms exactly equally)
+  p 0.2: 0.1387 of 1586 decisions
+  p 0.4: 0.0924 of 1623 decisions
+
+Provisional timers that fired before their own poll had resolved, over every simulation of this script: 0
+wall 774.8 s on 5 workers, 3209 decisions x 3 arms x 16 passes

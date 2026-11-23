@@ -1,0 +1,25 @@
+{
+  "arms_s": [
+    3.695,
+    10.043
+  ],
+  "cell": {
+    "nrep": 40,
+    "outage_shape": "s6 8-12 s",
+    "p": 0.2,
+    "seeds": [
+      1,
+      100
+    ],
+    "workload": "w0"
+  },
+  "delay": "per run, the censored records at their lower bound (score.py); the mean over all seed x stream runs",
+  "pair_seed_prefix": "pairlag:s6b10p043",
+  "path": "the decider port, constant deciders, per-pair lag streams and per-pair jitter streams on",
+  "superseded": {
+    "reproduced_as_step_1": true,
+    "weight_ms_per_poll": 100.62168514446252,
+    "why": "it levelled a delay that left the censored records out (../14/after.py's early_score, pooled per stream and median-taken over the streams), which is not the score a label is decided by, so the two differed in their definition of a delay"
+  },
+  "weight_ms_per_poll": 104.29595912307323
+}

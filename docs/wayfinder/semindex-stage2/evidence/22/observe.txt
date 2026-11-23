@@ -1,0 +1,71 @@
+The observable state as one record and one text, on s11a p 0.2 seed 1
+==============================================================================
+Logged run: 148 state_poll_reschedule rows over 5 nodes ['h0', 'h1', 'h2', 'h3', 'h4'], 148 rendered.
+PASS every logged state_poll_reschedule row of all 5 nodes renders: 148 of 148
+PASS every one of the 148 logged and 158 simulated records carries exactly the declared keys, in the declared order, with declared value types, at every level of the record (0 fault(s))
+PASS no one of those 306 records, and no text rendered from one, carries a node name, a 10-to-13-digit absolute stamp or a negative age (0 fault(s))
+  the union of the record's dotted paths is 30 from the 148 logged decisions and 30 from the 158 simulated ones, and the two sets are the same
+  the record's paths and their value types, from the logged run:
+    consecutive_poll_timeouts=int
+    exchanges=list
+    exchanges.[]=dict
+    exchanges.[].age_s=float
+    exchanges.[].clamped=bool
+    exchanges.[].empty=NoneType|bool
+    exchanges.[].interval_s=float
+    exchanges.[].trigger=str
+    exchanges.[].waited_s=float
+    fetch_timeout_age_s=NoneType
+    in_flight=int
+    last_poll_status=str
+    origins=list
+    origins.[]=dict
+    origins.[].advertised=list
+    origins.[].advertised.[]=dict
+    origins.[].advertised.[].hi=int
+    origins.[].advertised.[].notified_max=int
+    origins.[].advertised.[].peer=int
+    origins.[].advertisers_omitted=int
+    origins.[].hi=int
+    origins.[].missing=int
+    origins_omitted=bool
+    origins_shown=int
+    peers_known=int
+    polled_peer=NoneType|int
+    resolved=dict
+    resolved.empty=NoneType|bool
+    resolved.poll_age_s=float
+    resolved.trigger=str
+
+Characters per item
+  the logged run, 148 decisions: median 1171, max 1220; without the legend line median 797, max 846
+  labels_p0.2.jsonl.gz: 16071 labelled decisions, characters per item median 1170 max 1237 (without the legend: median 796 max 863)
+  labels_p0.4.jsonl.gz: 16148 labelled decisions, characters per item median 1162 max 1232 (without the legend: median 788 max 858)
+  every cell together, 32219 labelled decisions: median 1166, max 1237
+PASS the same two checks over the 32219 labelled decisions of the label files, which are the records a learner reads: 0 schema fault(s) and 0 leak(s)
+
+One rendered item, in full (the median-length one of the logged run):
+  | state poll reschedule
+  | just resolved: the poll sent 0.0 s ago was answered, reply empty
+  | in flight 0, consecutive poll timeouts 0, previous poll answered, last fetch timeout none
+  | origins 2, peers 1, this decision polls p1
+  |   o1 held 120 missing 0 | p1 held 120 told 120
+  |   o2 held 120 missing 0 | p1 held 120 told 120
+  | last 8 exchanges, newest first: age, outcome, reply, decided, waited
+  |   6.2 s ago answered empty 6.000 s waited 6.211 s
+  |   16.2 s ago answered content 10.043 s waited 9.931 s
+  |   22.7 s ago answered empty 6.000 s waited 6.535 s
+  |   29.4 s ago answered content 6.000 s waited 6.580 s
+  |   39.3 s ago answered empty 10.043 s waited 9.866 s
+  |   43.0 s ago answered content 3.695 s waited 3.638 s
+  |   52.5 s ago answered content 10.043 s waited 9.400 s
+  |   56.4 s ago timed_out - 6.000 s waited 5.934 s
+  | o1.. and p1.. are positions in this record, not names. origins are ordered by missing then held, both highest first, ties in the state's own order; peers by their highest told value then by how many origins they cover, ties in the order the state first names them. the same p number is the same peer on every line. the peer this decision polls is named on the origins line.
+
+The polled peer's position is in the record (112 of 148 logged records name one). It is derived from the polled neighbour's NAME, which is the fifth input and never reaches the record. What the record still does not carry is any node name and the decider ordinal, neither of which a live loop can hand a policy in a form that transfers.
+
+IN 36 OF THE 148 LOGGED RECORDS THE MARKER IS NULL, so for those decisions the record still cannot tell a learner which peer the decision is about. THREE disjoint states produce that: in 30 the state names no origin at all, so there is no advertiser map for the pair to be missing from; in 5 it names an origin that NO peer told it about, so the advertiser map is empty; and in 1 peers did tell it about an origin and none of them is the polled pair.
+Over the 32219 labelled decisions of the label files the same marker is null 6077 times, so THE ATTRIBUTION THIS RECORD ADDED IS ABSENT FROM 0.189 OF THE RECORDS A LEARNER WILL SEE. 4838 of those name no origin at all, 598 name an origin that no peer told them about, and 641 have origins peers told them about whose advertisers do not include the polled pair.
+  The middle cause is a state that DOES name an origin: 598 of the 6077 nulls, which an earlier predicate counted into the first cause.
+The position names no node, but it is NOT independent of the neighbour's name: over the 18448 labelled records that mark a position and name at least two peers, the position is the polled pair's rank in plain advertiser-NAME order in 13992 of them (0.758), against 0.5 for a coin on a two-peer record. That is the ranking's own tie-break and name order coinciding on this workload, not a name being recoverable from the record.
+  on the logged run: 66 of 81.
