@@ -18,7 +18,7 @@ WHAT THIS ANSWERS, AND WHAT IT DOES NOT
   a sweep of 128 000 or 256 000 passes would take.  The model is UNTUNED here, so nothing
   about WHICH word wins is evidence of anything; only the mechanics are.
 
-THE INSTRUCTION AND THE ANSWER PREFIX BELOW ARE PROVISIONAL.
+THE INSTRUCTION AND THE ANSWER PREFIX ARE PROVISIONAL (they live in prefill.py).
   2026-11-24: a later step fixes the wording (it is part of what tuning and scoring are
   about).  They are kept short here so that the token counts this script prints are
   almost entirely the rendered observation, which is the part that is already fixed.
@@ -26,48 +26,18 @@ THE INSTRUCTION AND THE ANSWER PREFIX BELOW ARE PROVISIONAL.
 import os
 import sys
 
-# ---------------------------------------------------------------------------
-# Environment, BEFORE torch / numpy / transformers are imported
-# ---------------------------------------------------------------------------
-# 2026-11-24: the previous step measured 1273 % cpu for a 0.7 s replay on this 96-core
-# box -- a BLAS library opening one thread per core at import.  This host is shared with
-# ten other accounts and has no scheduler, so the brief caps us at 8 processes; a library
-# that fans out to 96 threads breaks that cap without anyone asking for it.  Set before
-# the import, because both OpenMP and OpenBLAS read these once, at load time.
-for _name, _value in (("OMP_NUM_THREADS", "8"), ("OPENBLAS_NUM_THREADS", "1"),
-                      ("MKL_NUM_THREADS", "1"), ("RAYON_NUM_THREADS", "8"),
-                      # The Rust tokenizer forks a thread pool per batch call and warns
-                      # about it; one tokenizer call here is never the bottleneck.
-                      ("TOKENIZERS_PARALLELISM", "false")):
-    os.environ.setdefault(_name, _value)
+# 2026-11-24: FIRST import, before torch / numpy / transformers.  prefill.py sets the
+# thread caps, the offline HF variables, ROOT and the two sys.path entries at ITS import
+# time, and holds the wording, the prefill, the candidate words and the left-padding
+# builder that this script and precheck.py must share.  A second copy of the prefill would
+# let the two reports drift apart without either script noticing.
+import prefill as P  # noqa: E402
 
-ROOT = (sys.argv[1] if len(sys.argv) > 1
-        else os.environ.get("SMOKE_ROOT") or os.environ.get("ROOT") or "")
-if not ROOT or not os.path.isdir(ROOT):
-    raise SystemExit("usage: smoke.py <ROOT>   (or set SMOKE_ROOT)")
-ROOT = os.path.abspath(ROOT)
-
-# Anonymous and offline, and the account's own cache is never touched: HF_HOME points
-# into ROOT.  HF_TOKEN is removed rather than emptied, because an empty string is still a
-# value the hub client would try to send.
-os.environ.pop("HF_TOKEN", None)
-os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
-os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
-os.environ["HF_HOME"] = os.path.join(ROOT, "hf-home")
-os.environ["HF_HUB_OFFLINE"] = "1"
-# The replay's own store, for the same reason the parity run set it: observe.py imports
-# port.py at module scope, and port.py resolves the store from this variable.
-os.environ.setdefault("STORE", os.path.join(ROOT, "store"))
-
-REPO = os.path.join(ROOT, "repo")
-EV22 = os.path.join(REPO, "docs/wayfinder/semindex-stage2/evidence/22")
-MODEL_DIR = os.path.join(ROOT, "models/gemma-4-E2B-it")
-LABELS = os.path.join(ROOT, "ev22/labels_p0.2.jsonl.gz")
-
-# src first, then evidence/22: the same two entries the parity run put on the path, in the
-# same order, so that `semindex` is this worktree's and `observe`/`port` are evidence/22's.
-sys.path.insert(0, os.path.join(REPO, "src"))
-sys.path.insert(1, EV22)
+ROOT = P.ROOT
+REPO = P.REPO
+EV22 = P.EV22
+MODEL_DIR = P.MODEL_DIR
+LABELS = P.LABELS
 
 import gzip        # noqa: E402
 import inspect     # noqa: E402
@@ -77,30 +47,16 @@ import subprocess  # noqa: E402
 import time        # noqa: E402
 
 # ---------------------------------------------------------------------------
-# The provisional prompt wording (see the module docstring)
+# The provisional prompt wording lives in prefill.py (see the module docstring there)
 # ---------------------------------------------------------------------------
-# PROVISIONAL, 2026-11-24.  One sentence of task plus the three words and their seconds,
-# because the words are the answer and the numbers only ever appear in the prompt: the
-# tokenizer has no single token for "3.695", "6.0" or "10.043" (evidence/23 scout, Q3), so
-# the interval itself can never be the answer token.
-INSTRUCTION = (
-    "A node decides how long to wait before polling this peer for state again.\n"
-    "Answer with one word: short (3.695 s), mid (6.0 s) or long (10.043 s)."
-)
-# PROVISIONAL, 2026-11-24.  It must end in a NON-space character: the Gemma 4 template
-# runs the assistant content through `| trim`, so a prefix ending in a space loses it
-# silently, and the next token is then the space-prefixed word anyway.  Ending in ":"
-# makes that explicit instead of accidental.
-PREFIX = "Interval:"
-CANDIDATES = (" short", " mid", " long")
-# The seconds each word stands for, printed with the logits so the report is readable on
-# its own.  Never tokenized.
-SECONDS = {" short": 3.695, " mid": 6.0, " long": 10.043}
-# The vocabulary lookup of the scout report, to be confirmed or corrected live.
-EXPECTED_IDS = {" short": 2822, " mid": 5453, " long": 1440}
+INSTRUCTION = P.INSTRUCTION
+PREFIX = P.PREFIX
+CANDIDATES = P.CANDIDATES
+SECONDS = P.SECONDS
+EXPECTED_IDS = P.EXPECTED_IDS
 
-EXPECT_ROWS = 16071          # labels_p0.2.jsonl.gz, stated by the brief
-EXPECT_SEEDS = (1, 100)      # min and max seed of the main cell's label file
+EXPECT_ROWS = P.EXPECT_ROWS   # labels_p0.2.jsonl.gz, stated by the brief
+EXPECT_SEEDS = P.EXPECT_SEEDS  # min and max seed of the main cell's label file
 TIMED_PASSES = 300
 WARMUP_PASSES = 10
 BATCH_SIZES = (8, 32, 64)
@@ -157,8 +113,6 @@ torch.set_num_threads(8)   # the same cap as the environment variables above
 import transformers  # noqa: E402
 import peft          # noqa: E402
 
-import observe as OBS  # noqa: E402  (brings port.py in, which asserts its own location)
-
 DEV = "cuda:0"
 if not torch.cuda.is_available():
     raise SystemExit("FAIL: torch does not see a CUDA device")
@@ -197,28 +151,13 @@ def mem(label):
 
 
 def chat_text(body, prefix=PREFIX):
-    """The final prompt TEXT, with the special tokens in it, prefill included.
-
-    `continue_final_message=True` is what makes the assistant turn a prefix instead of a
-    finished turn: the template's end-of-turn marker is cut off, so the next token the
-    model predicts is the first token of the answer.  `enable_thinking=False` keeps the
-    template from injecting a think block, which would put several hundred tokens and a
-    different position between the prompt and the answer.
-    """
-    messages = [{"role": "user", "content": INSTRUCTION + "\n\n" + body},
-                {"role": "assistant", "content": prefix}]
-    return tok.apply_chat_template(messages, tokenize=False,
-                                   continue_final_message=True,
-                                   enable_thinking=False)
+    """prefill.chat_text with this script's tokenizer bound."""
+    return P.chat_text(tok, body, prefix)
 
 
 def ids_of(text):
-    """Token ids of an ALREADY rendered prompt.
-
-    add_special_tokens=False because the template emits bos itself; letting the tokenizer
-    add another one would put a second bos in the prompt and shift every position.
-    """
-    return tok(text, add_special_tokens=False)["input_ids"]
+    """prefill.ids_of with this script's tokenizer bound."""
+    return P.ids_of(tok, text)
 
 
 # --- the text-only load, tried rather than assumed ---------------------------
@@ -321,10 +260,12 @@ if (min(seeds), max(seeds)) != EXPECT_SEEDS:
 
 
 def rendered(row, legend=True):
-    """The one road from a label row to the text a model reads (evidence/22/observe.py)."""
-    record = OBS.observation(row["state"], row["resolved"], row["history"],
-                             row["ts_ms"], row["neighbor"])
-    return OBS.render(record, legend=legend)
+    """prefill.rendered: the one road from a label row to the text a model reads.
+
+    The first call imports evidence/22's observe.py (and port.py with it), which is why it
+    happens here and not at the top of the file.
+    """
+    return P.rendered(row, legend=legend)
 
 
 # Five rows that carry a label and lie in the TUNING range (seeds 1-80); seeds above 100
@@ -589,41 +530,12 @@ say("--- batched passes ---")
 # one logits_to_keep=1 read gives every row's answer position.  With right padding the
 # answer position differs per row, which would force the full 262 144-wide logits for
 # every position (13 GB at batch 64) and a gather.
-tok.padding_side = "left"
-if tok.pad_token_id is None:
-    tok.pad_token = tok.eos_token
-say("pad token %r id %s, padding_side %s" % (tok.pad_token, tok.pad_token_id,
-                                             tok.padding_side))
+say(P.prepare_padding(tok))
 
-# position_ids are passed explicitly: cumsum-1 over the mask gives every real token the
-# position it has in its OWN sequence, and the clamp keeps the pads at 0 (they are masked
-# out anyway).
-# 2026-11-24, and this corrects what this comment first claimed: passing them is NOT what
-# makes left padding correct.  Running with position_ids=None changes the candidate logits
-# by no more than the batch-shape rounding does (measured, see RUN.txt), because with LEFT
-# padding every real token of a row is offset by the same pad count and RoPE is relative,
-# so a constant shift inside a row cancels in the attention.  What the explicit ids buy is
-# that the read position is stated rather than inferred, and that the two checks below
-# have something to assert against.  A non-constant corruption of them DOES move the
-# logits far outside the tolerance, which is what keeps the comparison from being a check
-# that cannot fail.
+
 def batch_of(texts):
-    enc = tok(texts, add_special_tokens=False, padding=True, return_tensors="pt")
-    enc = {k: v.to(DEV) for k, v in enc.items()}
-    attn = enc["attention_mask"]
-    pos = (attn.cumsum(-1) - 1).clamp(min=0)
-    lengths = attn.sum(-1)
-    # These two are what "the read position is each row's last real token" MEANS, so they
-    # are asserted and not asserted-in-a-comment.
-    # 2026-11-24: SystemExit and not `assert`.  These two are what "the read position is
-    # each row's last real token" MEANS, and an `assert` disappears under -O or
-    # PYTHONOPTIMIZE, which would silently remove the only checks that define the read
-    # position while the script still printed its OK lines.
-    if not bool(attn[:, -1].all()):
-        raise SystemExit("FAIL: left padding did not leave a real token last")
-    if not bool((pos[:, -1] == lengths - 1).all()):
-        raise SystemExit("FAIL: last position is not length-1")
-    return enc["input_ids"], attn, pos, lengths
+    """prefill.batch_of: the left-padded batch, with its two read-position checks."""
+    return P.batch_of(tok, texts, DEV)
 
 
 # 2026-11-24: the first run took the FIRST 64 label rows and batch 8 then reported 0.0 %

@@ -1,6 +1,8 @@
 evidence/23 -- preparing the tuning host and proving the replay runs there identically
-2026-11-24.  No training in this step.  Two parts: the host, the inputs and the replay
-(sections 1-5), then the first forward passes of the base model on that host (6-7).
+2026-11-24.  Nothing tuned is kept and nothing tuned is measured in this step.  Three
+parts: the host, the inputs and the replay (sections 1-5), the first forward passes of the
+base model on that host (6-7), and the four measurements the tuning plan of L rests on
+(10-12: read-out noise, parallel throughput, the legend line, one optimiser step).
 
 WHAT THIS STEP ESTABLISHES
   1. A venv on the tuning host that sees the RTX PRO 5000 Blackwell as sm_120 and carries
@@ -15,17 +17,30 @@ WHAT THIS STEP ESTABLISHES
      that the chat template leaves the prefilled answer prefix as the last thing in the
      prompt, that " short" / " mid" / " long" each add exactly one token THERE, and that
      the three logits read out of one forward pass repeat bit for bit.
-  6. What one pass costs on this card: 43.4 ms at batch 1, and 153.7 passes a second at
+  6. What one pass costs on this card: 43.8 ms at batch 1, and 152.4 passes a second at
      batch 8, so 128 000 passes take about 14 minutes.
+  7. WHAT BATCHING COSTS IN DECISIONS, which is the number item 6 does not give: in bf16,
+     a batch of 8 changes the argmax of 14 of 512 label rows against a batch-1 pass of the
+     same row.  In float32 it changes none.
+  8. That a SECOND PROCESS, running alone beside an idle parent, repeats all 512 x 3
+     bf16 batch-1 logits bit for bit.  Whether K concurrent processes do is untested:
+     part 2 timed them and never compared their logits.
+  9. What an optimiser step costs: 0.26 s at batch 8 and 0.45 s at batch 16, so one epoch
+     over the 11 438 labelled rows of seeds 1-80 is 5 to 6 minutes.
 
 WHAT IT DOES NOT ESTABLISH
-  Nothing about L as a decider.  No LoRA, no adapter, no training, no label-agreement
-  number, and no decider in this step asks a model anything.  The model read out in
-  section 6 is UNTUNED, so which of the three words wins a given prompt is not evidence
-  of anything; only the mechanics are.  The four deciders of the parity check are the
-  three constant arms and the formula rule F, i.e. the whole comparison except the
-  candidate.  A forward pass on a GPU is not bit-reproducible across machines in general
-  and nothing here claims it is: section 6 shows repeatability on ONE machine only.
+  Nothing about L as a decider.  No label-agreement number, no replay score for any tuned
+  model, and no decider in this step asks a model anything.  Section 11 DOES attach a
+  LoRA and take 61 optimiser steps, but only to time them: the adapter was never written
+  to disk, it was deleted with the process, and no tuned model was read out on the
+  selection seeds.  Deciding anything from those 61 steps would be deciding before the
+  plan is frozen, which is what this step exists to avoid.  The model read out in
+  sections 6 and 11 is UNTUNED or barely moved, so which of the three words wins a given
+  prompt is not evidence of anything; only the mechanics and the costs are.  The four
+  deciders of the parity check are the three constant arms and the formula rule F, i.e.
+  the whole comparison except the candidate.  A forward pass on a GPU is not
+  bit-reproducible across machines in general and nothing here claims it is: sections 6
+  and 11 show repeatability on ONE machine, in two processes of it, one at a time.
 
 NAMES
   ROOT  = /home/yamakawa/Development/semindex-learn        (on the tuning host)
@@ -258,8 +273,8 @@ THE CHECKS, AS THEY PRINTED
   uncapped against 99 % capped).
 
   WHAT LOADED, AND WHAT DID NOT
-    tokenizer   GemmaTokenizer, vocab 262 144, 1.3 s.
-    model       Gemma4ForConditionalGeneration, bf16, cuda:0, 2.1 s from page cache.
+    tokenizer   GemmaTokenizer, vocab 262 144, 1.4 s.
+    model       Gemma4ForConditionalGeneration, bf16, cuda:0, 2.2 s from page cache.
                 The cold-cache load of the very first run is not quoted: that run's log
                 was never archived, and a number no file here carries is not evidence.
                 9.52 GB allocated after loading;
@@ -309,10 +324,10 @@ THE CHECKS, AS THEY PRINTED
     prompt with the legend line    min 224   median 477   p99 509   max 519
     prompt without it              min 138   median 391   p99 423   max 433
     the legend costs 86 tokens at the median; the instruction alone is 48 tokens.
-    Rendering and tokenizing all 16 071 prompts BOTH ways took 16.7 s.
+    Rendering and tokenizing all 16 071 prompts BOTH ways took 16.8 s.
 
   TIMING, one real prompt of the median length (477 tokens), 10 warm-up then 300 timed
-    batch 1    median 43.44 ms   p90 43.96   p99 48.17   max 49.15
+    batch 1    median 43.78 ms   p90 44.39   p99 50.76   max 51.95
     Beside it, the number the brief names: 100 ms.  No verdict is drawn here.
 
     Batched, left-padded, 64 prompts spread over the file (224 to 511 tokens) and each
@@ -321,16 +336,16 @@ THE CHECKS, AS THEY PRINTED
     stride over 64 sorted prompts gives each size a different subset with a different
     maximum, 504 at batch 8 against 511 at batch 64.  What the stride removes is the gross
     confound of the first run, where batch 8 got the eight shortest prompts and reported
-    0.0 % padding; a 1.4 % difference in padded width is far too small to explain 153.7
-    against 128.9 passes/s.
-      batch  8    52.1 ms/batch   153.7 passes/s   padded width 504, padding 17.2 %
-      batch 32   238.3 ms/batch   134.3 passes/s   padded width 509, padding 15.1 %
-      batch 64   496.3 ms/batch   128.9 passes/s   padded width 511, padding 15.0 %
+    0.0 % padding; a 1.4 % difference in padded width is far too small to explain 152.4
+    against 127.8 passes/s.
+      batch  8    52.5 ms/batch   152.4 passes/s   padded width 504, padding 17.2 %
+      batch 32   240.7 ms/batch   133.0 passes/s   padded width 509, padding 15.1 %
+      batch 64   500.9 ms/batch   127.8 passes/s   padded width 511, padding 15.0 %
     Throughput PEAKS AT BATCH 8 and falls slightly after it: a ~480-token prefill at batch
     8 is already about 4 000 tokens, which saturates this card, so a wider batch buys
-    nothing.  At the best rate, 153.7 passes/s:
-      128 000 passes  13.9 min        256 000 passes  27.8 min
-    (at batch 64 the same two numbers are 16.5 and 33.1 min.)
+    nothing.  At the best rate, 152.4 passes/s:
+      128 000 passes  14.0 min        256 000 passes  28.0 min
+    (at batch 64 the same two numbers are 16.7 and 33.4 min.)
 
     The read position is each row's LAST REAL TOKEN: padding_side="left" (pad token
     '<pad>' id 0), and two checks that raise SystemExit -- the last column of
@@ -522,9 +537,11 @@ THE CHECKS, AS THEY PRINTED
   are imported; it is the script a later replay sweep will reuse, so the fix belongs in
   it and not in a note about a later step.
 
-  FOR THE NEXT STEP: 153.7 passes/s at batch 8 is the rate to budget against, not the
-  batch-1 43.44 ms, and a bigger batch does not help.  Both numbers are smoke.txt's own.
-  Whether a tuned adapter changes either one is untested.
+  FOR THE NEXT STEP: 152.4 passes/s at batch 8 is the rate to budget against, not the
+  batch-1 43.78 ms, and a bigger batch does not help.  Both numbers are smoke.txt's own.
+  Whether a tuned adapter changes either one is untested.  Section 11 adds the number
+  this one does not give: what BATCHING COSTS IN DECISIONS, which is why the batch-8 rate
+  is not simply the rate to use.
 
   ALSO LEFT BEHIND, and named so that a reader is not surprised by it: fetch_weights.sh
   keeps REVISION and two .api_*.json beside the nine hub files in the model directory
@@ -611,3 +628,435 @@ THE CHECKS, AS THEY PRINTED
      agent's own directory, not something this step copied there, so it was NOT deleted:
      deleting another agent's working directory while it is working is not a fix.  It is
      named in the inventory with its store_mut warning (section 8).
+
+========================================================================
+10. THE SHARED PREFILL MODULE, AND WHY smoke.txt WAS REFRESHED       82 s
+========================================================================
+  New file: S2/evidence/23/prefill.py.  It holds what smoke.py and precheck.py must build
+  the same way: the thread caps and the offline HF variables (set at ITS import, before
+  torch), ROOT and the two sys.path entries, the PROVISIONAL instruction and answer
+  prefix, the three candidate words and their ids, chat_text, ids_of, rendered and the
+  left-padded batch_of with its two read-position checks.  smoke.py now imports it and
+  keeps three one-line wrappers that bind its tokenizer.  The reason is not tidiness: a
+  second copy of the prefill would let smoke.txt and the numbers the tuning plan rests on
+  drift apart without either script noticing, and the wording is exactly the thing a
+  later step changes.
+
+  smoke.py was therefore re-run and smoke.txt REPLACED by that run's output:
+    ssh hpc-debian 'cd ROOT && env PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -B \
+        repo/docs/wayfinder/semindex-stage2/evidence/23/smoke.py ROOT \
+        > smoke2.log 2> smoke2.err'                            exit 0, 82 s wall
+    ssh hpc-debian 'cat ROOT/smoke2.log' > S2/evidence/23/smoke.txt
+
+  The diff against the archived smoke.txt is ONLY timing lines and the minute figures
+  derived from them: the tokenizer load (1.3 -> 1.4 s), the two model loads, the 16 071
+  prompt renders (16.7 -> 16.8 s), the batch-1 median (43.44 -> 43.78 ms) and the three
+  batched rates (153.7/134.3/128.9 -> 152.4/133.0/127.8 passes/s).  Every id, every
+  logit, every token count, every padding share and every check line is identical, which
+  is what makes the extraction behaviour-preserving rather than assumed to be.  The
+  numbers quoted in the header and in sections 6 and 8 of this file were updated to the
+  rerun's, so that no number here comes from a run that is not archived.
+
+========================================================================
+11. THE FOUR MEASUREMENTS THE TUNING PLAN RESTS ON                   454 s
+========================================================================
+  Script: S2/evidence/23/precheck.py    Output: S2/evidence/23/precheck.txt (220 lines)
+
+  Commands:
+    bash S2/evidence/23/push_inputs.sh                       (local, ~3 s; 189 code files)
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > precheck.t0 && nohup env \
+        PYTHONDONTWRITEBYTECODE=1 STORE=ROOT/store PYTHONPATH=ROOT/repo/src \
+        HF_HUB_OFFLINE=1 ./.venv/bin/python -B \
+        repo/docs/wayfinder/semindex-stage2/evidence/23/precheck.py ROOT \
+        > precheck.log 2> precheck.err &'
+                           exit 0, 18:43:23Z to 18:50:57Z = 454 s wall (precheck.t0/.t1)
+    ssh hpc-debian 'cat ROOT/precheck.log' > S2/evidence/23/precheck.txt
+
+  nohup and not a foreground ssh, because a 7-minute foreground ssh dies.  stdout and
+  stderr go to SEPARATE files for the same reason smoke.log and smoke.err are separate:
+  the weight loader's progress bar is on stderr and would otherwise be carriage-returned
+  into the archive.  precheck.err holds those three bar lines and nothing else.
+
+  THREE EARLIER STARTS WERE DISCARDED, and they are named rather than dropped:
+    ROOT/precheck-dry.log   the first.  It STOPPED in part 4, on its own check: "the LoRA
+      target set: 205 modules matched, not 7 x 35 = 245".  The check was right and the
+      expectation was wrong (see below), so the script's check was rebuilt around the
+      architecture and the script was corrected.  That run also merged stderr into the
+      log and printed the legend comparison in a form that read backwards.  It stopped
+      before its own cleanup, so ROOT/precheck-tmp stayed behind and was removed BY HAND
+      before the archived run; only the archived run's own cleanup is the script's.
+    no log survives of the second, and that is said rather than hidden: it was killed by
+      hand about 90 s in, because the mutation preamble was being corrected while it ran,
+      and the next start truncated the file it had been writing.  It was killed cleanly:
+      nvidia-smi was empty when the next run's own card-free check asked.
+    ROOT/precheck-run2.log  the third, and a COMPLETE run of the script as it then stood.
+      Discarded for one reason, printed in its own output: its batch-16 block continued
+      the batch-8 block's adapter, so the loss column started at 0.8075 instead of at the
+      untuned 4.20, which reads like a batch-size effect and is not one.  The adapter is
+      reset between blocks now.  Its stderr also carries a UserWarning that the archived
+      run does not (lora_B was read with float() on a requires_grad tensor; it is read
+      through .detach() now).
+  Only the fourth run is precheck.txt, and every number below is from that file.
+
+  WHAT THIS PART LEFT UNDER ROOT, so that a reader of the directory is not surprised:
+  precheck.log and precheck.err (the archived run), precheck.t0 and precheck.t1 (the two
+  timestamps the wall time above comes from), precheck-dry.log, precheck-run2.log and
+  precheck-run2.err (the first and the third of the discarded starts; the second left no
+  log), smoke2.log and smoke2.err (section 10's rerun).  ROOT/precheck-tmp existed only
+  while a run was alive and holds the texts the worker processes read: the archived run
+  removes it at the end and prints the before/after listing of ROOT that shows it gone.
+
+  THE ROWS.  12 868 rows of seeds 1-80, of which 11 438 carry a label -- exactly the
+  11 438 the plan names for candidate a, counted from the file's own bytes and not quoted.
+  Every seed list goes through check_seeds_tuning (>80 refused) and through
+  port.check_seeds (>100 refused); the 512 rows of part 1 are a stride over the file and
+  land 3 to 7 per seed over all 80.  Seeds 81-100 and 121-160 appear nowhere.
+
+  1  READ-OUT NOISE, 512 rows, four settings
+    margin = best minus second-best candidate logit.  bf16 median 4.6875, p99 13.98,
+    min 0.0000 (exact ties exist).  float32 median 4.7036, min 0.0125.
+      bf16 b1 vs bf16 b8    argmax differs on 14 of 512   |diff| median 0.2500, max 3.3750
+      bf16 b1 vs fp32 b1    argmax differs on 13 of 512   |diff| median 0.2130, max 6.0445
+      bf16 b8 vs fp32 b1    argmax differs on  6 of 512   |diff| median 0.2118, max 5.0445
+      fp32 b1 vs fp32 b8    argmax differs on  0 of 512   |diff| median 0.0000, max 0.0013
+    BATCHING IN bf16 CHANGES DECISIONS: 14 of 512 (2.7 %) of the rows pick a different arm
+    at batch 8 than at batch 1.  In float32 the batch makes no difference at all, to any
+    row.  The reach of the noise is not small compared with the margin: 162 of 512 rows
+    (31.6 %) have a bf16 margin below the largest bf16 b1-vs-b8 difference, and 335 of 512
+    (65.4 %) below the largest difference seen anywhere (6.0445).
+    An evaluation that batches in bf16 therefore does not score the decider a node runs.
+    Either keep batch 1, or read out in float32, or accept that about 3 % of the decisions
+    are the batch's and not the model's.  This step draws no conclusion beyond that; the
+    plan chooses.
+    BIT-IDENTICAL ACROSS PROCESSES: yes.  A second process, loading its own copy, repeated
+    all 512 x 3 bf16 batch-1 logits exactly.  So splitting an evaluation over processes
+    changes no decision; batching does.
+    SINGLE-PASS TIME, 300 passes, 478-token row: bf16 median 43.02 ms, p99 49.10 ms;
+    float32 median 36.73 ms, p99 43.09 ms.
+    SURPRISE: float32 is the FASTER of the two, by 6.30 ms at batch 1, with tf32 off
+    (matmul precision "highest", allow_tf32 False on both matmul and cudnn, parameter
+    dtype torch.float32 printed).  A single 478-token pass is latency-bound on this card,
+    so the narrower dtype buys nothing here.  The script says, and this file repeats, that
+    this is a measurement and not an explanation: nothing identifies the slower kernel.
+    float32 costs about 10 GB more of the card: the two free-memory lines of precheck.txt
+    leave 37.32 GB free after the bf16 load and 27.68 GB after the float32 one, i.e. 9.95
+    against 19.59 GB in use.
+
+  2  PARALLEL THROUGHPUT AT BATCH 1, K processes, 200 passes each after a barrier
+      K = 1    23.1 passes/s    per-worker median pass 42.86 ms    128 000 in 92.2 min
+      K = 2    45.7 passes/s    42.98-43.43 ms                     128 000 in 46.7 min
+      K = 4    75.9 passes/s    52.47-52.51 ms                     128 000 in 28.1 min
+      K = 8    NOT RUN: one worker's own footprint on the card is 10.12 GB, measured with
+               nvidia-smi while K = 1 ran, and 8 of them need 80.95 GB against 46.73 GB
+               free.  Skipped on that measurement, not on an estimate.
+    K = 4 is 3.28x the single-process rate, so the card still has room at K = 2 and is
+    starting to queue at K = 4 (the per-worker pass grows from 43 to 52 ms).  All workers
+    reach a barrier before any is timed and the rate divides the total passes by the union
+    of their timed windows, so a worker that was still loading cannot flatter the rate.
+    At most 4 workers plus the parent ran at once, inside the brief's cap of 8 processes.
+    Beside it, section 6's batch-8 rate is 152.4 passes/s -- twice K = 4's 75.9 -- which is
+    the trade part 1 prices: the faster number costs 2.7 % of the decisions.
+
+  3  THE LEGEND LINE, timed in ONE ALTERNATING loop, 300 passes each
+      with the legend     478 tokens   median 43.06 ms   p99 49.66 ms
+      without it          392 tokens   median 43.07 ms   p99 50.26 ms
+    DROPPING THE LEGEND DID NOT SHORTEN THE PASS: 86 fewer tokens, 18.0 % of the prompt,
+    and the median moved by 0.02 ms in the WRONG direction.  Read it against the row's own
+    median-to-p99 spread of 6.6 ms, and against the three runs of this script, which got
+    -0.69 ms, +0.05 ms and -0.02 ms for the same comparison (negative = the shorter prompt
+    was slower).  THE DIFFERENCE IS BELOW WHAT THIS MEASUREMENT CAN RESOLVE; it is not
+    measured to be zero, and nothing here shows the legend is free at a different length or
+    at a different batch size.  The first run timed the two variants in two loops minutes
+    apart, which let drift supply the sign; they are alternated pass by pass now, and even
+    so the sign is not resolved.  No recommendation: the plan decides whether the reader
+    needs the legend.
+
+  4  ONE TUNING STEP, LoRA r=16 alpha=32, 3-way loss on the candidate logits
+    THE DOCUMENTED RECIPE'S "7 PROJECTIONS PER LAYER" IS WRONG FOR E2B, and this is the
+    finding that stopped the first run.  The last 20 of the 35 text layers are kv-shared
+    (config num_kv_shared_layers = 20, first shared index 15) and transformers 5.24.0
+    gives those layers NO k_proj and NO v_proj module: the language model has 205
+    projections (q/o/gate/up/down 35 each, k and v 15 each), not 245.  A plan that budgeted
+    the adapter at 7 per layer would be wrong by 40 modules.
+    AND THE LOADER DOES NOT SAY SO: from_pretrained reported missing_keys 0 and
+    unexpected_keys 0 although the checkpoint ships k_proj and v_proj weights for all 35
+    layers, so 40 tensors of the file have no module in this model and nothing warned.
+    Nothing is random -- every module that exists got its weights -- but unexpected_keys
+    cannot be read as "every tensor of the file was used".
+    exclude_modules IS load-bearing: 353 modules in the whole model end in one of the
+    seven names, 148 of them in the vision and audio towers (and the towers' q_proj is a
+    Gemma4ClippableLinear, not an nn.Linear).  With the exclusion, the matched set is
+    exactly the 205 language-model projections and nothing else.
+    trainable 24 158 208 of 5 128 455 712 parameters (0.4711 %), adapter dtype float32
+    beside the bf16 base (peft's autocast_adapter_dtype default), base parameters with a
+    gradient: 0.  No task_type, so plain PeftModel.forward passes logits_to_keep and
+    position_ids straight through to Gemma4's forward -- the same call the read-out makes.
+      batch  8   0.261 s/step (median, steps 4-30; p99 0.269)   peak allocated 17.41 GB
+                 loss 4.2530 -> 1.0725, all finite, all 410 adapter tensors moved
+                 one epoch: 11 438 rows = 1430 steps = 6.2 min; 4 600 rows = 2.5 min
+      batch 16   0.447 s/step (p99 0.477)                       peak allocated 24.95 GB
+                 loss 4.2027 -> 0.7249, all finite, all 410 adapter tensors moved
+                 one epoch: 11 438 rows = 715 steps = 5.3 min; 4 600 rows = 2.1 min
+    Each block starts from the UNTUNED adapter: the initial state is restored and lora_B
+    is checked to be exactly zero again before the block runs.  The second run did not do
+    that and its batch-16 loss started at 0.81, continuing the batch-8 block -- a number
+    that reads like a batch-size effect and is not one.  The timings never depended on it.
+    THAT THE LOSS FALLS IS NOT A RESULT.  It is a cost measurement that happens to print a
+    loss; nothing here says 30 steps, lr 2e-4 or rank 16 is the right amount of tuning.
+    NOTHING TUNED WAS KEPT: save_pretrained was never called, the adapter lived in one
+    process's memory for 61 steps, and the ROOT listing printed before and after the run
+    differs by precheck-tmp being REMOVED and by nothing else.
+
+========================================================================
+12. EVERY CHECK OF precheck.py, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  Here the mutation is of the INPUT, inside the same process, and part 5 of precheck.txt
+  prints the 13 failures.  Not of a script copy as in section 7: one copy per check would
+  mean a 7-minute run of a shared card per check.  The checks are functions for that
+  reason, and the one that cannot be driven from an argument says so.
+
+  seeds_tuning        the 80 real seeds plus 81     -> "seeds above 80: [81]"
+  port.check_seeds    [101]                         -> the replay's own refusal, quoted
+  target_of           label 7.0                     -> KeyError 7.0
+  finite              [0.5, nan]                    -> "1 non-finite value(s)"
+  changed             a snapshot against itself     -> "410 of 410 did not move"
+  changed (lr=0)      one REAL step at lr 0         -> same, on the training and not on an
+                      argument: this is what an attached but unoptimised adapter looks like
+  targets/tower       every module ending in one of the seven names, i.e. what the bare
+                      name list reaches without exclude_modules -> "148 outside the
+                      language model, e.g. model.audio_tower.layers.0.self_attn.k_proj"
+  targets/arithmetic  kv-shared layers claimed as 0 -> "205 projection modules, not
+                      7 x 35 + 5 x 0 = 245"
+  targets/set         the real set minus one module -> "1 projection not targeted
+                      (model.language_model.layers.9.self_attn.v_proj)"
+  all_zero (reset)    the TRAINED lora_B            -> "205 of 205 tensors are not zero"
+  workers             one result where K = 2        -> "1 of 2 workers reported"
+  identical           one of 1536 logits moved by 1 -> "1 of 1536 values differ, max 1"
+  batch_of/left-pad   padding_side "right" on the shortest and the longest of the 512
+                      prompts -> "left padding did not leave a real token last"
+  batch_of/position   NOT shown here, and precheck.txt says so in that line: the check is
+                      an invariant of batch_of's own arithmetic and no argument can break
+                      it.  Section 7's mutation k reverses the position_ids inside that
+                      same function -- the one prefill.py now holds and both scripts call.
+
+  WHAT STILL HAS NO MUTATION: the card-free branch at the top of precheck.py (section 7's
+  mutation m is the same branch in smoke.py, and a real second compute process cannot be
+  staged on a shared card without disturbing someone), and the two subprocess failure
+  branches of part 2 (a worker that exits before the barrier, a worker that never
+  reaches it).  Named, not claimed as covered.
+
+========================================================================
+13. WHAT PART OF THE TUNING PLAN IS STILL OPEN AFTER THIS
+========================================================================
+  - The WORDING.  Every token count and every timing above is the provisional
+    instruction's and the provisional prefix's.  precheck.txt says so in its first lines.
+  - Whether the evaluation batches.  Part 1 prices the choice (2.7 % of decisions in bf16,
+    0 in float32, 152.4 passes/s batched against 75.9 at K = 4 unbatched); it does not make
+    it.
+  - Whether the legend stays.  Part 3 says it is free in time; whether it helps the reader
+    is a question only a tuned model answers.
+  - Candidates a and b.  This step counted a's rows (11 438) and used the plan's 4 600 for
+    b without recomputing b's filter: the paired-t filter with every t of exactly 3 kept is
+    the next step's work, as is the choice between a and b on seeds 81-100.
+  - Whether CONCURRENT processes agree bit for bit.  Part 1b compared one second process
+    against an idle-parent run; part 2's K = 2 and K = 4 workers were timed and their
+    logits were never compared with each other or with batch 1.
+  - The 100 ms loop.  43 ms for one pass is beside 100 ms, not inside it: a node also has
+    to render the observation and run the rest of its loop, and that is ticket 12's.
+
+========================================================================
+14. THE FROZEN PLAN, THE ROW COUNTS, AND ONE COMMENT-ONLY EDIT      4 s
+========================================================================
+  New files: S2/evidence/23/spec.md (the plan, frozen before anything is tuned for keeps)
+  and S2/evidence/23/rows.py with its output rows.txt.
+
+  Command (local machine, reads the label file and nothing else):
+    local docs/wayfinder/semindex-stage2/evidence/23/rows.py > S2/evidence/23/rows.txt
+                                                               exit 0, 3.3 s, 98 lines
+
+  WHAT rows.txt SETTLES.  The plan quoted 4 600 rows for candidate b from an earlier
+  estimate and section 11's run used that figure as given without recomputing the filter.
+  Counted from the label file's bytes, with `label.paired_t` imported rather than copied:
+  candidate a is 11 438 rows (the same number section 11 counted) and candidate b is
+  4586, not 4 600.  A bare float `t >= 3` would keep 4571, so the clause that keeps every
+  t of exactly 3 is worth 15 rows, and the 31 rows sitting on the bar have a largest
+  |t - 3| of 9.99201e-14 against a nearest-outside of 0.00077627, i.e. room on both sides
+  of the 1e-6 tolerance.  Also counted: 42 rows of seeds 1-80 sit at or after ts_rel_ms
+  130 000 and EVERY ONE OF THEM IS A TIE, so the `label is not None` test already removes
+  them and no labelled row is lost with them.  Eight checks are shown failing on a
+  mutated input in part 5 of rows.txt; the `subset` mutation had to remove a row that
+  candidate b KEEPS, because removing an arbitrary a row leaves the check passing and
+  says nothing.
+
+  ONE COMMENT-ONLY EDIT TO precheck.py, named for the same reason section 9 names the
+  one word of a comment in smoke.py: `uvx ruff@0.17.2 check --no-cache` over this
+  directory reported 7 errors, all of them in precheck.py and all cosmetic -- two
+  `import torch` lines that their own function does not use (F401), and five uses of the
+  module-level `pm` that pyflakes reads as undefined because `del pm, model` at the end
+  of the file unbinds the name (F821).  Seven `# noqa` markers were appended, with their
+  reason on the line.  NOTHING EXECUTED MOVED, and that is checked rather than asserted:
+  the two versions' token streams are equal with COMMENT, NL, NEWLINE, INDENT and DEDENT
+  tokens dropped.  precheck.txt was NOT re-run and is still the archived run's output.
+  push_inputs.sh was re-run afterwards, so the far side carries the same bytes again:
+  "digests: all 193 files agree on both sides".  Every other script of this directory was
+  already clean.
+
+========================================================================
+15. THE REVIEWERS' FINDINGS ON THE FROZEN PLAN, AND WHAT EACH CHANGED  4 s
+========================================================================
+  Two reviewers read spec.md, rows.py, precheck.py and this file.  35 findings; 35 were
+  reproduced against the source and fixed, and 0 were rejected.  Nothing was fixed by
+  deleting the sentence that carried a commitment: the two places where this plan now
+  commits to MORE are the K-worker gate (a single-process reference read-out, not
+  worker-against-worker) and the repeat check (every script that decides with an adapter
+  attached, not smoke.py's untuned rows alone).
+
+  FOUR WRONG NUMBERS OR CITATIONS IN spec.md, each checked against the file it names:
+   - the per-seed row order for the frontier gain was written [lat, n, c, polls].
+     score.py:89-92's early_four returns (n4, c4, lat, polls) and predict.py:344's vals
+     unpacks exactly that, so an implementer following the line would have computed
+     n4/lat as the delay and read interp at the wrong x.  A SILENT defect: no exception,
+     a number five orders of magnitude off.  Corrected to [n4, c4, lat, polls].
+   - the bootstrap index matrix was called "the one those steps drew, with 20 columns
+     here instead of 40".  predict.py:404 is
+     default_rng(BOOT_SEED).integers(0, n, size=(BOOT_N, n)), so n changes both the draw
+     range and the shape: at n = 20 no element of it is an element of the n = 40 matrix.
+     Only the seed is shared.  The citation moved from :396 (the def line) to :97-98 and
+     :404, which hold BOOT_N, BOOT_SEED and the draw.
+   - the re-run of the fixed arms was justified by weight.txt's step 2 -> step 3 move of
+     +3.001866 ms.  That is the JITTER-KEYING move: weight.txt's header says the per-pair
+     lag streams are "on throughout" and step 3 is "step 2 with the per-pair JITTER
+     streams on as well", and weight.txt calls the move undecided at these 100 seeds.
+     The port-versus-old-path figure is weight.txt's own old-fixed-arm-path row, -0.202 ms
+     (-0.20 %), fifteen times smaller.  The re-run itself is the user's 決まったこと 10 and
+     needs no measured justification.  The scout report carried the same error, so this is
+     a corrected inheritance and is said to be one.
+   - the identity early return was cited at replay.py:1104-1109; :1103 is the condition
+     that guards it.  Corrected to :1103-1109.
+   - THE NEXT STEP'S GPU BUDGET WAS WRONG, and this one changes a plan and not a
+     sentence: the pass count per model decider was bracketed as 800 x 95.985 to
+     800 x 256.455 (50.6 to 135.2 min at K = 4 for the three model deciders) on the stated
+     premise that "no generated file carries the number of resolution-time decider calls a
+     run makes".  labels.txt line 9 carries it -- "16071 labelled decisions (160.7 per
+     run, min 150, max 170)" -- and those rows ARE the resolution-time calls, because
+     label.py's Labeller labels only kind == "state_poll_reschedule".  The two literals
+     were wrong twice over: windowed POLL counts, not decision counts, and the two outer
+     ARMS' and not a decider's.  Now 800 x 160.7 = 128 568 passes per model decider,
+     28.2 min at K = 4 and 92.8 at K = 1, i.e. 84.7 min at K = 4 for the three, which is
+     precheck.txt part 2's own "128000 passes at this rate: 28.1 min" line reached from
+     the data.  It is the ROLL-IN's count and L's may differ, and the
+     decider_ord["state_poll_reschedule"] print stays as the record.
+
+  TWO CLAIMS THAT WERE TOO STRONG AND ARE NOW THE WEAKER TRUE CLAIM:
+   - "every decider runs on the same union set, so the runs differ in nothing but the
+     decider" -> the union-set half stays, the second half goes.  evidence/22's
+     lagcheck.py 1b is on record NOT HELD (h2->h3: 26 lags to 27, the draw-kind order
+     diverging at the 21st draw, the applied intervals at the 6th send), and the const
+     arms never draw the extra tick_lag while F and L do, so the arms-versus-L reading
+     carries an unmeasured randomness difference.  Now Threats 14.
+   - "a bare float t >= 3 keeps 4571 rows ... that is the whole difference the clause
+     makes" -> the clause removes the rounding AT THE BAR and leaves specnums.txt's
+     arm-order residue: 1246 rows whose runner-up ties the third arm, of which taking the
+     other arm moves 2 across the selection (seeds 1-100; NOT recounted on 1-80, because
+     that would be a new check with its own mutation for a residue specnums.txt already
+     prices).  Now Threats 15.
+
+  THE ONE FINDING THAT NAMED A MISSING MECHANISM RATHER THAN A WRONG NUMBER.  The plan
+  never said that the states L is tuned on come from a UNIFORMLY RANDOM roll-in
+  (label.py's Labeller._draw, and labels.txt's own roll-in arm counts 5345/5327/5399) and
+  that the label is the best arm UNDER AN F SUFFIX L does not supply, while the replay
+  runs L closed-loop on states L itself generates.  The agreement number is therefore
+  uninformative about the score IN EITHER DIRECTION, which is a stronger statement than
+  the "a high agreement does not mean a good score" the plan had.  It is now a bullet in
+  "What this step cannot show" and Threats 13.  Not fixable here: it would need labels
+  generated under L's own roll-in, which do not exist and which the user's 決まったこと 4
+  does not ask for.
+
+  THREE EDITS OUTSIDE spec.md:
+   - rows.py's module docstring named a ticket number ("ticket 10, 決まったこと 4"), against
+     this step's comment rule and against evidence/22's own practice (port.py:163 writes
+     "a later ticket" with no number).  Now "(their own decision 4)".  rows.py was re-run
+     and rows.txt REPRODUCED BYTE-IDENTICALLY, which is the check that matters here: the
+     docstring is not printed, so an unchanged rows.txt is evidence that nothing the
+     script computes moved.
+       local docs/wayfinder/semindex-stage2/evidence/23/rows.py > rows_new.txt
+                                                       exit 0, 3.3 s, diff empty
+   - prefill.py's two PROVISIONAL comments said "A later step fixes the wording" while
+     spec.md declares the wording frozen, so a reader of prefill.py was told the opposite
+     of the plan.  Both comments now say FROZEN 2026-11-24 by spec.md and name what the
+     freeze protects (every token count and timing in smoke.txt and precheck.txt).  The
+     WORDING ITSELF IS UNCHANGED: the two versions' token streams are equal with COMMENT,
+     NL, NEWLINE, INDENT and DEDENT dropped, 693 tokens each, checked as section 14 did.
+     smoke.py's and precheck.py's own text still calls the wording provisional and is left
+     alone, because their archived output is the run's.
+   - no edit to precheck.py beyond section 14's seven noqa markers.
+
+  TWO SOURCE READS ON THE HOST, so that two settings spec.md now names have a file:
+    ssh hpc-debian 'sed -n 20,40p ROOT/.venv/.../torch/optim/adamw.py'
+      -> weight_decay: float = 1e-2  (adamw.py:27).  "every other setting torch's own
+         default" therefore applies 0.01 of decoupled weight decay to the LoRA
+         parameters; it is inherited, nothing here measures it, and it is now named.
+    ssh hpc-debian 'grep -n autocast_adapter_dtype ROOT/.venv/.../peft/{mapping_func,peft_model}.py'
+      -> defaults True on get_peft_model (mapping_func.py:110) and on
+         PeftModel.from_pretrained (peft_model.py:489), each calling the tuner's
+         _cast_adapter_dtype (peft_model.py:1220-1223, :1764-1767).  That is why
+         precheck.txt part 4 printed adapter dtype ['torch.float32'] over a bf16 base, and
+         it is what lets spec.md state the adapter's dtype AT READ-OUT.  tune.py asserts
+         it rather than trusting the default.
+  NO GPU WAS USED.  nvidia-smi --query-compute-apps printed nothing, i.e. the card was
+  free; it was checked and not taken.
+
+  ONE NUMBER DERIVED BY SUBTRACTION RATHER THAN BY A NEW COUNT.  Prediction 5 needed the
+  most-frequent-arm baseline of the seeds 81-100 labelled rows, and had none, so its band
+  sat 0.023 above a number nobody had computed.  Adding a seeds-81-100 count to rows.py
+  was REJECTED: rows.txt part 1 states that the row list is cut at seed 80 before anything
+  is counted, and that guarantee is worth more than a count.  The baseline is instead
+  labels.txt's whole-cell counts minus rows.txt part 2's: 3221-2581 = 640, 3675-2972 =
+  703, 7383-5885 = 1498, summing to the 2841 spec.md already derived the same way, so the
+  baseline is 1498/2841 = 0.5273.  agree.py recomputes it from its own rows and stops if
+  it does not reproduce.  The preamble's source list now also names RUN.txt, which is the
+  only file carrying two of the three legend deltas, with the caveat that the second of
+  those three runs has no surviving log (section 11).
+
+========================================================================
+16. THE MAIN SESSION'S OWN CHECK OF THE FROZEN PLAN, AND THE ONE ROW IT COULD NOT MATCH
+========================================================================
+  Run locally 2026-11-24 after section 15, by the session that hands this step over, with
+  a script of its own that shares no code with rows.py or ../22/label.py: the paired t is
+  recomputed with numpy from each row's pass_scores.  THE SCRIPT IS NOT IN THE REPOSITORY
+  (it lives in the session's scratch directory), so what follows is a hand-logged run and
+  not something a reader can re-run from here.  It is logged because it found something.
+
+  WHAT REPRODUCED, number for number, against rows.txt:
+    rows 16071, seeds 1 to 100; seeds 1-80: 12868 rows, 1430 ties, candidate a 11438 with
+    2581 / 2972 / 5885; 42 rows at or after ts_rel_ms 130000, none labelled; 31 rows within
+    1e-6 of t = 3, largest |t - 3| 9.992e-14, nearest outside 0.00077627; the tolerance
+    keeps 15 rows a bare float drops; candidate a's split 10013 / 1425, held-out share of
+    10.043 s 0.5102; candidate b's held-out part 568 with 89 / 91 / 388; and the
+    subtraction 640 / 703 / 1498 = 2841, 0.5273, against ../22/labels.txt.
+
+  WHAT DID NOT: candidate b came out 4585 rows, not rows.txt's 4586 (10.043 s: 3152 against
+  3153; tuning part 4017 against 4018).  ONE ROW, and the cause is spec.md's Threats 15 in
+  the flesh: seed 12, k 70, h3 -> h2, label 10.043.  Its 3.695 s and 6.0 s arms have the
+  same mean score to the last bit under ../22/label.py's statistics.fmean
+  (36959.1418402199 both), so ARMS order makes 3.695 s the runner-up and t = 7.0, which
+  keeps the row.  numpy's mean rounds the 6.0 s arm one ulp lower (36959.14184021989), so
+  6.0 s becomes the runner-up, t = 2.497, and the row is dropped.  Over seeds 1-80 the two
+  means order the arms differently on 6 rows; this is the only one of the 6 that crosses
+  the selection.
+  WHAT IT MEANS.  rows.txt's 4586 is the count under ../22/label.py's own definition and
+  stays the number of record: fmean is exactly rounded, so the count is the same on both
+  machines and tune.py is to reproduce it on the host before it tunes.  What the recount
+  adds is that the "not recounted on seeds 1 to 80" residue of Threats 15 is not empty
+  there: at least this one row of b is in b because of the order of ARMS and the way a
+  mean was rounded, and not because of the data.  One row of 4586 moves no result of this
+  step; it is the claim "reproducible from the data alone" that it bounds.
+
+  ALSO CHECKED: sha256 of precheck.py, prefill.py, smoke.py, rows.py and spec.md equal on
+  both machines; precheck.txt equal to the host's precheck.log and smoke.txt to its
+  smoke2.log; smoke.txt against the committed one differs in timing lines only;
+  uvx ruff@0.17.2 check --no-cache clean; no adapter, .pt, .bin or stray .safetensors
+  under ROOT outside models, .venv and hf-home; nvidia-smi listing no compute process.
+  ONE EDIT TO spec.md BY THIS SESSION: the base model's "unquantised" was attributed to
+  the user; it is the worker's choice the ticket records under 作業者が決めたこと, and the
+  line now says so.  Threats 15 gained the sentence that points here.
