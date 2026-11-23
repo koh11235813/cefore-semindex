@@ -1,0 +1,180 @@
+Commands of evidence/22, in the order a rerun has to take them. Everything here runs inside the replay;
+no testbed run was made for this step and no run directory was created under /home/lab_shared/semindex-eval.
+All of it on 2026-11-23.
+
+The tree
+--------
+Worktree /home/lab_shared/wt/semindex-ev22, branch docs/stage2-evidence-22, based on
+  9a909585e7b57f0f03a1596651d90db6d2f2e9c3
+Everything this step produced is uncommitted work on top of that commit: nothing was committed, stashed,
+pushed or `git add`ed, and `git status --porcelain` lists only paths under
+docs/wayfinder/semindex-stage2/.
+
+W=/home/lab_shared/wt/semindex-ev22
+E=$W/docs/wayfinder/semindex-stage2/evidence/22
+PY=/home/lab_shared/cefore-semindex/.venv/bin/python3
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH=$W/src
+export SCR=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/t22p4
+# PY is one path and the two settings are exported, as evidence/21/RUN.txt does it, because the
+# shell here is zsh: a `PY="env VAR=1 ... python3 -B"` holding several words does not split on
+# use, and every command below would die with rc 127 on a file named after the whole string.
+# SCR is session scratch and is not kept in the repo. The scripts' stdout was caught there; each file is
+# named where it is used below.
+
+PYTHONPATH=$W/src is needed because the venv's installed semindex points at another checkout. `python -I`
+cannot be used for the same reason: it drops PYTHONPATH.
+
+The seeds
+---------
+weight.py and label.py run seeds 1 to 100 of both cells; stability.py runs seeds 1 to 10 of both cells;
+statecheck.py, lagcheck.py, valuecheck.py and observe.py work on the single logged run s11a p 0.2 seed 1.
+Every script that takes seeds passes them through port.check_seeds, which raises on any seed above 100, so
+the measuring seeds 121 to 160 of this effort cannot be reached from here.
+
+1. The order, and why it is this order
+--------------------------------------
+cd $W
+
+$PY -B $E/weight.py       # writes weight.txt and weight.json
+$PY -B $E/stability.py    # imports label.py, which reads weight.json at import; writes stability.txt
+$PY -B $E/label.py        # reads weight.json; writes the two label files, labels.txt,
+                          #   labels_summary.csv and labels.sha256
+$PY -B $E/statecheck.py
+$PY -B $E/lagcheck.py
+$PY -B $E/valuecheck.py
+$PY -B $E/labelcheck.py   # imports label.py
+$PY -B $E/observe.py      # reads both label files; writes observe.txt
+$PY -B $E/specnums.py     # reads weight.json and both label files, after checking their sha256 against
+                          #   labels.sha256; writes specnums.txt
+$PY -B $E/gate.py         # LAST, AND ALONE: see below
+
+weight.py has to run first because stability.py and label.py read the number it writes. observe.py,
+specnums.py and labelcheck.py read what label.py wrote.
+
+stability.py is listed before label.py because it is what justifies the J the full labelling runs with,
+and not because label.py reads anything it writes: stability.py's one output is stability.txt, label.py
+never opens it, and the 8 passes are label.py's own `--passes` default. Running them the other way round
+produces the same label files. A J other than 8 would have to be passed as `--passes` by hand.
+
+gate.py runs last and alone. Its check 4 snapshots `git status --porcelain` and `git diff HEAD` at its
+start and compares them at its end, so any other script writing a file while it runs makes it fail. It is
+also the reason it is run after the prose of this directory is written and not before.
+
+2. Wall times
+-------------
+Four of these are the script's own printed figure. Three of the four are written into the file the script
+produced; gate.py prints its wall on stdout and writes no file, so its figures live only in the stdout
+caught under $SCR. The rest were measured for this file by timing the command, and they are not printed
+anywhere.
+
+  weight.py        158.5 s on 5 workers    (weight.txt's last line; the script's own figure)
+  stability.py     767.7 s on 5 workers    (stability.txt's last line; 3209 decisions x 3 arms x 16 passes)
+  label.py        3706.3 s on 5 workers    (labels.txt; both cells, 200 runs)
+  gate.py            see the list below    (gate.py prints its own wall on stdout; several runs)
+  statecheck.py      0.3 s                 measured for this file
+  lagcheck.py        0.5 s                 measured for this file
+  valuecheck.py      0.3 s                 measured for this file
+  labelcheck.py     21.4 s                 measured for this file
+  observe.py         4.4 s                 measured for this file
+  specnums.py        4.3 s                 measured for this file
+
+gate.py's own wall, once per kept stdout file under $SCR, newest last:
+
+  $SCR/gate.out              wall 9.4 s
+  $SCR/partc/gate.out        wall 9.6 s
+  $SCR/partc/gate.final.out  wall 8.8 s
+  $SCR/p4fix/gate.final.out  the last run of this directory; see the note at the end of section 3
+
+Earlier drafts of this file gave the three walls as "9.3 s, 9.4 s, 9.6 s". The 9.3 is in none of the
+stdout files that survive, and a run's stdout was overwritten in place, so the list above is rebuilt from
+the files themselves. gate.py's wall moves by a second between runs on the same tree, so none of these is
+a figure to read anything into.
+
+The figures above add up to about 78 minutes for a full rerun, almost all of it label.py.
+
+At most 5 worker processes ran at any moment, and only weight.py, stability.py and label.py used a pool.
+Nothing ran beside them.
+
+3. What the scripts printed
+---------------------------
+Caught under $SCR/partc/ when they were run for this file. PASS and FAIL lines counted from those files.
+
+These counts, and every number that appears only inside a check script's output -- the commit `fd6ce55`,
+the seeds 1 to 20 and 12 deciders of gate.py's cell check, its five refused constructions and the one
+refused return value, lagcheck.py's 26 and 27 lags, its 21st draw kind and 6th send, its 352 and 348
+decider calls -- are in no file this directory keeps. $SCR is session scratch and goes away. A reader who
+wants them again reruns the scripts in the order above; they are deterministic and came out the same on
+every rerun of this step. The one check tally that a kept file holds is observe.py's, which observe.txt
+prints.
+
+  gate.py        exit 0, 26 PASS, 0 FAIL, last line "every check passed"
+  statecheck.py  exit 0, 28 PASS, 0 FAIL, last line "every check passed"
+  lagcheck.py    exit 0,  3 PASS, 0 FAIL, last line "every check passed"
+                 check 1b's verdict is NOT HELD and check 1c's is that no other pair moved; neither is a
+                 gate, and both are printed in full
+  valuecheck.py  exit 0,  2 PASS, 0 FAIL, last line "every check passed"
+  labelcheck.py  exit 0, 18 PASS, 0 FAIL, last line "every check passed"
+  observe.py     exit 0,  2 PASS, 0 FAIL, last line "every check passed"
+  specnums.py    exit 0, no PASS line of its own: it asserts on no count, and its guard is the sha256
+                 check, which exits 1 before counting anything if either label file's digest has moved
+
+stability.py and label.py were not rerun for this file. weight.py was rerun once more, after its reading
+of the step-3 move was reworded and a count of distinct leave-one-out values was added to it; weight.json
+came out byte-identical and keeps the sha256 below. The outputs on disk are
+  weight.txt, weight.json      2026-11-23 21:44:09 +0900
+  stability.txt                2026-11-23 12:08:06 +0900
+  labels.txt, labels_summary.csv, labels.sha256   2026-11-23 10:49:36 +0900
+observe.txt (21:50:05) and specnums.txt (21:50:09) were rewritten by the rerun above and came out
+byte-identical to what was there, which `cmp` against the copies kept under $SCR/p4fix/ shows.
+
+gate.py's last run of this directory came after the lines above were written, because they name the
+walls and mtimes it had to read off the finished tree. Its stdout is $SCR/p4fix/gate.final.out and its
+wall is not copied here; gate.py's check 4 compares `git status --porcelain` and `git diff HEAD` only
+between its own start and its own end, so an edit of this file after it ran is outside what it checks.
+
+4. The label files
+------------------
+Outside the repository, one gzipped JSON-lines file per cell, written by label.py:
+
+  /home/lab_shared/semindex-learn/ev22/labels_p0.2.jsonl.gz
+    sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67
+  /home/lab_shared/semindex-learn/ev22/labels_p0.4.jsonl.gz
+    sha256 d30759dc23768b6d98f6579c8b7973fc797e9c4e2cc5ce7ddca7e9beb69b84e3
+
+labels.sha256 holds those two digests. `sha256sum -c $E/labels.sha256` reports OK for both, checked while
+this file was written. specnums.py makes the same comparison itself and refuses to count anything on a
+mismatch, so every number in specnums.txt is tied to the two files these digests name.
+
+weight.json's own sha256 is 99b790b210b76513924467dcc78fa3081d73c593103a8efecd2f1de20043b9c5, unchanged
+across every run above.
+
+5. Checks afterwards
+--------------------
+uvx ruff@0.17.2 check $E                      # All checks passed!
+rm -rf $E/.ruff_cache                         # and no __pycache__ anywhere under the directory
+sha256sum $E/weight.json
+sha256sum -c $E/labels.sha256
+git -C $W status --porcelain                  # only paths under docs/wayfinder/semindex-stage2/
+git -C $W stash list                          # empty
+git -C $W rev-parse HEAD                      # 9a909585e7b57f0f03a1596651d90db6d2f2e9c3
+
+6. What was not run
+-------------------
+- No testbed run. `evalgen.generate_run` was never called from this directory, and nothing new was written
+  under /home/lab_shared/semindex-eval; the archived runs of stage s11a are read, and under a run's
+  debug/node_dirs only */semindex/events.jsonl is opened. /home/lab_shared/semindex-learn/ev22/ is the one
+  place outside the repository that this step writes, and label.py is the one script that writes it.
+- No relabelling under the superseded weight 100.62168514446252. The one comparison of this step that
+  needs the superseded label files, that every row's decision, state, resolved and history are identical
+  under the two weights, rests on files that are no longer anywhere a reader can reach; remaking them
+  would cost another label.py run, the 3706.3 s above.
+- No sweep that holds the jitter draws fixed while the lags vary. That is what would split the
+  seed-to-seed variance of the weight into a jitter part and an outage-and-schedule part, and without it
+  weight.py's reading bounds the step-3 move and does not explain it.
+- No labelling of p 0.4 under p 0.4's own weight (139.66810800913194, 1.34 times the main cell's). The
+  labels of both cells use the main cell's weight, as the user fixed.
+- No run with a decision maker that reads the state. The port is exercised by constant deciders and by the
+  labelling's own roll-in only.
+- README.md is written by hand out of weight.txt, labels.txt, labels_summary.csv, stability.txt,
+  observe.txt, specnums.txt and the check scripts' output. No script produces it.

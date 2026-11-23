@@ -1,0 +1,36 @@
+Hindsight labels: which arm is best now if F takes over afterwards
+==================================================================
+F: i_min 3.695, m 1.5, i_max 10.043, on a timeout I = 3.695, no cap on m.
+Arms: [3.695, 6.0, 10.043] s.  Choice set declared to the port: [3.695, 5.5424999999999995, 6.0, 8.313749999999999, 9.0, 10.043] (the arms plus everything F reaches from them).
+Weight: 104.29595912307323 ms per poll, read from weight.json and not recomputed.
+Passes per arm: 8 (0 to 7).
+A label is NOT the hindsight-optimal sequence: one decision is moved, the rest of the run is F.
+
+p 0.2: 100 runs, 16071 labelled decisions (160.7 per run, min 150, max 170)
+  label  3.695 s :   3221  (0.2004)
+  label    6.0 s :   3675  (0.2287)
+  label 10.043 s :   7383  (0.4594)
+  tie (no label) :   1792  (0.1115)
+  margin ms, median 104.2960, min 0.0000, max 11013.6194
+  the roll-in's own arm at the labelled decision: 3.695 s 5345, 6.0 s 5327, 10.043 s 5399
+  labels that move when the censored records are DROPPED instead of entered at their lower bound: 10 of 16071 (0.0006); a decision that ties under one scoring and has a label under the other counts as moved
+
+p 0.4: 100 runs, 16148 labelled decisions (161.5 per run, min 146, max 173)
+  label  3.695 s :   3390  (0.2099)
+  label    6.0 s :   3872  (0.2398)
+  label 10.043 s :   7564  (0.4684)
+  tie (no label) :   1322  (0.0819)
+  margin ms, median 130.3699, min 0.0000, max 10987.5126
+  the roll-in's own arm at the labelled decision: 3.695 s 5449, 6.0 s 5371, 10.043 s 5328
+  labels that move when the censored records are DROPPED instead of entered at their lower bound: 204 of 16148 (0.0126); a decision that ties under one scoring and has a label under the other counts as moved
+
+Provisional timers that fired before their own poll had resolved, over every simulation of this script: 0
+  A fired provisional timer is a poll whose send-time interval decided the next send on its own, so a resolution-time label on it would be a label on the wrong instant.  Any count above 0 is a failure of this step, not a footnote.
+
+wall 3706.3 s on 5 workers
+
+Label files (outside the repository, one per cell)
+  /home/lab_shared/semindex-learn/ev22/labels_p0.2.jsonl.gz
+    sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67
+  /home/lab_shared/semindex-learn/ev22/labels_p0.4.jsonl.gz
+    sha256 d30759dc23768b6d98f6579c8b7973fc797e9c4e2cc5ce7ddca7e9beb69b84e3

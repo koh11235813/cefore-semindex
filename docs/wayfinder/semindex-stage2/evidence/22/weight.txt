@@ -1,45 +1,117 @@
 The weight that levels the two outer arms
 =========================================
 Cell: p 0.2, workload w0, the s6 outage shape, seeds 1 to 100, 40 Mode B replicate streams, run dicts built by ../21/predict.py's own run_dict.
-Arms: 3.695 s and 10.043 s, as constant deciders over the choice set [3.695, 6.0, 10.043] with the re-decision on, per-pair lag streams on.
-Delay is evidence/14's early-record scorer pooled sum(lat4)/sum(n4) per stream, polls is that scorer's windowed poll count per run; both are the median over the streams.
+Arms: 3.695 s and 10.043 s, as constant deciders over the choice set [3.695, 6.0, 10.043] with the re-decision on, per-pair lag streams on throughout. The jitter keying is what steps 1 and 2 differ from steps 3 and 4 in: the node's own stream there, the ordered pair's own stream here, which is the labelling's.
+Per-pair seed strings: rep_seed("pairlag:s6b10p043", p, seed, rep), the same string for the lag and the jitter stream (port.Engine puts a different kind prefix on each). Reproducing any number here depends on that prefix; it is evidence/21's STREAM_LABEL and carries no arm.
+The generator gate (../21/predict.py's own gate_generator): PASSED -- the outage events and record schedule of every seed that has a run are the stored ones, which is what the run dicts of the other seeds are built beside.
+The scorer against ../14/after.py's early_score, on every one of the 40000 simulations: 0 disagreed on (delivered, censored, delay sum, polls).
 
-Main cell, through the port
-  fixed 3.695 s                      delay  14390.655 ms   polls 256.500   censored 0.00000
-  fixed 10.043 s                     delay  30548.485 ms   polls  95.920   censored 0.00400
-  weight = (30548.484867 - 14390.654667) / (256.500000 - 95.920000)
-  WEIGHT = 100.62168514446252 ms per poll
-         = 100.621685 ms per poll, to six decimals
+2026-11-23: the weight is re-measured because it and the label score used two different delays. The four steps below are printed one at a time so that each change is readable on its own; step 4 is the value weight.json carries.
 
-The two scores under that weight
-  score(3.695 s) = 40200.116906221301
-  score(10.043 s) = 40200.116906221301
+Main cell, through the port, the four steps
+  step 1 -- as committed: the censored records LEFT OUT of the delay, pooled over the seeds per stream, median over the streams, the node's own jitter stream
+      fixed 3.695 s                  delay  14390.655 ms   polls 256.500   censored 0.00000
+      fixed 10.043 s                 delay  30548.485 ms   polls  95.920   censored 0.00400
+    weight = (30548.484867 - 14390.654667) / (256.500000 - 95.920000) = 100.62168514446252 ms per poll
+  step 2 -- the same with every censored record at its LOWER BOUND, which is the label's delay; nothing else moved
+      fixed 3.695 s                  delay  14390.655 ms   polls 256.500   censored 0.00000
+      fixed 10.043 s                 delay  30684.233 ms   polls  95.920   censored 0.00400
+    weight = (30684.233083 - 14390.654667) / (256.500000 - 95.920000) = 101.46704705857933 ms per poll
+    moved +0.845362 ms (+0.84 %) against step 1
+  step 3 -- step 2 with the per-pair JITTER streams on as well, i.e. the engine the labelling runs
+      fixed 3.695 s                  delay  14185.656 ms   polls 256.440   censored 0.00000
+      fixed 10.043 s                 delay  30947.171 ms   polls  95.995   censored 0.00350
+    weight = (30947.170833 - 14185.656000) / (256.440000 - 95.995000) = 104.46891354254315 ms per poll
+    moved +3.001866 ms (+2.96 %) against step 2
+  step 4 -- the PER-RUN mean of the label's own score under step 3's engine: a run is one (seed, stream) and the mean is over all of them. Its censored column is the share over all those runs together, where steps 1 to 3 print the median of the 40 per-stream shares
+      fixed 3.695 s                  delay  14207.271 ms   polls 256.455   censored 0.00000
+      fixed 10.043 s                 delay  30943.591 ms   polls  95.985   censored 0.00351
+    weight = (30943.591493 - 14207.271080) / (256.454750 - 95.985250) = 104.29595912307323 ms per poll
+    moved -0.172954 ms (-0.17 %) against step 3
+
+Step 1 against the committed value
+  step 1   = 100.62168514446252
+  committed= 100.62168514446252
+  REPRODUCED exactly
+
+THE FIXED VALUE, step 4
+  records created at or before the cut, per run, over BOTH cells: [240]. One value, so every run's denominator is the same and step 3's pooled delay equals the mean of the per-run delays INSIDE a stream: what separates step 4 from step 3 here is only the mean over the 4000 runs against the median over the 40 streams.
+  WEIGHT = 104.29595912307323 ms per poll
+         = 104.295959 ms per poll, to six decimals
+  mean score(3.695 s ) = 40954.465203126296
+  mean score(10.043 s) = 40954.465203126296
   difference = 0 (relative 0.000e+00)
   they agree to every digit of a double: the difference is exactly 0
-  This agreement is an arithmetic identity: the weight was solved for it, so it is a statement about the arithmetic and not about the arms. What carries information is the spread below.
+  This agreement is an arithmetic identity: the weight was solved for it, and the mean of a sum is the sum of the means, so it is a statement about the arithmetic and not about the arms. What carries information is the spread below.
 
-The same weight computed inside each stream (the spread the median hides)
-  median 100.694   min 96.711   max 102.373   over 40 streams
-  The weight above is the one taken from the median delay and the median poll count, which is the definition; this line says how far one experiment's own answer can sit from it.
+The step-4 weight computed inside each stream (the spread the mean hides)
+  min 99.899   median 104.661   max 107.251   over 40 streams
+  The weight above is the one taken from the mean over all 4000 runs, which is the definition; this line says how far one experiment's own answer can sit from it.
 
-p 0.4, for information only; not used for the weight
-  fixed 3.695 s                      delay  21256.812 ms   polls 256.570   censored 0.00000
-  fixed 10.043 s                     delay  41945.763 ms   polls  96.010   censored 0.05458
-  weight at p 0.4 = 128.854951 ms per poll, i.e. 1.28 times the main cell's
+Why step 3 moved the weight, measured rather than asserted
+  The question: the jitter of steps 1 and 2 comes from the node's own stream, seeded with (seed, node name) and NOT with the replicate, so all 40 streams of a seed share one jitter sequence and the jitter is averaged over 100 independent draws; steps 3 and 4 key it per (seed, replicate) and average over 4000. If that is the whole story, the +3.001866 ms is sampling noise of the step-2 measurement.
+  Jackknife standard error of the weight over the 100 seeds, and the move set against it:
+    step 2   weight   101.467047   jackknife se 3.167161 ms
+    step 3   weight   104.468914   jackknife se 2.094254 ms
+    the step 2 -> step 3 move is +3.001866 ms = 0.95 x step 2's own standard error and 1.43 x step 3's
+    step 2's standard error is 1.51 times step 3's; claim 1 asks for at least 2.0
+  The same seeds read twice, paired: per seed, both arms pooled over the 40 streams, step 3's value minus step 2's. The lag stream of a (seed, replicate) is seeded identically in the two, so the jitter keying is the only input that differs.
+    delay of the 3.695 s arm     moved  -185.794261 ms          se 131.328885    1.41 se
+    delay of the 10.043 s arm    moved  +282.256031 ms          se 404.217644    0.70 se
+    polls of the 3.695 s arm     moved    -0.039250 polls       se   0.117927    0.33 se
+    polls of the 10.043 s arm    moved    +0.059250 polls       se   0.132045    0.45 se
+    the weight's numerator       moved  +468.050293 ms          se 399.214386    1.17 se
+    the weight's denominator     moved    -0.098500 polls       se   0.153737    0.64 se
+    the weight itself            moved    +2.928395 ms per poll se   2.493554    1.17 se
+  Against the rule fixed before the measurement (claim 1: step 2's standard error is at least 2.0 times step 3's; claim 2: the paired move of the weight is within 2.0 standard errors of zero)
+    claim 1 DOES NOT HOLD, claim 2 HOLDS
+    UNDECIDED: the paired move is 1.17 standard errors from zero, inside the band the rule leaves open, so this measurement neither supports the hypothesis nor refutes it.
+    What is left unmeasured is how the seed-to-seed variance splits. Claim 1 asks the per-pair keying to cut the standard error by a factor, and it cuts it by less, which means the jitter is not the only thing varying from seed to seed: the outage instants and the record schedule vary too and are IDENTICAL in the two steps, so they sit in both standard errors and dilute the ratio. Splitting the two would need a sweep that holds the jitter draws fixed while the lags vary, and this script makes no such run.
+  Either way, and about the KEYING move alone: the step 2 -> step 3 move is 0.95 times the step-2 weight's own standard error and the paired move is 1.17 of its own, inside the 2.0 standard errors claim 2 allows, so step 2's 101.467047 and step 3's 104.468914 do not separate at these 100 seeds and this cell cannot tell the two jitter keyings apart.
+  The step 1 -> step 2 move of +0.845362 ms is a different kind of quantity and no standard error covers it: it is the SAME 8000 simulations of this cell scored twice, the censored records left out of the delay and then entered at their lower bound, so not one seed-to-seed draw enters the difference and its sign is settled in advance -- only the long arm has censored records, so leaving them out shortened its delay and the committed weight was biased DOWNWARD.
+  The whole distance from the committed value to the fixed one, +3.674274 ms, is 1.16 times step 2's standard error: larger than that standard error, and inside two of them. A reader who wants one sentence for it: the two values sit within two standard errors of each other, and the part of the distance that a rerun on other seeds could move is the keying move.
+  The uncertainty a reader should carry on the FIXED weight: step 4 is 104.295959 ms per poll with a jackknife standard error of 1.685586 ms over the 100 seeds.
+  The jackknife of steps 2 and 3 is taken on a MEDIAN over the 40 streams, so it is an approximation there and its leave-one-out values can sit at a few levels rather than spread smoothly; step 4's is a mean and has no such caveat. On this data the risk did not materialise: the 100 leave-one-out values are 100 distinct for step 2, 100 for step 3 and 100 for step 4. The paired comparison does not depend on the median at all.
+
+p 0.4, the same four steps, for information only; not used for the weight
+  step 1 -- as committed: the censored records LEFT OUT of the delay, pooled over the seeds per stream, median over the streams, the node's own jitter stream
+      fixed 3.695 s                  delay  21256.812 ms   polls 256.570   censored 0.00000
+      fixed 10.043 s                 delay  41945.763 ms   polls  96.010   censored 0.05458
+    weight = (41945.762721 - 21256.811771) / (256.570000 - 96.010000) = 128.85495110695479 ms per poll
+  step 2 -- the same with every censored record at its LOWER BOUND, which is the label's delay; nothing else moved
+      fixed 3.695 s                  delay  21256.812 ms   polls 256.570   censored 0.00000
+      fixed 10.043 s                 delay  43621.204 ms   polls  96.010   censored 0.05458
+    weight = (43621.203875 - 21256.811771) / (256.570000 - 96.010000) = 139.28993587547748 ms per poll
+    moved +10.434985 ms (+8.10 %) against step 1
+  step 3 -- step 2 with the per-pair JITTER streams on as well, i.e. the engine the labelling runs
+      fixed 3.695 s                  delay  21358.942 ms   polls 256.500   censored 0.00000
+      fixed 10.043 s                 delay  43832.365 ms   polls  96.070   censored 0.05358
+    weight = (43832.364854 - 21358.942000) / (256.500000 - 96.070000) = 140.08242133121399 ms per poll
+    moved +0.792485 ms (+0.57 %) against step 2
+  step 4 -- the PER-RUN mean of the label's own score under step 3's engine: a run is one (seed, stream) and the mean is over all of them. Its censored column is the share over all those runs together, where steps 1 to 3 print the median of the 40 per-stream shares
+      fixed 3.695 s                  delay  21388.661 ms   polls 256.502   censored 0.00027
+      fixed 10.043 s                 delay  43795.091 ms   polls  96.076   censored 0.05386
+    weight = (43795.091366 - 21388.660553) / (256.502250 - 96.076000) = 139.66810800913194 ms per poll
+    moved -0.414313 ms (-0.30 %) against step 3
+  the step-4 weight at p 0.4 is 1.34 times the main cell's
   Whether a weight fixed on the main cell flips a label at p 0.4 is not answered here: that needs the labels themselves.
 
-Main cell, the old fixed-arm path (no decider, no per-pair lag streams)
+What the censored records do to the two cells, which is why step 2 exists: the censored share of the 10.043 s arm is 0.00400 at p 0.2 and 0.05458 at p 0.4, against 0.00000 and 0.00000 for the 3.695 s arm. Leaving those records out shortens the long arm's delay more than the short arm's, so the committed weight was biased DOWNWARD, and more so at p 0.4.
+
+Main cell, the old fixed-arm path (no decider, no per-pair streams), step 2's pooling
   fixed 3.695 s                      delay  14428.471 ms   polls 256.510   censored 0.00000
-  fixed 10.043 s                     delay  30529.423 ms   polls  95.940   censored 0.00400
-  weight = 100.273719 ms per poll, -0.348 ms (-0.35 %) against the port's
+  fixed 10.043 s                     delay  30688.579 ms   polls  95.940   censored 0.00400
+  weight = 101.264917 ms per poll, -0.202 ms (-0.20 %) against step 2's
+  It is the port and the per-pair lag streams that this row prices, not the scoring: it is pooled and median-taken exactly as step 2 is.
 
 The ticket's estimate, recomputed from ../18/bound_cells.csv
   fix3.695 row                       delay  13934.615 ms   polls 256.090
   fix10.043 row                      delay  30636.847 ms   polls  95.780
   weight = 104.187090 ms per poll (the ticket writes it as 104 ms)
-  It is a different set of runs: seeds 1 to 20 and 5 replicates, not 1 to 100 and 40, and the arms there are the old fixed-arm path. The three values above are therefore three different questions, not three tries at one.
+  It is a different set of runs: seeds 1 to 20 and 5 replicates, not 1 to 100 and 40, the arms there are the old fixed-arm path, and its delay leaves the censored records out. It is a different question, not another try at this one.
 
-Provisional timers that fired before their own poll had resolved: 0, over the 24000 simulations of this script, of which the 16000 port simulations are the ones that can show any (the old fixed-arm path arms no provisional timer at all: its send-time timer is final).
+Provisional timers that fired before their own poll had resolved: 0, over the 40000 simulations of this script, of which the 32000 port simulations are the ones that can show any (the old fixed-arm path arms no provisional timer at all: its send-time timer is final).
   The resolution-time decision is the one that takes effect, so a fired provisional timer is a poll whose send-time interval decided the next send on its own, and a label on that decision would be a label on the wrong instant.
+Decider calls over the port simulations of this script: 12354458. That is how many nested state copies a defensive deep copy of `obs["state"]` would cost here, and the reason the contract is the guard instead.
 
-wall 91.2 s on 5 workers
+wall 158.5 s on 5 workers

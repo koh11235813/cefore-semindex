@@ -10,10 +10,13 @@ WHAT IT CHECKS
   1. With no decider the edited ../13/replay.py is the replay as it stood before the
      port, event dict for event dict: a fixed choices arm, a policy stage, a formula rule
      on a donor run, three choices with the re-decision off, three choices with it on,
-     and the logged `s11a` stage (whose own meta.json turns the re-decision on), each in
-     Mode A and Mode B.  The port is worthless if it moves a stage that is already
-     measured against the testbed, and the `start_lag` split this step made in `go` is
-     exactly the kind of refactor that silently reorders a draw.
+     the logged `s11a` stage (whose own meta.json turns the re-decision on), and the
+     stage-1 fixed branch (policy, choices and rule all None, the SyncConfig defaults),
+     each in Mode A and Mode B.  2026-11-23: the stage-1 cell was added because the list
+     claimed "every mode" while that branch of `decide_interval` was never run.
+     The port is worthless if it moves a stage that is already measured against the
+     testbed, and the `start_lag` split this step made in `go` is exactly the kind of
+     refactor that silently reorders a draw.
   2. The main cell (p 0.2, workload W0, donor s6b10p043) reproduces every printed column
      of ../18/bound_cells.csv and ../15/onoff_cells.csv, through evidence/18's own job
      and row builders, i.e. through the subclass chain every later step simulates with.
@@ -34,10 +37,15 @@ WHAT IT CHECKS
   3. Beyond Acceptance 1: the port's own refusals.  A decider without choices, without
      the re-decision, beside a rule or beside a policy is refused at Node construction,
      and an interval outside the choice set raises when it is returned.  A port that
-     accepted any of these would run a sweep on a branch nobody chose.
-  4. Nothing committed was overwritten.  `git status --porcelain` is read before and
-     after the work above and must be unchanged: these scripts read csv files that are
-     the published record of two earlier steps.
+     accepted any of these would run a sweep on a branch nobody chose.  2026-11-23: the
+     rule case is now tested through both doors, the run dict's own `rule` and
+     `_sim_run`'s `rule=` keyword argument; only the dict form was tested, and the keyword
+     is the one that silences `policy` and `choices` without silencing `decider`.
+  4. Nothing committed was overwritten.  `git status --porcelain` AND `git diff HEAD` are
+     read before and after the work above and must both be unchanged: these scripts read
+     csv files that are the published record of two earlier steps.  2026-11-23: the diff
+     was added because porcelain alone cannot see a file that was ALREADY dirty being
+     overwritten -- its ` M` line does not change with the content.
 
 WHAT IT CANNOT SHOW
   Nothing here is a measurement.  Check 1 and check 2 are this replay against itself and
@@ -88,6 +96,12 @@ OFF_CELLS = [
     ("three choices, redecide on", "s6b10p043", 0.4, None,
      {"policy": None, "choices": list(CHOICES), "choice_jitter": JF, "redecide": True}, False),
     ("logged redecide stage", "s11a", 0.2, None, {}, False),
+    # 2026-11-23: the stage-1 fixed branch, `decide_interval`'s last line
+    # (`../13/replay.py:916`, the SyncConfig defaults 2.0 s and jf 0.2).  It is reached
+    # only with policy, choices and rule ALL None, which no cell above produces, so this
+    # check claimed "every mode" while one of the four interval sources was never run.
+    ("stage-1 fixed defaults", "s6b10p043", 0.4, None,
+     {"policy": None, "choices": None, "redecide": False}, False),
 ]
 OFF_SEEDS = PORT.check_seeds((1, 2), "gate.py check 1")
 
@@ -309,6 +323,18 @@ def check_refusals():
             bad += say(True, f"refused at construction: a decider with {label}")
         else:
             bad += say(False, f"NOT refused: a decider with {label}")
+    # 2026-11-23: the same exclusivity through the OTHER door.  The case above puts the
+    # rule in the run dict; `_sim_run`'s `rule=` keyword is a second way in, and it
+    # silences `policy` and `choices` one frame up while NOT silencing `decider`, so a
+    # decider handed a run this way would have been reported as a decider with nothing to
+    # pick from if the exclusivity test had not come first.  Only the dict form was tested.
+    try:
+        R._sim_run(base, "A", lags=R.logged_lags(base), rule=RULE)
+    except ValueError:
+        bad += say(True, "refused at construction: a decider with a rule passed as "
+                         "`_sim_run(..., rule=RULE)` and not in the run dict")
+    else:
+        bad += say(False, "NOT refused: a decider with a `rule=` keyword argument")
     try:
         R._sim_run(dict(base, decider=PORT.const_decider(4.2)), "A",
                    lags=R.logged_lags(base))
@@ -320,11 +346,23 @@ def check_refusals():
 
 
 def git_status():
-    """`git status --porcelain` of the whole worktree, as one string."""
+    """What the worktree looks like to git: the porcelain list AND the whole diff.
+
+    2026-11-23: the porcelain list alone was not enough.  A tracked file that was already
+    dirty before this run stays ` M` in porcelain whatever is written over it, so a check
+    that overwrote a committed csv which happened to be dirty already would have left the
+    string unchanged and the pass line would have said nothing was written.  `git diff
+    HEAD` carries the content of every tracked change, so a re-overwrite with different
+    bytes moves it; a re-overwrite with the SAME bytes moves nothing because nothing
+    changed.  Untracked files are not in the diff, which is what porcelain is still here
+    for.
+    """
     root = subprocess.run(["git", "-C", HERE, "rev-parse", "--show-toplevel"],
                           capture_output=True, text=True, check=True).stdout.strip()
-    return subprocess.run(["git", "-C", root, "status", "--porcelain"],
-                          capture_output=True, text=True, check=True).stdout
+    return "\n".join(
+        subprocess.run(["git", "-C", root] + cmd,
+                       capture_output=True, text=True, check=True).stdout
+        for cmd in (["status", "--porcelain"], ["diff", "HEAD"]))
 
 
 def main():
@@ -345,8 +383,9 @@ def main():
     bad += check_cells(rows)
     after = git_status()
     bad += say(before == after,
-               "nothing tracked was written: `git status --porcelain` unchanged across "
-               "this run")
+               "nothing tracked was written: `git status --porcelain` and `git diff HEAD` "
+               "both unchanged across this run, so no committed file was overwritten -- "
+               "including one that was already dirty, which porcelain alone could not say")
     if before != after:
         print(f"  before\n{before}  after\n{after}")
     print(f"\nwall {time.time() - t:.1f} s")

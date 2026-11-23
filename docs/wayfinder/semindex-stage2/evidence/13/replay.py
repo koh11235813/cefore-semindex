@@ -723,9 +723,11 @@ class _Engine:
         # before it resolves therefore stays "pending" here where the source, judging
         # status off the clock, would say "timed_out"; `resolve` writes the real status
         # of every poll that does resolve.  That divergence is unreachable while
-        # min(choices) * (1 - choice_jitter) > POLL_TIMEOUT_MS + TICK_PERIOD_MS, which is
-        # the bound `resolve` states; outside it the port would be reporting a status the
-        # source would not report.
+        # min(choices) * (1 - choice_jitter) * 1000.0 > POLL_TIMEOUT_MS + TICK_PERIOD_MS,
+        # which is the bound `resolve` states; outside it the port would be reporting a
+        # status the source would not report.  2026-11-23: the x 1000 was missing, so the
+        # formula compared seconds (`choices` are in seconds) against the 2100.0 of two
+        # millisecond constants, which is the bound off by a factor of a thousand.
         nd.last_status[nb] = "pending"
         nd.due[nb] = t + applied * 1000.0
         nd.gen[nb] += 1
@@ -804,18 +806,38 @@ class _Engine:
         self.push(t + self.tick_lag(node, nb, "poll"), P_POLL, node, nb,
                   lambda tt, nn=node, b=nb, gg=gen: self.ev_poll(tt, nn, b, gg))
 
-    def ask_decider(self, nd, nb, kind, t, state):
+    def ask_decider(self, nd, nb, kind, t, state, resolved=None):
         """Hand one decision to this node's decider and check what comes back.
 
-        `obs` is everything a real node could read at this instant, and nothing else:
+        `obs` is everything a real node could read at this instant, plus one dict a TOOL
+        reads (`where`, split below into the part a node has and the part only the
+        simulator has):
         - `state`, the six fields of a testbed decision row (Node.decision_state);
         - `history`, the earlier RESOLVED polls of this pair, oldest first, at most
           DECIDER_HISTORY, each one built only from fields a real node writes on its own
           `state_poll_reschedule` row.  The decision being made is not in it;
-        - `where`, which exists SO THAT A TOOL can name this decision again on a later
-          pass.  A learner must never read it: a policy that keyed on the node name, the
-          neighbour or the ordinal would score on something the live loop cannot hand
-          it, and the score would not transfer to the testbed at all.
+        - `resolved`, the outcome of the poll being resolved RIGHT NOW -- its send
+          stamp, its trigger and whether the reply was empty -- or None at a send,
+          where no poll is being resolved.  2026-11-23: added because a decider that
+          lengthens its interval on an empty reply (the formula rule the labelling
+          suffix runs) cannot see `empty` anywhere else: `state` carries the poll
+          STATUS but not the emptiness, and `history` ends one decision earlier.  A
+          real node knows all three at this instant and writes them into the `action`
+          of the same `state_poll_reschedule` row, so the three values are comparable
+          against that row;
+        - `where`, which is two things in one dict and 2026-11-23 is documented as
+          two.  `neighbor`, `kind` and `ts_ms` are REAL-NODE CONTEXT: the live loop
+          decides the interval per neighbour (`engine.py`'s `_choose_poll_interval` and
+          `_advance_rule_interval` both take one) and writes it on the row it logs, it
+          knows whether it is at a send or at a resolution, and it knows the clock.  A
+          reader may use those, and `observe.py` does use `neighbor` -- not as a name,
+          but to say which of the advertisers listed in the state is the peer being
+          polled, which the state itself does not carry.  `node` as a NAME and `ordinal`
+          are tool-only: `ordinal` counts this run's decider calls across all five nodes,
+          which no node can know, and a policy keyed on a node name is a policy about one
+          topology.  So the rule is not "never read `where`": it is that nothing which
+          reaches a score may depend on a NAME or on the ordinal, because the live loop
+          cannot hand either over in a form that transfers to the testbed.
 
         A returned interval outside `choices` is refused.  Every reader of these runs
         indexes the choice set with the interval (the per-arm counters of the prediction
@@ -824,13 +846,17 @@ class _Engine:
 
         **A decider must not write into `obs["state"]`.**  The state is handed over by
         reference and is the very dict the emitted row carries, so a mutation would
-        change the published row as well as the next decision's input.  `history` IS
-        copied per call, and the two are treated differently on purpose: the history is
-        a list this node keeps and appends to for the rest of the run, so one mutated
-        element would travel to every later decision of the pair, while the state is
-        rebuilt from the store at every call and a deep copy of it -- `origins` is
-        nested, so a shallow one would guard nothing -- costs millions of nested copies
-        over a sweep.  The cheap guard is this contract, not a copy.
+        change the published row.  It would NOT reach the next decision's input, and
+        2026-11-23 this line said it would: `Node.decision_state` allocates a fresh dict
+        at every level on every call and shares no mutable container with the node
+        (`_Origin.advertised` holds (int, tuple)), so a mutated state is one corrupted
+        row and nothing more.  `history` IS copied per call, and the two are treated
+        differently on purpose: the history is a list this node keeps and appends to for
+        the rest of the run, so one mutated element WOULD travel to every later decision
+        of the pair, while the state is rebuilt from the store at every call and a deep
+        copy of it -- `origins` is nested, so a shallow one would guard nothing -- costs
+        one nested copy per decider call over a sweep (`weight.txt` prints how many that
+        is).  The cheap guard is this contract, not a copy.
         """
         ordinal = self.decider_ord[kind]
         self.decider_ord[kind] = ordinal + 1
@@ -839,6 +865,10 @@ class _Engine:
             # Copied per call: the history is this node's own list and a decider that
             # mutated what it was handed would change the next decision's input.
             "history": [dict(row) for row in nd.poll_hist[nb]],
+            # Built by the caller, not here: `resolve` is the only site that has a poll
+            # being resolved, and a dict assembled here would need the three values
+            # passed in anyway.  Copied for the same reason the history is.
+            "resolved": None if resolved is None else dict(resolved),
             "where": {"node": nd.name, "neighbor": nb, "kind": kind,
                       "ts_ms": int(round(t)), "ordinal": ordinal},
         }
@@ -980,8 +1010,9 @@ class _Engine:
         # not count: a poll superseded before it resolved never reaches this line, while
         # the source's own count would fold it in as an expired timeout.  Such a poll
         # cannot exist while the SMALLEST APPLIED interval of the choice set,
-        # min(choices) * (1 - choice_jitter), is longer than POLL_TIMEOUT_MS plus one
-        # TICK_PERIOD_MS: the poll then times out AND its detection lag elapses, so it
+        # min(choices) * (1 - choice_jitter) * 1000.0, is longer than POLL_TIMEOUT_MS plus
+        # one TICK_PERIOD_MS -- in milliseconds on both sides, since `choices` are in
+        # seconds: the poll then times out AND its detection lag elapses, so it
         # resolves, before the next send can supersede it.  The tick period is in the
         # bound because the timeout is detected at sent + POLL_TIMEOUT_MS +
         # tick_lag("timeout"), not at sent + POLL_TIMEOUT_MS.  A choice set that breaks
@@ -1012,7 +1043,13 @@ class _Engine:
                 # calling here under the re-decision) and this poll's own outcome.  As at
                 # the send, the choice stream is not drawn.
                 state = nd.decision_state(nb)
-                interval = self.ask_decider(nd, nb, "state_poll_reschedule", t, state)
+                # The three fields of this poll's own outcome, in the spelling the
+                # `action` below writes them in, so that a tool reading these runs finds
+                # the same three values on the row the decider was asked on.
+                resolved = {"poll_epoch_ms": int(round(sent_at)), "trigger": status,
+                            "empty": empty}
+                interval = self.ask_decider(nd, nb, "state_poll_reschedule", t, state,
+                                            resolved)
             else:
                 interval = nd.choices[int(nd.choice_rng() * len(nd.choices))]
             jf = nd.choice_jitter

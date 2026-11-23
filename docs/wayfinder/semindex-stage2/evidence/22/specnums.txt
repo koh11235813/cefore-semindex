@@ -1,0 +1,85 @@
+The numbers spec.md reads off the label files
+=============================================
+Recomputed from the two label files at every run, so that no number in the prose of this directory is a measurement taken once and never checked again.  It runs no simulation and decides nothing: the weight, the labels and the J are fixed elsewhere.
+Weight: 104.29595912307323 ms per poll, read from weight.json. Superseded: 100.62168514446252.
+  /home/lab_shared/semindex-learn/ev22/labels_p0.2.jsonl.gz
+    sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67 -- checked before anything below was counted
+  /home/lab_shared/semindex-learn/ev22/labels_p0.4.jsonl.gz
+    sha256 d30759dc23768b6d98f6579c8b7973fc797e9c4e2cc5ce7ddca7e9beb69b84e3 -- checked before anything below was counted
+
+p 0.2, from labels_p0.2.jsonl.gz
+  decisions 16071, labelled 14279, ties 1792
+  median margin over ALL decisions      104.2960 ms
+  median margin over the LABELLED rows  127.4200 ms  <- a tie enters the first median at 0 and not the second
+  margins exactly equal to the weight: 0; within 1e-09 relative of it: 1797 of the 16071 (the atom the median sits in)
+  labelled rows at or below one poll's weight: 5282 exactly (0.3699), 6427 with the 1e-09 tolerance (0.4501)
+    of which the band on the weight itself: 652 a last bit BELOW it and 1145 a last bit ABOVE, so the exact `<=` cuts that cluster and the tolerant one keeps it
+  the same over ALL decisions, a tie counting as inside: 0.4402 exactly, 0.5114 tolerant
+  labels that changed against the superseded weight 100.62168514446252: 46 of 16071 (0.0029)
+    3.695 s -> 10.043 s: 23
+    3.695 s -> 6.0 s: 11
+    6.0 s -> 10.043 s: 7
+    10.043 s -> 3.695 s: 2
+    10.043 s -> 6.0 s: 1
+    6.0 s -> 3.695 s: 1
+    tie -> 6.0 s: 1
+  the current weight's label recomputed from the row's own `pass_scores` fails to reproduce the stored label on 0 of the 16071 rows; any count above 0 means the file's labels are not the ones its own passes give, which would make the reconstruction above meaningless
+  reconstructed superseded margins above the 1e-09 ms tie tolerance but within a thousand times it: 0
+  labels this file's own rows stand on with a margin at or below that tolerance: 1. The labelling calls a decision a tie only at a margin of exactly 0.0, so these rows carry a label decided by the last bits of a mean over the passes, and the reconstruction above cannot carry such a label from one weight to the other
+  labels that move when the censored records are DROPPED instead of entered at their lower bound: 10 of 16071 (0.0006) -- labels.txt prints this line too, and the two have to agree
+  the state situations this cell reaches
+  last_timeout_s set: 12 of 16071, on seeds 90 (12)
+  the fetch_timeout_age_s those stamps render as: 12 values, 2.1 s to 43.0 s
+  notified_max above the advertiser's own hi: 66 of 43037 advertised cells, on seeds 90 (66)
+  in_flight above 0: reached by 0 of the 16071 decisions, so this cell gives the field no value a learner could read
+  truncated true: reached by 0 of the 16071 decisions, so this cell gives the field no value a learner could read
+  last_poll_status "pending": reached by 0 of the 16071 decisions, so this cell gives the field no value a learner could read
+  the render branches, counted over every decision of the cell
+  exchanges rendered 99768; of them the "(clamped)" suffix fires on 0 and the "-" of a timed-out exchange's empty field on 18779
+  origin rows with no advertiser, which render "no peer told it": 239
+  origin rows with an advertiser left out, which render "(+N more)": 0; the most advertisers any one origin of a STATE names is 2 against the cap of 4
+  states that omit an origin, which render " (more left out)": 0; the most origins any STATE holds is 2 against the cap of 8
+  resolved None, which renders a send-time decision: 0 of 16071 records
+  records that name the polled peer: 13331 of 16071 (observe.txt prints the null side of this and its two causes)
+
+p 0.4, from labels_p0.4.jsonl.gz
+  decisions 16148, labelled 14826, ties 1322
+  median margin over ALL decisions      130.3699 ms
+  median margin over the LABELLED rows  146.1007 ms  <- a tie enters the first median at 0 and not the second
+  margins exactly equal to the weight: 0; within 1e-09 relative of it: 1780 of the 16148 (the atom the median sits in)
+  labelled rows at or below one poll's weight: 4566 exactly (0.3080), 5799 with the 1e-09 tolerance (0.3911)
+    of which the band on the weight itself: 547 a last bit BELOW it and 1233 a last bit ABOVE, so the exact `<=` cuts that cluster and the tolerant one keeps it
+  the same over ALL decisions, a tie counting as inside: 0.3646 exactly, 0.4410 tolerant
+  labels that changed against the superseded weight 100.62168514446252: 53 of 16148 (0.0033)
+    3.695 s -> 10.043 s: 21
+    6.0 s -> 10.043 s: 20
+    3.695 s -> 6.0 s: 7
+    tie -> 6.0 s: 2
+    10.043 s -> 6.0 s: 1
+    tie -> 10.043 s: 1
+    tie -> 3.695 s: 1
+  the current weight's label recomputed from the row's own `pass_scores` fails to reproduce the stored label on 0 of the 16148 rows; any count above 0 means the file's labels are not the ones its own passes give, which would make the reconstruction above meaningless
+  reconstructed superseded margins above the 1e-09 ms tie tolerance but within a thousand times it: 0
+  labels this file's own rows stand on with a margin at or below that tolerance: 4. The labelling calls a decision a tie only at a margin of exactly 0.0, so these rows carry a label decided by the last bits of a mean over the passes, and the reconstruction above cannot carry such a label from one weight to the other
+  labels that move when the censored records are DROPPED instead of entered at their lower bound: 204 of 16148 (0.0126) -- labels.txt prints this line too, and the two have to agree
+  the state situations this cell reaches
+  last_timeout_s set: 17 of 16148, on seeds 36 (12), 48 (5)
+  the fetch_timeout_age_s those stamps render as: 17 values, 0.4 s to 93.9 s
+  notified_max above the advertiser's own hi: 0 of 39125 advertised cells, on seeds none
+  in_flight above 0: reached by 0 of the 16148 decisions, so this cell gives the field no value a learner could read
+  truncated true: reached by 0 of the 16148 decisions, so this cell gives the field no value a learner could read
+  last_poll_status "pending": reached by 0 of the 16148 decisions, so this cell gives the field no value a learner could read
+  the render branches, counted over every decision of the cell
+  exchanges rendered 100384; of them the "(clamped)" suffix fires on 0 and the "-" of a timed-out exchange's empty field on 35548
+  origin rows with no advertiser, which render "no peer told it": 412
+  origin rows with an advertiser left out, which render "(+N more)": 0; the most advertisers any one origin of a STATE names is 2 against the cap of 4
+  states that omit an origin, which render " (more left out)": 0; the most origins any STATE holds is 2 against the cap of 8
+  resolved None, which renders a send-time decision: 0 of 16148 records
+  records that name the polled peer: 12811 of 16148 (observe.txt prints the null side of this and its two causes)
+
+Both cells together, which is the population spec.md's branch sentences use
+  records 32219, exchanges rendered 200152
+  "(clamped)" 0, the timed-out "-" 54327, "no peer told it" 651
+  resolved None 0, records that name the polled peer 26142
+
+What this file cannot say: that any of these counts is right. Each is this construction counting its own output, and the label files are the only source. A branch reached 0 times here is reached 0 times by THIS workload, which is not the same as being unreachable, and a situation reached a dozen times still has no value compared against a source object.
