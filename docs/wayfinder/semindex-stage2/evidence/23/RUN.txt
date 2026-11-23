@@ -1,0 +1,613 @@
+evidence/23 -- preparing the tuning host and proving the replay runs there identically
+2026-11-24.  No training in this step.  Two parts: the host, the inputs and the replay
+(sections 1-5), then the first forward passes of the base model on that host (6-7).
+
+WHAT THIS STEP ESTABLISHES
+  1. A venv on the tuning host that sees the RTX PRO 5000 Blackwell as sm_120 and carries
+     the gemma4 architecture.
+  2. The base weights of google/gemma-4-E2B-it on that host, as plain files, pinned to one
+     commit, with the content digest matching the hub's own LFS object id.
+  3. The replay's inputs there: the hindsight labels, the 160 run files of the main cell,
+     and the code at the relative paths two scripts on the replay path assert.
+  4. That one port simulation produces the SAME BYTES on both machines, for six seeds and
+     four deciders, although the two interpreters are python 3.12.13 and 3.13.5.
+  5. That the checkpoint loads in bf16 on that card as Gemma4ForConditionalGeneration,
+     that the chat template leaves the prefilled answer prefix as the last thing in the
+     prompt, that " short" / " mid" / " long" each add exactly one token THERE, and that
+     the three logits read out of one forward pass repeat bit for bit.
+  6. What one pass costs on this card: 43.4 ms at batch 1, and 153.7 passes a second at
+     batch 8, so 128 000 passes take about 14 minutes.
+
+WHAT IT DOES NOT ESTABLISH
+  Nothing about L as a decider.  No LoRA, no adapter, no training, no label-agreement
+  number, and no decider in this step asks a model anything.  The model read out in
+  section 6 is UNTUNED, so which of the three words wins a given prompt is not evidence
+  of anything; only the mechanics are.  The four deciders of the parity check are the
+  three constant arms and the formula rule F, i.e. the whole comparison except the
+  candidate.  A forward pass on a GPU is not bit-reproducible across machines in general
+  and nothing here claims it is: section 6 shows repeatability on ONE machine only.
+
+NAMES
+  ROOT  = /home/yamakawa/Development/semindex-learn        (on the tuning host)
+  S2    = docs/wayfinder/semindex-stage2                   (in the worktree)
+  local = PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=<worktree>/src \
+            /home/lab_shared/cefore-semindex/.venv/bin/python3 -B
+  far   = PYTHONDONTWRITEBYTECODE=1 STORE=ROOT/store PYTHONPATH=ROOT/repo/src \
+            ROOT/.venv/bin/python -B
+
+========================================================================
+1. THE TOOL ENVIRONMENT                                      52 s, then 5 s
+========================================================================
+  scp S2/evidence/23/hpc_setup.sh hpc-debian:ROOT/
+  ssh hpc-debian 'cd ROOT && bash hpc_setup.sh'          first run  51.8 s
+  ssh hpc-debian 'cd ROOT && bash hpc_setup.sh'          re-run      5   s
+  ssh hpc-debian 'cd ROOT && bash hpc_setup.sh freeze' > S2/evidence/23/hpc_freeze.txt
+
+THE WHEEL INDEX, AND THE TWO OPTIONS NOT TAKEN
+  PyTorch's install selector renders published_versions.json; for the current stable
+  2.15.0 on linux/pip it offers exactly two CUDA options: plain PyPI, and
+  `--index-url https://download.pytorch.org/whl/cu134`.  Neither is 13.2.  The driver on
+  this host reports CUDA 13.2, the cu132 index carries
+  torch-2.15.0+cu132-cp313-cp313-manylinux_2_28_x86_64.whl, and that exact build was
+  already proven on this card.  cu134 would rest on CUDA minor version compatibility
+  against an older driver, which nothing here has tested.  So: cu132, pinned as
+  torch==2.15.0+cu132.
+  Two uv calls and not one, because uv's index documentation says `--index-url` REPLACES
+  PyPI as the default index rather than adding to it: torch and its nvidia/triton wheels
+  from the cu132 index, everything else from PyPI.  `--extra-index-url` is not used to
+  merge them, because an extra index outranks the default in uv and numpy would then come
+  from the wheel mirror.  A post-install assert holds torch at a +cu132 build, because the
+  second call resolves against a PyPI that also has a plain 2.15.0.
+
+WHAT IS INSTALLED (full list: hpc_freeze.txt, 60 packages)
+  torch 2.15.0+cu132 (cuda 13.2) | transformers 5.24.0 | peft 0.22.0 | accelerate 1.16.0
+  huggingface-hub 2.4.0 | safetensors 0.8.0 | numpy 2.5.4 | tokenizers 0.23.3
+  triton 3.9.0 | nvidia-cudnn-cu13 9.26.0.51 | python 3.13.5 (/usr/bin/python3.13)
+  NOT installed: trl, bitsandbytes, datasets, torchvision, librosa, timm.  Nothing failed
+  to import without them; the model itself has not been loaded in this step, so "the base
+  model imports" is not yet claimed -- only that transformers.models.gemma4 imports.
+
+THE CHECKS, AS THEY PRINTED
+  torch           2.15.0+cu132
+  torch cuda      13.2
+  arch list       ['sm_75', 'sm_80', 'sm_86', 'sm_90', 'sm_100', 'sm_120']
+  cuda available  True
+  device          NVIDIA RTX PRO 5000 Blackwell (12, 0)
+  transformers    5.24.0
+  gemma4 module   transformers.models.gemma4
+  numpy           2.5.4
+  OK: the venv sees this GPU and carries the gemma4 architecture
+
+  Before any of that: nvidia-smi, and a stop if a compute process is on the card.  At the
+  time of this run the only GPU processes were gnome-shell and Xwayland, both type G.
+
+========================================================================
+2. THE BASE WEIGHTS                                     125 s, then 7 s
+========================================================================
+  scp S2/evidence/23/fetch_weights.sh hpc-debian:ROOT/
+  ssh hpc-debian 'cd ROOT && nohup bash fetch_weights.sh > fetch_weights.log 2>&1 &'
+  # 01:16:27 -> 01:18:32, i.e. 125 s for 10.28 GB, about 82 MB/s
+  ssh hpc-debian 'cd ROOT && bash fetch_weights.sh'      re-run 7 s, downloads nothing
+
+  repository      google/gemma-4-E2B-it   (ungated: no licence step, no token)
+  revision        4adf15748de9e1a0097b6274cee9c15836c41c37
+  files           9 (.gitattributes, README.md, chat_template.jinja, config.json,
+                  generation_config.json, model.safetensors, processor_config.json,
+                  tokenizer.json, tokenizer_config.json)
+  model.safetensors size   10246621918  == the 10,246,621,918 the brief states
+  model.safetensors sha256 2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550
+                           == the hub's LFS object id for this commit
+  destination     ROOT/models/gemma-4-E2B-it, plain files, no symlink into any cache
+
+  curl and not huggingface_hub, so that the directory is a directory and not a view of a
+  cache something else can empty, and so that every byte is pinned to the commit in the
+  URL.  Anonymous throughout: HF_TOKEN unset, HF_HUB_DISABLE_IMPLICIT_TOKEN=1,
+  HF_HOME=ROOT/hf-home.  The account's own token file was never read and never looked for.
+
+========================================================================
+3. THE INPUTS                                                     3 s
+========================================================================
+  bash S2/evidence/23/push_inputs.sh          (runs on the local machine)
+
+  (a) labels    2 files, 8 803 684 bytes -> ROOT/ev22/
+                sha256sum -c against S2/evidence/22/labels.sha256 on the far side:
+                labels_p0.2.jsonl.gz: OK / labels_p0.4.jsonl.gz: OK
+                (the committed digest file names absolute local paths, so only the path
+                column is rewritten to basenames; the hashes are the committed ones)
+  (b) run inputs  160 files, 11 149 365 bytes -> ROOT/store/s6b10p043/p0.2/{1..20}/
+                built as an explicit name list, 8 names per run directory:
+                debug/node_dirs/h{0..4}/semindex/events.jsonl, meta.json, results.json,
+                and the one *.experiment.json (asserted to be exactly one)
+  (c) code      185 files, 5 681 042 bytes -> ROOT/repo/
+                the worktree's tracked *.py/*.json/*.csv/*.sha256 under src/semindex and
+                S2/evidence, plus this directory, at the same relative paths
+                THE COUNT IS NOT A FIXED PROPERTY OF THE PAYLOAD: it includes this
+                directory and therefore this file, so it grows whenever this directory
+                does.  The 185 files / 5 681 042 bytes above are the push THAT FED THE
+                FAR-SIDE RUNS of sections 4 and 6, with this file at its then size.  A
+                push made after this file was last written sends the same list and a
+                larger byte count, and that is the only thing that moves.
+
+  Every file of all three payloads is hashed on BOTH sides and the two lists compared:
+  "digests: all N files agree on both sides" for 2, 160 and 185.
+
+  Classification of everything under ROOT/store, after the push:
+    100  events.jsonl       20  meta.json       20  results.json
+     20  *.experiment.json  160  total
+    OK: every file under the store is one of the four kinds the replay opens
+
+  Why the whole evidence tree of code and not a minimal set: tracing every open() of the
+  eight scripts on the replay path to a minimal list would be a second definition of the
+  replay's own dependencies, and a wrong one shows up as an ImportError on the far side
+  only for the paths a given run happens to take.  5.6 MB is cheaper than that risk.
+  Nothing in push_inputs.sh had to change when smoke.py and smoke.txt were added: its (c)
+  list already takes every file of this directory.
+
+========================================================================
+4. REPLAY PARITY                                     0.8 s local, 0.6 s far
+========================================================================
+  local docs/wayfinder/semindex-stage2/evidence/23/parity.py > parity_local.txt
+  far   ROOT/repo/docs/wayfinder/semindex-stage2/evidence/23/parity.py > parity_remote.txt
+  cmp parity_local.txt parity_remote.txt
+
+  RESULT: byte-identical.  4316 bytes, 26 lines, sha256 of either file
+  21acdf4dd440d04119fc4b50f380a95e076052f9f7514a8c837e4ac8180dd679.
+  The output is also identical between two runs on the local machine, which is what rules
+  out an iteration order that depends on the process rather than on the host.
+  The output as it printed is kept beside this file as parity.txt.
+
+  WHAT IS COMPARED  24 runs: seeds 1, 20, 21, 80, 81, 100 times the three constant arms
+  and F.  Seeds 1 and 20 read the store; 21, 80, 81 and 100 have no logged run and build
+  their outage timeline and record schedule with semindex.evalgen in process, so both ways
+  a run dict comes about are covered.  Every run goes through port.sim on a run dict from
+  label.run_dict, i.e. with port.union_choices() as the choice set for ALL FOUR deciders,
+  the choice jitter 0.1 and redecide on.  Per line: the sha256 of the canonical JSON
+  (sort_keys, tightest separators, allow_nan=False) of the whole event dict, and score.py's
+  own terms -- n4, c4, delay sum, censored lower-bound sum, windowed polls, the delay and
+  the score at weight 104.29595912307323.
+  The pair-stream seeds are weight.py's convention:
+  R.rep_seed("pairlag:s6b10p043", 0.2, seed, 0), passed as BOTH pair_lag_seed and
+  pair_jitter_seed.
+  label.F is built fresh per simulation, because it keeps one interval per ordered pair and
+  one instance across two runs would make the second run depend on the first.
+
+  THE TWO INTERPRETERS DIFFER AND THE RUN DOES NOT
+    local  python 3.12.13, numpy 2.5.4
+    far    python 3.13.5,  numpy 2.5.4
+  numpy is pinned to the same version on purpose.  Nothing on the replay path imports any
+  third-party package except numpy.
+
+  SEEDS: the printed seed set is 1,20,21,80,81,100, and every seed list parity.py computes
+  passes port.check_seeds before it is used.  That ONE guard is the whole guard, and it is
+  shown refusing in mutation B below.  parity.py no longer carries a second test against
+  the held-out measuring seeds 121-160: port.MAX_SEED is 100, so check_seeds refuses every
+  held-out seed first and the second test, with the intersection it printed, could only
+  ever come out empty.  A check that cannot fail reads as evidence and is not, so it is
+  gone rather than kept; the printed header lost its "held-out intersection" line with it,
+  which is why parity.txt is now 26 lines and not 27.
+
+  THREADS: parity.py sets OMP_NUM_THREADS, OPENBLAS_NUM_THREADS and MKL_NUM_THREADS to 1
+  before port (and with it numpy) is imported.  Measured on the far side, one seed, with
+  `time`, and the cap overridden from the environment because the script uses setdefault:
+    OMP=OPENBLAS=MKL=96   8.63 s user, 2774 % cpu, 0.317 s wall
+    the committed default 0.25 s user,   99 % cpu, 0.261 s wall
+  A 96-thread pool breaks the brief's cap of 8 processes on a machine shared with other
+  people, and the override above is also this check shown failing: set the variables high
+  and the fan-out comes straight back.  The full six-seed far run with the cap in place
+  took 0.638 s at 99 % cpu.  The cap does not touch the result: with
+  the cap added and nothing else changed, the local run was byte-identical to the uncapped
+  parity.txt of the previous run, so the 25 bytes parity.txt lost are the dropped header
+  line and nothing else.
+
+========================================================================
+5. EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  A  parity, one seed changed on the far side (--seeds ...,99 against ...,100):
+     cmp -> "differ: byte 87, line 2", exit 1.  That difference is in the printed seed
+     list, so it alone does not show the DIGEST discriminating; A2 does.
+  A2 parity, the far side's replicate stream mutated (REP = 0 -> REP = 1), which leaves
+     the two header lines identical: cmp -> "differ: byte 111, line 3", and all 24
+     digest lines differ.  So the digest, and not just the header, is what is compared.
+  B  parity, a held-out seed (--seeds 1,121 local; --seeds 160 far): the guard fires,
+     "seeds above 100 are reserved for measuring ... refused [121]", exit 1, on both sides
+  C  fetch_weights, EXPECT_BYTES mutated to 10246621917:
+     "FAIL size: 10246621918 != 10246621917"
+  D  fetch_weights, the computed digest mutated to deadbeef:
+     "FAIL sha256: deadbeef != 2db5482b..."
+  E  the labels check, one hash byte of labels.sha256 flipped:
+     "labels_p0.2.jsonl.gz: FAILED", exit 1
+  F  hpc_setup, sm_120 -> sm_900: "FAIL: ... is not in the arch list [...]"
+     hpc_setup, the +cu132 case mutated: "FAIL: torch is 2.15.0+cu132, not a ... build"
+     hpc_setup, the numpy pin mutated to 2.5.9: "FAIL: numpy is 2.5.4, not ..."
+  G  hpc_setup, the GPU query replaced by --query-gpu=name, so that the query returns a
+     non-empty line (the device name) where the real one returns nothing:
+     "STOP: another compute process is on the GPU; nothing was run.", exit 2.  What this
+     shows is the branch on a non-empty query result; a real second compute process could
+     not be staged on a shared card without disturbing someone.
+  H  push_inputs, one disallowed name injected into the far-side listing:
+     "FAIL: not one of the four allowed kinds: ./s6b10p043/p0.2/1/semindex_agent.log"
+  I  push_inputs, the one-experiment-json assert mutated to demand two:
+     "FAIL: .../p0.2/1 has 1 *.experiment.json"
+  J  push_inputs, the store root mutated: "FAIL: missing .../h0/semindex/events.jsonl"
+  A, A2 and B were run again after the thread cap and the dropped held-out test changed
+  parity.py, so the offsets and messages above are the ones the committed script gives.
+  Every mutated copy lived outside the worktree and the committed scripts are the
+  unmutated ones.  The REP mutant had to be run FROM the evidence directory and not from
+  ROOT/mut, because parity.py finds evidence/22 relative to its own file; the copy in the
+  evidence directory was deleted in the same command that ran it, and the one in ROOT/mut
+  that the sed had made was deleted afterwards.
+
+========================================================================
+6. THE FIRST FORWARD PASSES                                            82 s
+========================================================================
+  Script: S2/evidence/23/smoke.py       Output: S2/evidence/23/smoke.txt (149 lines)
+  Pushed by the same push_inputs.sh, which already sends every file of this directory.
+
+  Commands:
+    bash S2/evidence/23/push_inputs.sh                       (local, ~3 s; 185 code files)
+    ssh hpc-debian 'cd ROOT && env PYTHONDONTWRITEBYTECODE=1 ./.venv/bin/python -B \
+        repo/docs/wayfinder/semindex-stage2/evidence/23/smoke.py ROOT \
+        > smoke.log 2> smoke.err'                              exit 0, 82 s wall
+    ssh hpc-debian 'cat ROOT/smoke.log' > S2/evidence/23/smoke.txt
+
+  nvidia-smi was asked first, by the script itself and not by hand: the compute-apps
+  query came back empty, so nothing of anyone else's was on the card.  The script needs no
+  network (HF_HUB_OFFLINE=1, HF_HOME=ROOT/hf-home, HF_TOKEN removed from the environment)
+  and caps its own threads at 8 before torch is imported, which is the BLAS fan-out the
+  previous section left as a note for this one (section 4 measures it: 2774 % cpu
+  uncapped against 99 % capped).
+
+  WHAT LOADED, AND WHAT DID NOT
+    tokenizer   GemmaTokenizer, vocab 262 144, 1.3 s.
+    model       Gemma4ForConditionalGeneration, bf16, cuda:0, 2.1 s from page cache.
+                The cold-cache load of the very first run is not quoted: that run's log
+                was never archived, and a number no file here carries is not evidence.
+                9.52 GB allocated after loading;
+                peak 13.07 GB allocated / 15.87 GB reserved over the whole run, of 47.27.
+    forward     accepts logits_to_keep, so every pass here asks for the last position only.
+    TEXT-ONLY LOAD: NO.  Gemma4ForCausalLM.from_pretrained on this checkpoint does not
+                raise -- it returns a model with 541 MISSING weights and 1940 unexpected
+                ones, i.e. a randomly initialised text tower.  The unexpected names say
+                why: the checkpoint stores the text tower under `model.language_model.*`
+                while that class expects `model.*`.  So the open question of the scout
+                report is closed, negatively, and the full model is what is used.  This is
+                the reason the check is `missing_keys` and not an exception: a load that
+                silently randomises the weights prints perfectly plausible logits.
+                smoke.err carries exactly ONE transformers LOAD REPORT and it is that
+                attempt's; it also carries that attempt's "This checkpoint seem corrupted.
+                The tied weights mapping ... ties model.embed_tokens.weight to
+                lm_head.weight" warning, from the same wrong prefix.  The
+                Gemma4ForConditionalGeneration load that follows prints no report, no
+                missing key and no unexpected key.
+    AutoProcessor: NO.  "Could not load any image processor class ... Missing optional
+                dependencies: torchvision, Pillow."  Nothing text-only needs it, and
+                neither package was installed to make it load; the tokenizer renders the
+                chat template on its own.  What is therefore NOT checked is that the
+                processor would render the same prompt text as the tokenizer.
+
+  THE PREFILL (printed in full in smoke.txt, special tokens visible)
+    The provisional instruction is 48 tokens; the provisional answer prefix is "Interval:".
+    The prompt ends with that prefix unaltered, and its last four tokens are
+    '<|turn>' 105, 'model' 4368, '\n' 107, 'Interval' 16312, ':' 236787.
+    Exactly one bos (id 2), at position 0.  apply_chat_template(tokenize=True) and
+    apply_chat_template(tokenize=False) + tok(add_special_tokens=False) give the same ids.
+
+  THE CANDIDATES, on the real prompt
+    " short" 2822, " mid" 5453, " long" 1440 -- all three exactly as the vocabulary lookup
+    of the scout report said, all three distinct, each adding exactly ONE token after this
+    prompt's own ids.  The same check on " 10.043" reports 7 tokens and on " 6.0" 4 tokens,
+    which is why the answer is a word and the seconds stay in the prompt.
+
+  THE READ-OUT, five label rows of seeds 1-80 (the model is UNTUNED)
+    Each row's pass was run twice and the two logit tensors are bit-identical; two
+    DIFFERENT rows differ by 19.1562, so the read-out does depend on the prompt.  The
+    untuned model answers " short" on four of the five rows and " long" on one, which is
+    not evidence of anything and is recorded only so that no reader mistakes it for a
+    result.  The three candidates are the top three next tokens on two of the five rows.
+
+  TOKEN LENGTHS, over all 16 071 rows of labels_p0.2.jsonl.gz (seeds 1 to 100)
+    prompt with the legend line    min 224   median 477   p99 509   max 519
+    prompt without it              min 138   median 391   p99 423   max 433
+    the legend costs 86 tokens at the median; the instruction alone is 48 tokens.
+    Rendering and tokenizing all 16 071 prompts BOTH ways took 16.7 s.
+
+  TIMING, one real prompt of the median length (477 tokens), 10 warm-up then 300 timed
+    batch 1    median 43.44 ms   p90 43.96   p99 48.17   max 49.15
+    Beside it, the number the brief names: 100 ms.  No verdict is drawn here.
+
+    Batched, left-padded, 64 prompts spread over the file (224 to 511 tokens) and each
+    batch taken with a stride over that sorted list, so the three sizes see the same
+    length RANGE.  Not the same distribution, and the printed padded widths say so: a
+    stride over 64 sorted prompts gives each size a different subset with a different
+    maximum, 504 at batch 8 against 511 at batch 64.  What the stride removes is the gross
+    confound of the first run, where batch 8 got the eight shortest prompts and reported
+    0.0 % padding; a 1.4 % difference in padded width is far too small to explain 153.7
+    against 128.9 passes/s.
+      batch  8    52.1 ms/batch   153.7 passes/s   padded width 504, padding 17.2 %
+      batch 32   238.3 ms/batch   134.3 passes/s   padded width 509, padding 15.1 %
+      batch 64   496.3 ms/batch   128.9 passes/s   padded width 511, padding 15.0 %
+    Throughput PEAKS AT BATCH 8 and falls slightly after it: a ~480-token prefill at batch
+    8 is already about 4 000 tokens, which saturates this card, so a wider batch buys
+    nothing.  At the best rate, 153.7 passes/s:
+      128 000 passes  13.9 min        256 000 passes  27.8 min
+    (at batch 64 the same two numbers are 16.5 and 33.1 min.)
+
+    The read position is each row's LAST REAL TOKEN: padding_side="left" (pad token
+    '<pad>' id 0), and two checks that raise SystemExit -- the last column of
+    attention_mask is real for every row, and position_ids[:, -1] equals length - 1 for
+    every row.  SystemExit and not `assert`, because an assert disappears under -O or
+    PYTHONOPTIMIZE and would take the only two checks that define the read position with
+    it, silently, while the script still printed its OK lines.  position_ids are also
+    passed explicitly, as (attention_mask.cumsum(-1) - 1).clamp(min=0).
+    WHAT THAT EXPLICIT ARGUMENT IS NOT: it is not what makes left padding correct, and
+    the mutation sweep is what says so.  Running the same batches with position_ids=None
+    changes the candidate logits by no more than batch shape alone does (section 7,
+    `nopos`), because with LEFT padding every real token of a row carries the same pad
+    offset and RoPE is relative, so a constant shift inside a row cancels in the
+    attention.  A NON-constant corruption does move them far outside the tolerance
+    (section 7, `posexcess`).  The explicit ids buy an argument that is stated rather
+    than inferred, and something for the two checks to test against.
+
+    THE AGREEMENT OF THE BATCHED LOGITS, and the number not hidden.  An absolute tolerance
+    against the batch-1 logits is the wrong check, and the first run said so: a NO-PADDING
+    CONTROL (the same prompt repeated to fill the batch, nothing padded) already differs
+    from batch 1 by up to 1.0625, which is eight bf16 steps at a soft-capped magnitude of
+    30.  That is batch shape -- a different width picks a different GEMM kernel and a
+    different reduction order -- and not padding.  So the control is the measured yardstick
+    and the tolerance is on the EXCESS over it, at most 0.25 of a logit:
+      batch  8   padded 0.1250   control 1.0625   excess -0.9375
+      batch 32   padded 0.1875   control 0.8750   excess -0.6875
+      batch 64   padded 0.1250   control 1.0000   excess -0.8750
+    The padded difference is SMALLER than the control's at every size.  On the three-way
+    softmax the same differences are at most 0.0037 padded and 0.0033 in the control.
+    BOTH NUMBERS ARE TAKEN ON ROW 0.  The padded number always was: it is the max over one
+    row's three candidate logits.  The control was first taken as the max over every row
+    of the control batch, i.e. over up to 3*bs numbers against the padded number's 3, which
+    made the yardstick the larger of the two by construction and tilted the comparison
+    towards passing.  It is now row 0 of the control batch.  The three control values did
+    not move when it was changed, which says the bias was real but not acting here.
+
+  VERSIONS AS THE SCRIPT PRINTED THEM
+    torch 2.15.0+cu132 (cuda 13.2), transformers 5.24.0, peft 0.22.0, numpy 2.5.4,
+    python 3.13.5, NVIDIA RTX PRO 5000 Blackwell.
+
+========================================================================
+7. EVERY CHECK OF smoke.py, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  Runner: the mutated copies are made and run by a script in this session's scratch
+  directory and live under ROOT/mut, never in the worktree.  Each mutation replaces ONE
+  string of smoke.py and the runner refuses to apply one whose target is not unique, so a
+  mutation that silently matched nothing cannot be mistaken for a passing check.
+
+  a  rowcount   EXPECT_ROWS 16071 -> 16070
+     "FAIL rows: 16071 != 16070", exit 1.
+  b  seedrange  EXPECT_SEEDS (1, 100) -> (1, 80)
+     "FAIL seeds: (1, 100) != (1, 80)", exit 1.
+  c  bos        IDS0 = ids_of(PROMPT0) -> ids_of(tok.bos_token + PROMPT0)
+     "bos id 2 appears 2 time(s), at position(s) [0, 1]" then
+     "FAIL: expected exactly one bos, at position 0", exit 1.
+  d  thinking   the tokenize=True call's enable_thinking False -> True
+     "FAIL: tokenize=True gives 231 ids, tokenize=False+tok() gives 224, and they
+     differ", exit 1.  So a think block costs 7 tokens here and the two rendering paths
+     notice when only one of them asks for it.
+  e  prefixtrim PREFIX "Interval:" -> "Interval: " (a trailing space)
+     "FAIL: the rendered prompt does not end with the prefill 'Interval: '; it ends
+     'gins line.<turn|>\n<|turn>model\nInterval:'", exit 1.  This is the template's own
+     `| trim` on the assistant content, caught rather than described.
+  f  distinct   CANDIDATES (" short", " mid", " long") -> (" short", " short", " long")
+     "FAIL: 3 candidates give only 2 distinct ids: {' short': 2822, ' long': 1440}",
+     exit 1.  FIRST ATTEMPT PASSED, and the check was wrong, not the mutation: the ids
+     live in a dict keyed by the word, so the repeated word collapsed into one entry and
+     the old test (distinct ids vs. len(ids)) could not fail.  It now counts against
+     len(CANDIDATES).  smoke.py was corrected and the whole run repeated before this
+     line was written.
+  g  the one-token check has TWO failure branches and both are now shown.
+     g1 the token-count branch needs no mutated copy: smoke.py runs it on " 10.043" and
+        " 6.0" in the REAL run and prints "' 10.043' adds 7 tokens, not 1: [' ', '1', '0',
+        '.', '0', '4', '3']" and "' 6.0' adds 4 tokens, not 1".
+     g2 the BOUNDARY branch, which rejects a candidate that retokenizes the prompt's own
+        last token, had no mutation and was unexercised code.  merge3: CANDIDATES
+        (" short", " mid", " long") -> (" short", " mid", "//").  The prompt ends in ':'
+        and the vocabulary has a '://' token, so the merge happens:
+        "ValueError: '//' changes the prompt's own tokens: 223 ids shared of 224", exit 1,
+        after the first two candidates have printed their ids.  This is the branch that
+        makes the check about THIS prompt rather than about the word in isolation.
+  h  notdeterm  the second of the two passes made to read a DIFFERENT row
+     "FAIL: two identical passes differ, max 7.1875", exit 1.
+  i  constant   all five rows replaced by five copies of row 1, i.e. a read-out that
+     ignores the prompt: "FAIL: two different rows give identical logits, so the
+     read-out is not reading the prompt", exit 1.
+  j  rightpad   padding_side "left" -> "right"
+     "FAIL: left padding did not leave a real token last", exit 1.
+  k  posassert  the position_ids reversed inside the batch builder
+     "FAIL: last position is not length-1", exit 1.
+  l  posexcess  the position_ids reversed in the timed forward call only, so both asserts
+     still pass and only the logits move:
+     "FAIL: padding costs more than rounding at batch size(s) [8, 32, 64]:
+     {8: 5.25, 32: 5.3125, 64: 5.25}", exit 1, with the padded difference at 6.25 against
+     a control of 1.00 and the three-way softmax moving by 0.96.  Run again after the
+     yardstick became row 0, with the same result.
+  m  gpubusy    the compute-apps query replaced by --query-gpu=name, which returns a
+     non-empty line where the real one returns nothing:
+     "STOP: another compute process is on the GPU; nothing was run.", exit 2.  As in
+     section 5, this shows the branch on a non-empty result; a real second compute
+     process could not be staged on a shared card without disturbing someone.
+
+  ONE MUTATION THAT DID NOT FAIL, reported and not buried:
+  n  nopos      position_ids=None passed to every batched forward.  EXIT 0.  The padded
+     difference stayed at 0.125 / 0.1875 / 0.25 against controls of 1.0625 / 0.875 / 1.0,
+     i.e. indistinguishable from batch-shape rounding.  The reason is RoPE: with LEFT
+     padding every real token of a row carries the same pad offset, and a constant shift
+     inside a row cancels in relative attention.  So the explicit position_ids are not
+     load-bearing here, and the comment in smoke.py that first claimed they were has been
+     corrected.  Mutation l is what shows the same comparison CAN fail.
+
+  WHICH OF THESE WERE RUN AGAINST THE CURRENT smoke.py.  Three edits touched the checked
+  code after the first sweep: the two batch-shape checks became SystemExit, the control
+  yardstick became row 0, and the key samples became sorted.  j, k, l and n were therefore
+  run again on the committed script, together with the new g2, and the five outputs above
+  and below are those runs.  a-f, h, i and m do not touch any of the three edits and are
+  the first sweep's.
+  Every mutated copy lives under ROOT/mut and the committed smoke.py is the unmutated
+  one.  The runner replaces one unique string per mutation and refuses a mutation whose
+  target is not unique, so a mutation that matched nothing cannot read as a passing check.
+
+========================================================================
+8. WHAT WAS NOT DONE, AND ONE DEVIATION
+========================================================================
+  DEVIATION: not rsync.  rsync is not installed on the local machine (no /usr/bin/rsync,
+  no dpkg entry), and installing it needs sudo and was not asked for.  push_inputs.sh
+  carries the same explicit file lists to the same relative paths with `tar -T` over ssh,
+  and replaces what rsync's checksum pass would have given with a stricter, printed check:
+  every transferred file is hashed on both sides and the lists are compared.  The counts
+  and bytes the brief expected (160 files, about 11 MB) came out as 160 files and
+  11 149 365 bytes.
+
+  NOT DONE, on purpose, because this step is the preparation and not the measurement:
+   - no training, no LoRA, no adapter, no PEFT model built; peft is installed and its
+     version printed, and that is all it was used for;
+   - no label-agreement number and no score: the five rows of section 6 are a read-out of
+     an UNTUNED model, so nothing about which word it picks means anything;
+   - the instruction and the answer prefix of section 6 are PROVISIONAL and are marked so
+     in smoke.py.  Every token count and every timing number of section 6 rests on that
+     wording, and a later step that changes it changes them by the length of the change;
+   - a text-only load by REMAPPING the keys (`model.language_model.*` -> `model.*`) was
+     not attempted.  All that is established is that the class does not load this
+     checkpoint as it stands;
+   - the logit comparison between the text-only class and the full model is IN smoke.py
+     and was never reached: the missing-keys gate before it fired on every run.  So that
+     branch is unexercised code, not a passed check;
+   - smoke.py's 8-thread cap is SET and not MEASURED: no thread or cpu-percent sample was
+     taken during the smoke run, so what is claimed there is the configuration, not the
+     behaviour.  parity.py's cap IS measured, by `time` on the far side: 2774 % cpu
+     uncapped against 99 % capped;
+   - the AutoProcessor path is not checked, because the processor does not load without
+     torchvision and Pillow and neither was installed.  So "the processor renders the same
+     prompt text as the tokenizer" is NOT established;
+   - no latency measured end to end against the 100 ms budget: section 6 times the forward
+     pass alone, with the prompt already tokenized, and nothing around it;
+   - L is not written: no decider in this step asks a model anything;
+   - nothing was committed, staged, stashed or pushed, and no branch or worktree moved.
+     `git status --porcelain` in the worktree shows one pre-existing modification,
+     S2/tickets/10-llm-system-one.md, which was not made by this step and was not touched;
+   - nothing was written under /home/lab_shared/semindex-eval or
+     /home/lab_shared/semindex-learn; evalgen.generate_run was never called; under an
+     archived debug/node_dirs only */semindex/events.jsonl was opened (by replay.load_run,
+     which opens nothing else there).  smoke.py reads the label file and the model
+     directory on the tuning host and writes nothing at all;
+   - on the tuning host nothing outside ROOT was written except uv's own cache.  Checked
+     and not assumed, and with the cutoff moved back to 01:00 so that nothing of that
+     night is excluded by the cutoff itself: `find $HOME -xdev -newermt "2026-11-24
+     01:00"` outside ROOT and outside ~/.cache/uv returns ~/.codex/*, which belongs to an
+     unrelated process already running in that account, and two paths that need naming --
+     ~/Development, 01:08:57, the directory the user made to hold this work, and ~ with
+     ~/.zsh_history, both 01:11:35.
+     THAT HISTORY WRITE IS NOT THIS STEP'S, and the mechanism first proposed for it is
+     wrong.  A non-interactive `ssh host '<command>'` runs `zsh -c` and saves no history:
+     after the dozens of ssh calls of this step and of the verification that followed it,
+     the file's mtime is still 01:11:35, and ~'s mtime equals it because zsh rewrote the
+     file by rename.  01:11:35 is before this step's first command (the 01:16 scp) and
+     just after ~/Development was made at 01:08:57, i.e. it is the user's own interactive
+     login ending.  Stat only: the file was never opened.
+     ~/.triton does not exist, ~/.nv is from May and ~/.local/share/uv from July, so
+     neither a triton cache nor an nvidia compute cache nor a downloaded interpreter was
+     created.  No sudo, no system-wide install, no other user's process touched;
+   - no key, token or credential file was read, listed or looked for, and no request to an
+     outside service carried a person's name, user name, e-mail address or project name.
+
+  THE THREAD CAP, on both scripts.  smoke.py sets OMP_NUM_THREADS=8,
+  OPENBLAS_NUM_THREADS=1, MKL_NUM_THREADS=1, RAYON_NUM_THREADS=8 and
+  TOKENIZERS_PARALLELISM=false before torch is imported, and calls
+  torch.set_num_threads(8).  parity.py sets OMP/OPENBLAS/MKL to 1 before port and numpy
+  are imported; it is the script a later replay sweep will reuse, so the fix belongs in
+  it and not in a note about a later step.
+
+  FOR THE NEXT STEP: 153.7 passes/s at batch 8 is the rate to budget against, not the
+  batch-1 43.44 ms, and a bigger batch does not help.  Both numbers are smoke.txt's own.
+  Whether a tuned adapter changes either one is untested.
+
+  ALSO LEFT BEHIND, and named so that a reader is not surprised by it: fetch_weights.sh
+  keeps REVISION and two .api_*.json beside the nine hub files in the model directory
+  (the recorded commit and the API answers the checks are made against); at ROOT's top
+  level sit the two shell scripts hpc_setup.sh and fetch_weights.sh, fetch_weights.log,
+  smoke.log, smoke.err, the three runners mutate.sh / mutate2.sh / mutate3.sh with their
+  three logs, and smoke.t0 and smoke.t1, two 11-byte files holding one epoch second each
+  (1795454525 and 1795453744, 13 minutes apart).  smoke.py does NOT write those two --
+  `grep '\.t0' smoke.py` finds nothing; they were written by the shell that timed the
+  smoke runs of the earlier part, and they are named here because they are in ROOT and
+  were missing from that part's own file list.  ROOT/mut holds the mutated copies of
+  section 7 with their own stdout and stderr, 1.2 MB in all; the REP mutant of section 5
+  was removed from it, so what is left there is smoke.py mutants only.
+
+  ONE DIRECTORY UNDER ROOT IS NOT THIS STEP'S: ROOT/verify-repro, 13 MB, written between
+  02:33 and 02:42 by the agent that checked this work independently.  It holds that
+  agent's own parity output, its own copy of the smoke log, a mutated smoke.py and
+  store_mut/, a MUTATED COPY of the run inputs made to test the store classification.
+  store_mut is not a store and must not be read as one; ROOT/store is the store.  Nothing
+  under it was made or used by the runs this file records, and it is named here so that
+  ROOT's inventory is complete rather than only this step's part of it.
+
+  ON THE TUNING HOST, nothing outside ROOT was written by this part either.  Checked and
+  not assumed, with the same 01:00 cutoff and the same three results as above.
+  No ~/.triton and no new ~/.nv, so loading the model and
+  running 1 000-odd forward passes created neither a triton cache nor an nvidia compute
+  cache.  nvidia-smi was asked before every GPU run, by the script itself, and the card
+  was free each time.  No sudo, no install, no other user's process touched.
+
+  DISK UNDER ROOT (du -sh of its top-level entries), 15 GB in all:
+    9.6G  models/      5.4G  .venv/      13M  verify-repro/ (not this step's, see above)
+    12M   store/       8.5M  ev22/       5.9M  repo/        1.2M  mut/
+    16K   smoke.err    12K   smoke.log   8.0K  hpc_setup.sh       8.0K  fetch_weights.sh
+    8.0K  mutate3.log  4.0K  hf-home/    4.0K  fetch_weights.log
+    4.0K  each: mutate.sh, mutate2.sh, mutate3.sh, mutate.log, mutate2.log,
+                smoke.t0, smoke.t1
+
+========================================================================
+9. THE VERIFIERS' FINDINGS, AND WHAT EACH ONE CHANGED
+========================================================================
+  Two independent verifiers read sections 1-8 and the scripts.  Ten findings; eight were
+  reproduced and fixed, one was reproduced and its MECHANISM rejected, one was reproduced
+  and answered by attribution rather than by a change.  Nothing was weakened to make a
+  finding go away, and the three generated files (parity.txt, smoke.txt, hpc_freeze.txt)
+  were refreshed from reruns afterwards.
+
+  FIXED IN CODE
+   - parity.py had a second seed guard that could not fire and a printed intersection that
+     could only be empty; both are gone and port.check_seeds is the one guard (section 4).
+   - parity.py set no thread cap and ran at 2774 % cpu on a shared 96-core host; it now
+     caps OMP/OPENBLAS/MKL at 1 before numpy is imported and runs at 99 % (section 4).
+   - smoke.py printed the first five missing and unexpected weight names from an unordered
+     collection, so the archived smoke.txt did not reproduce on a rerun of the same
+     machine; the samples are sorted now.
+   - smoke.py's padding yardstick was a max over the whole control batch against a padded
+     max over one row; the control is row 0 now (section 6).
+   - smoke.py's two batch-shape checks were `assert` and would vanish under -O; they raise
+     SystemExit now (section 6).
+   - the boundary branch of the one-token check had no mutation; g2 is it (section 7).
+
+  FIXED IN THIS FILE
+   - the closing advice quoted 153.9 passes/s and 42.5 ms, which appear in no generated
+     file: they came from a run that was never archived.  Every timing number in sections
+     6 and 8 is now smoke.txt's own, from the rerun.
+   - "the three sizes see the same length distribution" was wrong and the script's own
+     padded widths said so; it reads "the same length RANGE" now, with the widths quoted.
+   - smoke.t0 and smoke.t1 are named in the inventory instead of being summarised as "two
+     small timestamp files", with their contents and with what did NOT write them.
+
+  ONE EDIT AFTER THE ARCHIVED RUN, named so that the archive and the script are not
+  claimed to be closer than they are: one word of a COMMENT in smoke.py ("the two asserts
+  below" -> "the two checks below"), made after smoke.txt and the mutation runs.  It
+  changes no executed line and no printed number.
+
+  REPRODUCED, MECHANISM REJECTED
+   - "~/.zsh_history was written by this work, and any non-interactive ssh into a zsh
+     account does the same".  The write is real and is outside ROOT, but ssh '<command>'
+     saves no history: the mtime is unchanged after dozens of further ssh calls, and
+     01:11:35 precedes this step's first command.  Attributed to the user's own login and
+     the cutoff moved to 01:00 so the file appears in the scan (section 8).
+
+  ANSWERED BY ATTRIBUTION
+   - ROOT/verify-repro appeared after this file was last written.  It is the verifying
+     agent's own directory, not something this step copied there, so it was NOT deleted:
+     deleting another agent's working directory while it is working is not a fix.  It is
+     named in the inventory with its store_mut warning (section 8).
