@@ -52,6 +52,22 @@ TWO BREAKDOWNS OF THE J = 8 AGREEMENT (2026-11-23), bins fixed before the number
   set B's label`, so two ties agree and a one-sided tie disagrees.  When a breakdown
   separates nothing, the script says so in those words.
 
+  2026-11-23, SECOND CORRECTION OF THESE TWO TABLES.  Most of the `sd = 0` bucket is not
+  what its own gloss said: a decision that TIES on set A has its two best arms equal on
+  every pass, so `d_j = 0` throughout, `sd` is exactly 0, and the bucket held those beside
+  the decisions whose passes all separated the arms by the same NON-ZERO amount.  Their
+  agreement is also a different event: a tie carries no label on either side, so
+  `None == None` counts as agreement while no learner can train on the row.  So the bucket
+  is split into `sd = 0, labelled` and `sd = 0, tie on A`, and every bucket of both tables
+  now prints how many of its rows tie on set A, how many carry a label on BOTH sides, and
+  the agreement over those rows beside the agreement over all of them.  The selection a
+  learner is handed is `t >= 3 or (sd = 0 and labelled)` with its share of ALL decisions
+  and of the LABELLED ones; the wider `t >= 3 or sd = 0` is printed under it with what it
+  counts, because the earlier text quoted its share as a retention a learner could use.
+  The quartile table also counts the decisions at or after the instant a live agent stops
+  (`replay.STOP_AT_MS` after `t0`), which the replay keeps resolving past and a testbed
+  never reaches.
+
 THE RULE THAT PICKS J, fixed here before any number existed
   The smallest J in (1, 2, 4, 8) whose agreement over the NON-TIE decisions of the main
   cell (p 0.2) is at least 0.90, and 8 if none of them reaches it.  The agreement at the
@@ -83,6 +99,10 @@ SET_B = list(range(8, 16))
 JS = (1, 2, 4, 8)
 BAR = 0.90                              # the J rule's bar, on the main cell's non-ties
 WORKERS = 5
+# The instant a live agent stops, counted from the run's own t0.  The replay goes on
+# resolving polls that were already in flight at that instant, so the labelling reaches
+# decisions a testbed never makes; the quartile table counts them where they sit.
+STOP_AT_MS = PORT.R.STOP_AT_MS
 
 OUT_TXT = os.path.join(HERE, "stability.txt")
 
@@ -154,9 +174,49 @@ def agreement(rows, j):
 T_BINS = ((0.0, 1.0), (1.0, 2.0), (2.0, 3.0), (3.0, float("inf")))
 QUARTILES = 4
 
+# The three buckets that have no t, kept apart because the reasons are not one reason.
+SD0_LABELLED = "sd = 0, labelled"
+SD0_TIE = "sd = 0, tie on A"
+NO_T = "no t (J < 2)"
+
+
+def verdicts(row, j):
+    """(agreed, ties on set A, carries a label on both sides) for one decision at one J.
+
+    2026-11-23: every bucket of both breakdowns is described by these three, because
+    `agreed` alone cannot tell a labelled decision whose label survived from a decision
+    that tied on both sides and "agreed" by staying unlabelled.  `label.pick`'s third
+    return value is the tie flag, so the tie here is the same tie the file on disk has.
+    """
+    a = label_from(row, 0, j)
+    b = label_from(row, len(SET_A), j)
+    return float(a[0] == b[0]), a[2], (not a[2] and not b[2])
+
+
+def shares(got):
+    """(n, ties on set A, labelled on both sides, agreement over all, over the labelled).
+
+    The last is NaN for a bucket with no row labelled on both sides, which is the honest
+    value: there is no such agreement to report, and a 0 there would read as one.
+    """
+    both = [v[0] for v in got if v[2]]
+    return (len(got), sum(1 for v in got if v[1]), len(both),
+            statistics.fmean([v[0] for v in got]) if got else float("nan"),
+            statistics.fmean(both) if both else float("nan"))
+
+
+def bucket_line(name, got):
+    """One row of the t table, with `--` wherever a share has no population."""
+    n, ties, nboth, allshare, bothshare = shares(got)
+    if not n:
+        return "    %-18s %6d %9s %10s   %7s   %7s" % (name, 0, "--", "--", "--", "--")
+    return ("    %-18s %6d %9d %10d   %7.4f   %7s"
+            % (name, n, ties, nboth, allshare,
+               "--" if nboth == 0 else "%.4f" % bothshare))
+
 
 def breakdown_by_t(rows, j):
-    """({t bin: [agreed]}, [agreed where sd = 0], [(agreed, t) in no bin]) at one J.
+    """({t bin or no-t bucket: [verdicts]}, [(verdicts, t) in no bin]) at one J.
 
     The t is set A's OWN paired t over its first `j` passes (`label.paired_t`): the two
     best arms by mean score, the per-pass difference between them, and
@@ -174,38 +234,53 @@ def breakdown_by_t(rows, j):
     in the first bin, in the `sd = 0` bucket, or, when that rounding comes out a hair
     BELOW zero, in no bin at all.
 
-    `sd` exactly 0 gets its own bucket and no t at all: every pass separated the two arms
-    by the same amount, so the divisor is 0, and folding that into the open top bin would
-    mix "the passes agree perfectly" with "the passes agree strongly".
+    `sd` exactly 0 gets no t at all, because the divisor is 0, and folding that into the
+    open top bin would mix "the passes agree perfectly" with "the passes agree strongly".
+    2026-11-23: it gets TWO buckets and not one.  `sd = 0` arises two ways and they are
+    opposite situations: every pass separated the two arms by the same NON-ZERO amount
+    (the decision carries a label and the label is as firm as this construction gets), or
+    every pass scored the two best arms equally (`d_j = 0` throughout, so set A has no
+    label and the row is one a learner cannot train on).  Most of the bucket was the
+    second, under a gloss that described the first.
 
-    2026-11-23: the third return value exists because the bin loop used to `break` with no
-    `else`, so a decision matching no bin was dropped without a word and the table covered
-    fewer decisions than the cell it named -- the t table of p 0.4 printed 1621 of 1623.
-    The bins are not widened and no t is clamped, because the bins were fixed before these
-    numbers were seen; what matched nothing is reported instead, with its t, so the reader
-    can see it is a tie's rounding and not a decision the bins fail to cover.
+    A third bucket exists for `sd` None, which `label.paired_t` returns when there are
+    fewer than 2 passes: with J = 1 there is one sample, so there is no t for a reason
+    that has nothing to do with the spread being zero.  The J rule can choose J = 1 on
+    other data, and this bucket is where those decisions go instead of under a gloss about
+    the sd.
+
+    2026-11-23: the `no bin` return value exists because the bin loop used to `break` with
+    no `else`, so a decision matching no bin was dropped without a word and the table
+    covered fewer decisions than the cell it named -- the t table of p 0.4 printed 1621 of
+    1623.  The bins are not widened and no t is clamped, because the bins were fixed
+    before these numbers were seen; what matched nothing is reported instead, with its t,
+    so the reader can see it is a tie's rounding and not a decision the bins fail to cover.
     """
-    bins = {b: [] for b in T_BINS}
-    no_sd = []
+    buckets = {b: [] for b in T_BINS}
+    for name in (SD0_LABELLED, SD0_TIE, NO_T):
+        buckets[name] = []
     no_bin = []
     passes = range(0, j)
     for row in rows:
-        agreed = float(label_from(row, 0, j)[0] == label_from(row, len(SET_A), j)[0])
-        t, _sd, _n = L.paired_t(row["pass_scores"], passes)
+        seen = verdicts(row, j)
+        t, sd, _n = L.paired_t(row["pass_scores"], passes)
         if t is None:
-            no_sd.append(agreed)
+            if sd is None:
+                buckets[NO_T].append(seen)
+            else:
+                buckets[SD0_TIE if seen[1] else SD0_LABELLED].append(seen)
             continue
         for lo, hi in T_BINS:
             if lo <= t < hi:
-                bins[(lo, hi)].append(agreed)
+                buckets[(lo, hi)].append(seen)
                 break
         else:
-            no_bin.append((agreed, t))
-    return bins, no_sd, no_bin
+            no_bin.append((seen, t))
+    return buckets, no_bin
 
 
 def breakdown_by_position(rows, j):
-    """Per quartile of `ts_rel_ms` over the cell: (first, last, n, agreement, median margin).
+    """Per quartile of `ts_rel_ms`: (first, last, [verdicts], median margin, post-stop).
 
     The quartiles are equal-COUNT quartiles of the decision's own stamp relative to its
     run's `t0`, so the four buckets are comparable in size whatever the shape of the
@@ -216,11 +291,16 @@ def breakdown_by_position(rows, j):
     Why position at all: a decision late in the window has fewer polls left before the
     window ends, so there is less room for the three arms to separate AND less randomness
     left to average -- which of the two wins is not something the table above can say.
+
+    2026-11-23: the sort's tie-break is the decision's own (seed, k), so two decisions at
+    the same stamp fall on the same side of a quartile edge in every run of this script;
+    and the last value is how many of the quartile's decisions sit at or after
+    `STOP_AT_MS`, which a live agent never reaches.
     """
     scored = sorted(
-        (row["ts_rel_ms"],
-         float(label_from(row, 0, j)[0] == label_from(row, len(SET_A), j)[0]),
-         label_from(row, 0, j)[1])
+        ((row["ts_rel_ms"], row["seed"], row["k"]),
+         verdicts(row, j), label_from(row, 0, j)[1],
+         row["ts_rel_ms"] >= STOP_AT_MS)
         for row in rows)
     n = len(scored)
     out = []
@@ -228,9 +308,9 @@ def breakdown_by_position(rows, j):
         chunk = scored[n * q // QUARTILES:n * (q + 1) // QUARTILES]
         if not chunk:
             continue
-        out.append((chunk[0][0], chunk[-1][0], len(chunk),
-                    statistics.fmean(c[1] for c in chunk),
-                    statistics.median([c[2] for c in chunk])))
+        out.append((chunk[0][0][0], chunk[-1][0][0], [c[1] for c in chunk],
+                    statistics.median([c[2] for c in chunk]),
+                    sum(1 for c in chunk if c[3])))
     return out
 
 
@@ -330,59 +410,114 @@ def main():
         "whether its label survives a change of passes. The bins were fixed before these "
         "numbers existed. Agreement is `set A's label == set B's label`, so two ties "
         "agree and a one-sided tie disagrees, as in the `all` column.")
+    out("  Every bucket prints how many of its decisions TIE on set A -- those carry no "
+        "label on disk, and the two sides of such a decision agree by both staying "
+        "unlabelled -- and the agreement over the decisions that carry a label on BOTH "
+        "sides, which is the population a learner can train on, beside the agreement over "
+        "all of them.")
     out()
     for p in PS:
-        bins, no_sd, no_bin = breakdown_by_t(cells[p], chosen)
+        buckets, no_bin = breakdown_by_t(cells[p], chosen)
         out(f"  p {p}, by set A's own paired t over its {chosen} passes "
             "(t = mean(d) / (sd(d) / sqrt(J)), d = the per-pass gap between the two best "
             "arms; a decision that TIES on set A has the two arms' pass means equal, so "
             "its mean(d) is zero to the last bits of a double and it falls in the first "
             "bin, in the sd = 0 bucket, or -- if that rounding comes out below zero -- in "
             "no bin, which the line under the table counts)")
-        out("     t bin         n   agreement")
-        shares = []
-        for lo, hi in T_BINS:
-            got = bins[(lo, hi)]
-            label = f"[{lo:.0f},{'inf' if hi == float('inf') else '%.0f' % hi})"
-            if not got:
-                out(f"    {label:<10} {0:6d}   --")
-                continue
-            shares.append(statistics.fmean(got))
-            out(f"    {label:<10} {len(got):6d}   {shares[-1]:7.4f}")
-        if no_sd:
-            share = statistics.fmean(no_sd)
-            shares.append(share)
-            out(f"    {'sd = 0':<10} {len(no_sd):6d}   {share:7.4f}   (every pass "
-                "separated the two arms by the same amount, so there is no t)")
-        else:
-            out(f"    {'sd = 0':<10} {0:6d}   --")
-        binned = sum(len(bins[b]) for b in T_BINS) + len(no_sd)
+        out("     t bin                  n  ties on A  label both   agreement   over those")
+        allshares, bothshares = [], []
+        order = [(f"[{lo:.0f},{'inf' if hi == float('inf') else '%.0f' % hi})", (lo, hi))
+                 for lo, hi in T_BINS]
+        order += [(SD0_LABELLED, SD0_LABELLED), (SD0_TIE, SD0_TIE)]
+        # The J < 2 bucket is printed only when something is in it: at J >= 2 it cannot
+        # hold a decision, and a row of zeros under a name about J = 1 would read as a
+        # statement about this run.  The coverage line below counts it either way.
+        if buckets[NO_T]:
+            order.append((NO_T, NO_T))
+        for name, key in order:
+            got = buckets[key]
+            out(bucket_line(name, got))
+            if got:
+                _n, _ties, nboth, allshare, bothshare = shares(got)
+                allshares.append(allshare)
+                if nboth:
+                    bothshares.append(bothshare)
+        out("    the two sd = 0 lines: `labelled` is every pass separating the two arms by "
+            "the same NON-ZERO amount, so there is no t and the decision carries a label; "
+            "`tie on A` is every pass scoring the two best arms equally, so set A has no "
+            "label at all and its agreement with set B is two nulls matching.")
+        binned = sum(len(got) for got in buckets.values())
         # 2026-11-23: printed even when it is 0, because the count is the claim that the
         # table covers the whole cell.  Silence here used to mean "nothing fell out" and
         # "two decisions fell out" alike.
         out(f"  the table covers {binned} of the cell's {len(cells[p])} decisions; "
             f"matching no bin: {len(no_bin)}"
-            + (f" (t {', '.join('%.3g' % t for _a, t in no_bin)}, a tie's rounding "
+            + (f" (t {', '.join('%.3g' % t for _v, t in no_bin)}, a tie's rounding "
                "below zero)" if no_bin else ""))
-        # The two top buckets together, printed here so that no reader has to do this
-        # arithmetic over two printed rows and get the rounding wrong.
-        top = bins[T_BINS[-1]] + no_sd
-        if top:
-            out(f"  t >= 3 or sd = 0 together: {len(top)} decisions "
-                f"({len(top) / len(cells[p]):.4f} of the cell) at "
-                f"{statistics.fmean(top):.4f} agreement, against "
-                f"{tables[p][chosen][0]:.4f} over everything")
-        out(spread_line(shares, "what the paired t says"))
+        every = [v for got in buckets.values() for v in got] + [v for v, _t in no_bin]
+        n_lab = sum(1 for v in every if not v[1])
+        # The selection a learner is handed, printed here so that no reader has to take it
+        # over two printed rows and get the rounding wrong.  Its labelled share is against
+        # the decisions that carry a set-A label, which is the labelling on disk.
+        sel = buckets[T_BINS[-1]] + buckets[SD0_LABELLED]
+        if sel:
+            n, ties, nboth, allshare, bothshare = shares(sel)
+            out(f"  t >= 3 or (sd = 0 and labelled): {n} decisions, {n - ties} of them "
+                f"carrying a set-A label ({(n - ties) / len(cells[p]):.4f} of the cell's "
+                f"{len(cells[p])} decisions, {(n - ties) / n_lab:.4f} of its {n_lab} "
+                f"labelled ones), at {allshare:.4f} agreement over all of them and "
+                + (f"{bothshare:.4f} over the {nboth} that carry a label on BOTH sides"
+                   if nboth else "no agreement over a labelled population, which is empty")
+                + f", against {tables[p][chosen][0]:.4f} over everything")
+        wider = sel + buckets[SD0_TIE]
+        if wider:
+            n, ties, nboth, allshare, bothshare = shares(wider)
+            out(f"  the wider t >= 3 or sd = 0: {n} decisions "
+                f"({n / len(cells[p]):.4f} of the cell) at {allshare:.4f} agreement, of "
+                f"which {ties} tie on set A and carry no label, so that share is NOT a "
+                "retention a learner can read: it keeps unlabelled decisions and counts "
+                "their two nulls as agreement.")
+        out(spread_line(allshares, "what the paired t says"))
+        out(spread_line(bothshares, "the same over the decisions labelled on both sides"))
         out()
     for p in PS:
         quarts = breakdown_by_position(cells[p], chosen)
         out(f"  p {p}, by the decision's position in its run (equal-count quartiles of "
             "ts_rel_ms)")
-        out("     quartile   ts_rel_ms range            n   agreement   median margin ms")
-        for i, (first, last, n, share, margin) in enumerate(quarts, 1):
-            out("    Q%d         %9.0f to %9.0f %6d   %9.4f   %16.4f"
-                % (i, first, last, n, share, margin))
-        out(spread_line([q[3] for q in quarts], "what the position says"))
+        out("     quartile   ts_rel_ms range            n  ties on A  label both   "
+            "agreement   over those   median margin ms   at or past the stop")
+        allshares, bothshares = [], []
+        for i, (first, last, got, margin, post) in enumerate(quarts, 1):
+            n, ties, nboth, allshare, bothshare = shares(got)
+            allshares.append(allshare)
+            if nboth:
+                bothshares.append(bothshare)
+            out("    Q%d         %9.0f to %9.0f %6d %10d %11d   %9.4f   %10s   %16.4f   "
+                "%19d"
+                % (i, first, last, n, ties, nboth, allshare,
+                   "--" if not nboth else "%.4f" % bothshare, margin, post))
+        # 2026-11-23: the replay goes on resolving polls that were in flight when a live
+        # agent stops, so the labelling reaches decisions no testbed makes.  Counted here
+        # with what they are -- the last column of the table says where they sit -- and
+        # the label files keep them; nothing is dropped and no label moves.
+        post_rows = [(v, ts) for ts, v in
+                     ((row["ts_rel_ms"], verdicts(row, chosen)) for row in cells[p])
+                     if ts >= STOP_AT_MS]
+        if post_rows:
+            n_post = len(post_rows)
+            out(f"  {n_post} of this cell's decisions sit at or after ts_rel_ms "
+                f"{STOP_AT_MS:.0f}, the instant a live agent stops, and the table above "
+                f"holds them in Q{len(quarts)}: {sum(1 for v, _t in post_rows if v[0])} of "
+                f"them agree, {sum(1 for v, _t in post_rows if v[1])} tie on set A and "
+                f"{sum(1 for v, _t in post_rows if v[2])} carry a label on both sides, the "
+                f"latest at {max(t for _v, t in post_rows):.0f}. A poll scheduled after "
+                "that instant falls outside the scoring window, so the arms score "
+                "identically and the decision carries no label.")
+        else:
+            out(f"  no decision of this cell sits at or after ts_rel_ms {STOP_AT_MS:.0f}, "
+                "the instant a live agent stops.")
+        out(spread_line(allshares, "what the position says"))
+        out(spread_line(bothshares, "the same over the decisions labelled on both sides"))
         out()
     ties = {p: 1.0 - tables[p][chosen][2] / len(cells[p]) for p in PS}
     out("Ties, at the chosen J (a decision where one side or the other scored two arms "

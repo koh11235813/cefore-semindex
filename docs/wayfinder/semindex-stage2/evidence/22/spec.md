@@ -598,11 +598,18 @@ of the variance the jitter carries. Splitting the two would need a sweep that ho
 fixed while the lags vary, and no run in this directory does that. So this measurement bounds the move
 and does not explain it.
 
-**The two numbers to carry away are the first row of that table and the last.** The +3.0 ms move is
-0.95 times the step-2 measurement's own standard error, and the whole distance from the committed
-value to the fixed one, +3.674274 ms, is 1.16 times it, so **neither the step-3 move nor the
-correction as a whole is larger than the seed noise of the measurement it corrects**: at 100 seeds
-this cell cannot tell 100.62 from 104.30. The correction still stands on its reasoning -- the weight
+**The two numbers to carry away are the first row of that table and the last**, and they are two
+kinds of quantity. The +3.001866 ms keying move is 0.95 times the step-2 measurement's own standard
+error and 1.17 of its own paired one, so **the keying move is not larger than the seed noise of the
+measurement it corrects**: at 100 seeds this cell cannot tell step 2's 101.467047 from step 3's
+104.468914. The whole distance from the committed value to the fixed one, +3.674274 ms, is **1.16
+times step 2's standard error -- larger than one standard error and inside two**, and +0.845362 ms
+of it is the step 1 to step 2 move, which is the same 8 000 simulations scored twice and carries no
+seed-to-seed draw a standard error could cover. So "the correction is inside the noise" is a
+sentence about the keying move and not about the correction, and the part of the distance a rerun on
+other seeds could move is the keying move alone. (This paragraph said the stronger thing until the
+fifth pass; `weight.txt`'s own reading, which it now follows, is in the lines quoted above.) The
+correction still stands on its reasoning -- the weight
 has to level the arms on the delay a label is scored by, and step 1 reproduces the committed value
 exactly, so the four steps are one quantity changing -- but it does not stand on the size of the
 move. And the fixed value is **104.295959 ms per poll with a jackknife standard error of 1.685586 ms**
@@ -769,6 +776,7 @@ Seeds 1 to 100 of both cells at J = 8, 3706.3 s on 5 workers, under the correcte
 | label 6.0 s | 3675 (0.2287) | 3872 (0.2398) |
 | label 10.043 s | 7383 (0.4594) | 7564 (0.4684) |
 | tie, no label | 1792 (0.1115) | 1322 (0.0819) |
+| of those ties, decisions at or after `t0 + 130 000 ms` | 60 | 78 |
 | margin ms, median / max | 104.2960 / 11013.6194 | 130.3699 / 10987.5126 |
 | labels that move when the censored records are dropped | 10 (0.0006) | 204 (0.0126) |
 | **labels that changed against the superseded weight** | **46 (0.0029)** | **53 (0.0033)** |
@@ -819,6 +827,7 @@ label").
 **The median margin over ALL decisions is one poll** at p 0.2 (104.2960 ms, the weight
 104.29595912307323 to four decimals; 1797 of the 16 071 margins sit within 1e-9 of it). The consequence
 is NOT that half the labels turn on one poll: 1792 of those decisions are ties that carry no label
+(60 of them at or after `t0 + 130 000 ms`, where a live agent has stopped)
 at all and enter the median at margin 0. **Over the 14 279 decisions that do carry a label the
 median margin is 127.4200 ms.** At p 0.4 the median over all decisions is 130.3699 ms and over the
 14 826 labelled ones 146.1007 ms. All six of those numbers are `specnums.txt`'s.
@@ -863,7 +872,12 @@ the numbers in `specnums.txt` are tied to the two files the digests name.
 
 **Seeds 121 to 160 appear nowhere here.** They are the measuring seeds of this effort and the
 learning side may not touch them. Every script of this directory that takes seeds passes them through
-`port.check_seeds`, which refuses any seed above 100 with an error. (`weight.py` loads
+`port.check_seeds`, which refuses any seed above 100 with an error. **The library doors refuse them
+too** (fifth pass): `label.run_dict` checks its own argument, `label.label_run` reaches it for any
+(p, seed) a caller drives directly, and `port.Engine` checks `run["seed"]` when the run dict carries
+one, which is the constructor every run of this directory goes through. Until then the guard was on
+the command line alone, and an importer of `label` or `port` could reach seed 121 without passing
+it. (`weight.py` loads
 `../21/predict.py`, which loads `../20/predict.py`, whose module body defines that seed range as a
 constant; no script here reads it.)
 
@@ -904,7 +918,8 @@ two columns are about:
 | p 0.4 | 4 | 0.7135 | 0.7123 | 1439 | 0.6535 | 811 | 0.6543 | 810 |
 | p 0.4 | 8 | 0.7585 | 0.7522 | 1473 | 0.7411 | 811 | 0.7411 | 811 |
 
-1586 decisions at p 0.2 and 1623 at p 0.4, over 10 runs each; 769.9 s on 5 workers. **These are the
+1586 decisions at p 0.2 and 1623 at p 0.4, over 10 runs each; 774.8 s on 5 workers, which is
+`stability.txt`'s own last line after the fifth pass reran it. **These are the
 third pass's numbers, under the corrected weight.** The decisions themselves are the same ones: the
 roll-in run does not depend on the weight, so the 1586 and the 1623 are unchanged. Against the
 second half's table, measured under the superseded weight, none of the 32 shares moved by more than
@@ -986,8 +1001,13 @@ two ties agree and a one-sided tie disagrees -- the `all` column's own rule:
   between them, `t = mean(d) / (sd(d) / sqrt(8))` with the sample sd. This is the margin divided by
   its own spread, which is exactly what the margin alone cannot distinguish: a wide gap with wildly
   spread passes and a narrow one with eight near-identical passes rank the same by margin and very
-  differently here. Bins `[0,1)`, `[1,2)`, `[2,3)`, `[3,inf)`, plus a bucket for `sd` exactly 0,
-  which has no t at all. `label.paired_t` is the one definition and `stability.py` calls it.
+  differently here. Bins `[0,1)`, `[1,2)`, `[2,3)`, `[3,inf)`, plus TWO buckets for `sd` exactly 0,
+  which has no t at all: `sd = 0, labelled` and `sd = 0, tie on A`, because the same zero arises from
+  opposite situations and the fifth pass had to take them apart (below). A third bucket, printed only
+  when it holds something, takes the `sd` None that `label.paired_t` returns below 2 passes: at J = 1
+  there is one sample, so there is no t for a reason that has nothing to do with the spread, and the
+  J rule can choose J = 1 on other data. `label.paired_t` is the one definition and `stability.py`
+  calls it.
   **The t table does not quite cover every decision at p 0.4, and says so**: `stability.txt` prints
   how many decisions the table covers, and at p 0.4 that is 1621 of 1623. The two it leaves out are
   set-A ties whose `fmean(a_j - b_j)` rounds a hair below zero (t = -1.46e-14 and -1.88e-14) and so
@@ -996,32 +1016,61 @@ two ties agree and a one-sided tie disagrees -- the `all` column's own rule:
 - **the decision's position in its run**, as equal-count quartiles of `ts_rel_ms`, with the median
   margin printed beside each quartile. A decision near the end of the window has fewer polls left in
   which the arms can separate and less randomness left to average, and the table above cannot say
-  which of the two dominates.
+  which of the two dominates. The quartile rows also carry the set-A ties, the rows labelled on both
+  sides with their own agreement, and the decisions at or after the instant a live agent stops.
 
 **Both separate, and hard.** By set A's paired t, at J = 8:
 
-| t bin | p 0.2, n | p 0.2 agreement | p 0.4, n | p 0.4 agreement |
-|---|---|---|---|---|
-| [0,1) | 413 | 0.4625 | 466 | 0.4700 |
-| [1,2) | 277 | 0.6426 | 294 | 0.6667 |
-| [2,3) | 167 | 0.8383 | 144 | 0.8750 |
-| [3,inf) | 472 | 0.9746 | 535 | 0.9607 |
-| sd = 0 (no t) | 257 | 0.9339 | 182 | 0.9615 |
+| t bin | p 0.2, n | ties on A | labelled both | agreement | over those | p 0.4, n | ties on A | labelled both | agreement | over those |
+|---|---|---|---|---|---|---|---|---|---|---|
+| [0,1) | 413 | 5 | 405 | 0.4625 | 0.4716 | 466 | 4 | 460 | 0.4700 | 0.4761 |
+| [1,2) | 277 | 0 | 259 | 0.6426 | 0.6873 | 294 | 0 | 283 | 0.6667 | 0.6926 |
+| [2,3) | 167 | 0 | 164 | 0.8383 | 0.8537 | 144 | 0 | 142 | 0.8750 | 0.8873 |
+| [3,inf) | 472 | 0 | 472 | 0.9746 | 0.9746 | 535 | 0 | 535 | 0.9607 | 0.9607 |
+| sd = 0, labelled | 66 | 0 | 66 | 1.0000 | 1.0000 | 53 | 0 | 53 | 1.0000 | 1.0000 |
+| sd = 0, tie on A | 191 | 191 | 0 | 0.9110 | -- | 129 | 129 | 0 | 0.9457 | -- |
+
+**The `sd = 0` bucket is two buckets and the fifth pass split it.** `label.paired_t` returns no t
+both when every pass separated the two arms by the same NON-ZERO amount and when every pass scored
+them equally, and the second is a decision that TIES on set A: `d_j = 0` throughout, so `sd` is
+exactly 0 and the row carries no label at all. 191 of p 0.2's 257 and 129 of p 0.4's 182 were that,
+under a gloss that described the other 66 and 53. Their "agreement" is `None == None` -- two
+labellings agreeing to leave the row unlabelled -- which a learner cannot train on either side of.
+So every bucket now prints its set-A ties, its rows labelled on BOTH sides, and the agreement over
+those beside the agreement over all of them; the last column is the one a learner reads.
 
 By the decision's position in its run, at J = 8:
 
-| quartile of `ts_rel_ms` | p 0.2 range | n | agreement | median margin ms | p 0.4 agreement | p 0.4 median margin ms |
-|---|---|---|---|---|---|---|
-| Q1 | 391 to 30 251 | 396 | 0.5101 | 282.2121 | 0.5012 | 289.7590 |
-| Q2 | 30 296 to 63 762 | 397 | 0.7330 | 213.5172 | 0.6897 | 241.5358 |
-| Q3 | 63 768 to 97 106 | 396 | 0.8460 | 104.2960 | 0.8744 | 104.2960 |
-| Q4 | 97 189 to 131 907 | 397 | 0.9597 | 52.1480 | 0.9680 | 104.2960 |
+| quartile of `ts_rel_ms` | p 0.2 range | n | ties on A | agreement | over the labelled | median margin ms | past the stop | p 0.4 n | ties on A | agreement | over the labelled | p 0.4 median margin ms | past the stop |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Q1 | 391 to 30 251 | 396 | 0 | 0.5101 | 0.5101 | 282.2121 | 0 | 405 | 0 | 0.5012 | 0.5012 | 289.7590 | 0 |
+| Q2 | 30 296 to 63 762 | 397 | 0 | 0.7330 | 0.7330 | 213.5172 | 0 | 406 | 0 | 0.6897 | 0.6914 | 241.5358 | 0 |
+| Q3 | 63 768 to 97 106 | 396 | 36 | 0.8460 | 0.9130 | 104.2960 | 0 | 406 | 10 | 0.8744 | 0.9046 | 104.2960 | 0 |
+| Q4 | 97 189 to 131 907 | 397 | 160 | 0.9597 | 0.9956 | 52.1480 | 4 | 406 | 125 | 0.9680 | 0.9964 | 104.2960 | 9 |
+
+**Every set-A tie of a cell sits in the last two quartiles** (36 + 160 = 196 at p 0.2, 10 + 125 =
+135 at p 0.4), so the quartile columns move in opposite directions when the unlabelled rows come
+out: Q4's agreement over the rows labelled on both sides is **0.9956 of 228 rows at p 0.2 and 0.9964
+of 275 at p 0.4**, HIGHER than the 0.9597 and 0.9680 over everything, while Q1's two columns are the
+same number because Q1 holds no tie at all. The 160 and 125 set-A ties of Q4 therefore agree LESS
+than its labelled rows, not more. **The last column is the decisions at or after `t0 + 130 000 ms`,
+where a live agent has already stopped and the replay keeps resolving polls that were in flight**: 4
+of p 0.2's Q4 and 9 of p 0.4's, all of them set-A ties carrying no label, the latest at 131 907 and
+131 378 ms. `stability.txt` prints that count per quartile and names it under each table; over all
+100 seeds `specnums.txt` counts 60 at p 0.2 and 78 at p 0.4. Nothing is relabelled for them, because
+every one is an exact tie and a labelled row therefore never sits there.
 
 **What the paired t says.** Quoting `stability.txt`'s own spread line for each cell, which takes the
-range over the four t bins AND the `sd = 0` bucket: agreement runs from **0.4625 to 0.9746 at p 0.2,
-a spread of 0.5121**, and from **0.4700 to 0.9615 at p 0.4, a spread of 0.4916**. The top of the
-range is the `[3,inf)` bin at p 0.2 and the `sd = 0` bucket at p 0.4, where that bucket (0.9615) sits
-just above the top t bin (0.9607). So a statistic computed from set A's own 8 passes DOES
+range over the four t bins AND both `sd = 0` buckets: agreement runs from **0.4625 to 1.0000 at
+p 0.2, a spread of 0.5375**, and from **0.4700 to 1.0000 at p 0.4, a spread of 0.5300**; over the
+rows labelled on both sides the same lines read **0.4716 to 1.0000 (0.5284)** and **0.4761 to 1.0000
+(0.5239)**. The top of the range is now the `sd = 0, labelled` bucket in both cells, where all 66 and
+all 53 decisions kept their label (1.0000): every pass separating the two arms by the same non-zero
+amount is as firm as this construction gets. The `[3,inf)` bin is next (0.9746 and 0.9607). Before
+the split the top of the p 0.4 range was the merged bucket's 0.9615, where 129 rows were
+`None == None` against the 53 that carried a label, so most of what held the top of that
+range was two nulls matching; the reading is gone with the merged bucket. So a statistic
+computed from set A's own 8 passes DOES
 order the labels by whether they survive a change of passes -- the margin's failure is not that
 "anything measured on set A selects on set A's noise", which is the strong form of the winner's-curse
 reading, because the t is measured on set A too. **The margin's failure is that it is a difference
@@ -1045,20 +1094,46 @@ independent demonstration that the margin is not a confidence: the decisions wit
 are the early ones, and the early ones are the least reproducible. The mechanism is the one the
 construction implies -- an early decision leaves 120 s of run in which the randomness after it can
 diverge, and a late one leaves almost none -- so the quartile is a proxy for how much randomness the
-8 passes had to average, not a property of the decision itself.
+8 passes had to average, not a property of the decision itself. **The rise is not an artefact of the
+ties collecting at the end**: every set-A tie of a cell is in Q3 and Q4, and taking them out raises
+the last quartile instead of lowering it, to 0.9956 over 228 labelled rows at p 0.2 and 0.9964 over
+275 at p 0.4. What the ties do change is the POPULATION: Q4 of p 0.2 hands a learner 228 usable rows
+and not 397.
 
 **What a learner may take from this, and what it may not.** It may weight or filter by the t, which
-is on the label row already (`pass_scores` per arm; `label.paired_t` computes it). Taking the two
-top buckets together -- `t >= 3` or `sd = 0` -- keeps **729 of p 0.2's 1586 decisions (0.4596) at a
-0.9602 agreement rate**, and 717 of p 0.4's 1623 (0.4418) at 0.9609, against 0.7623 and 0.7585 over
-everything. (`stability.py` prints that combined bucket itself, one line per cell, so all four
-numbers are read off `stability.txt` and none of them is this file's own arithmetic. An earlier
-draft summed the two printed buckets by hand and wrote 0.9603 for the first; 700 of 729 is 0.9602.)
-So the choice a learner faces is not "8 passes or 64" but "all the labels at
-about three
-in four, or half of them at about nineteen in twenty". It may **not** read these rates as the
-probability that a label is RIGHT: both sides are the same construction, so they agree about the
-construction and not about the testbed, and that limit is unchanged by any breakdown.
+is on the label row already (`pass_scores` per arm; `label.paired_t` computes it). The selection is
+`t >= 3 or (sd = 0 and labelled)`, and it keeps **538 of p 0.2's 1586 decisions -- 0.3392 of all of
+them and 0.3871 of the 1390 that carry a set-A label -- at a 0.9777 agreement rate**, and 588 of
+p 0.4's 1623 (0.3623 of all, 0.3952 of its 1488 labelled) at 0.9643, against 0.7623 and 0.7585 over
+everything. All 538 and all 588 carry a label on both sides, so those two rates are the labelled
+rates as well. (`stability.py` prints the selection itself, one line per cell, so every number here
+is read off `stability.txt` and none is this file's own arithmetic.)
+
+**The bar sits on a mass point of the t, so neither 538 nor 5696 is a count another implementation
+reaches.** 39 rows of each cell have a paired t within 1e-06 of 3, none of them further off than
+1e-13 and the nearest row off that clump at least 776 times the tolerance away, and `>=` keeps 19 of p 0.2's and 25 of p 0.4's: the whole-file selection holds 5696 rows where
+anything from 5677 to 5716 is the same rule, and the ten measured seeds hold 538 where 536 to 541
+is, 588 against 586 to 590 at p 0.4 (`specnums.txt`). That is a weakness of the bar as this step
+drew it, and the 0.9777 and 0.9643 above were measured with those rows on the side this directory's
+summation order put them. 1246 rows of p 0.2 and 1263 of p 0.4 tie the runner-up with the third arm
+in mean as well, where the arm the t is taken against is the order of `ARMS` and nothing in the
+data, and 2 and 5 of them cross the selection when the other arm is taken.
+
+**The earlier figure for this selection, `t >= 3 or sd = 0` keeping 0.4596 at 0.9602, counted the
+unlabelled set-A ties as kept.** 191 of those 729 decisions carry no label on disk, so a supervised
+learner receives 538 rows and not 729, and 0.4596 is not a retention it can read; `stability.txt`
+prints the wider line under the selection with that stated. The direction of the error is worth
+naming: the retention was overstated by those 191 decisions, 729 of the cell's 1586 claimed
+against the 538 a learner receives, while the agreement was UNDERSTATED, because the ties
+agree less than the labelled rows they were pooled with.
+
+So the choice a learner faces is not "8 passes or 64" but "all the labels at about three in four, or
+a third of the decisions -- two fifths of the labelled ones -- at about forty-nine in fifty". It may
+**not** read these rates as the probability that a label is RIGHT: both sides are the same
+construction, so they agree about the construction and not about the testbed, and that limit is
+unchanged by any breakdown. And the agreement is measured on seeds 1 to 10 only; what the same
+selection keeps over all 100 seeds of each file is in `specnums.txt`, as a retention with no
+agreement beside it, because no second labelling of those seeds exists.
 
 ### Why the labels are this noisy, as far as this step can say
 
@@ -1070,7 +1145,9 @@ the last bit of a double; only the poll count is then left, and when that coinci
 exactly.
 
 **That is where the exact ties come from, as far as it was checked.** On the full labelling at
-J = 8, **0.1115 of p 0.2's labels and 0.0819 of p 0.4's are null**; the 0.1387 in the stability
+J = 8, **0.1115 of p 0.2's labels and 0.0819 of p 0.4's are null**, and 60 and 78 of those nulls are
+the decisions at or after `t0 + 130 000 ms` that a live agent never reaches (`specnums.txt`), so both
+tie shares carry them; the 0.1387 in the stability
 measurement is a different quantity -- the share of seeds 1 to 10's decisions that tie on at least
 ONE of the two pass sets, which is necessarily larger. On p 0.2 seed 1 at J = 1 there are 28 ties
 of 158 decisions. In 23 of them two arms tie and the third differs, and the three event streams of
@@ -1186,11 +1263,16 @@ looked up from and never reaches the record. `render` prints it on the origins l
 decision polls p1" -- and the legend's last clause now says the polled peer is named there.
 
 `polled_peer` is **null when that neighbour advertises none of the shown origins**, which is a real
-state and not a missing input. **Two different states produce it, and the common one is not the one
-this file used to give**: in 5436 of the 6077 null records of the two label files the state names no
-origin at all, so there is no advertiser map for the pair to be absent from, and in the remaining
-641 a known origin's advertisers do not include the polled pair. On the logged run the split is 35
-and 1. `observe.txt` prints both counts.
+state and not a missing input. **THREE disjoint states produce it, and the split this file gave
+before the fifth pass tested the wrong condition**: it counted `peers_known == 0` as "the state names
+no origin at all", and a state that names an origin NO peer has told it about satisfies that
+predicate while naming an origin. The three causes, over the 6077 null records of the two label
+files, are: **4838 name no origin at all**, so there is no advertiser map for the pair to be absent
+from; **598 name an origin that no peer has told them about**, so the advertiser map is empty and
+`render` writes "no peer told it"; and **641 have origins peers did tell them about whose advertisers
+do not include the polled pair**, which is the case the second half gave as the only one. The 598 are
+the records the old predicate misfiled, and they turn the logged run's 35-and-1 into **30, 5 and 1**.
+`observe.txt` prints all three counts for both populations.
 
 **In those 6077 records -- 0.189 of the 32 219 labelled ones, and 36 of the 148 logged ones -- the
 record still cannot tell a learner which peer the decision is about.** That is the gap the third
@@ -1229,15 +1311,25 @@ polls a peer none of these origins names" -- fires 6077 times over the label fil
 (26 142 of 32 219 records name a peer) and 36 times over the 148 logged rows. **That third one is a
 live branch and a MISSING ATTRIBUTION at the same time**, and it should not be read off this list as
 a good result: in those 6077 records the marker the third pass added says nothing about which peer
-the decision is about. 5436 of them name no origin at all and 641 have a known origin whose
-advertisers do not include the pair.
+the decision is about. Their three causes are 4838 naming no origin at all, 598 naming an origin no
+peer told them about, and 641 whose advertisers do not include the pair.
 
 ### What was checked
 
 On the logged `s11a` p 0.2 seed 1 run, all five nodes: every one of the 148 `state_poll_reschedule`
-rows renders, and the record's key structure -- **30 paths**, one more than the second half's 29
-since `polled_peer` was added -- is the same built from the log and built from a replay roll-in run
-of the same run (158 decisions). The paths and their value types are
+rows renders, and **every record is held to the declared schema, one record at a time** -- the key
+set AND the field order of the record and of each of its three nested levels, with each field's
+declared value types -- over the 148 logged records, the 158 of a replay roll-in run of the same run,
+and all 32 219 of the label files. **A second PASS line holds the same records to the leakage rule**:
+no node name, no 10-to-13-digit absolute stamp and no negative age, in the record or in its own
+rendered text.
+
+Until the fifth pass that first line compared the UNIONED dotted paths of the two sources, which one
+record missing a key could not fail as long as another record supplied the path -- the union masking
+`statecheck.py` check 1b was written to end, left standing in the one place that still had it -- and
+the leakage the module docstring promises was checked nowhere. The union is still printed, as a
+reported fact and not as a gate: **30 paths**, one more than the second half's 29 since `polled_peer`
+was added, the same set from both sources. The paths and their value types are
 printed in `observe.txt`. The types are printed and not compared across the two sources, because a
 type set can legitimately narrow on one run (`last_poll_status` is a `str` at every resolution of
 both, `fetch_timeout_age_s` is null throughout both).
@@ -1285,7 +1377,7 @@ to the record, and a caller that renders many records in one prompt can hoist it
 | `labelcheck.py` | the five checks the label tool had to carry, plus the scorer: "F after k" is the rule path's F, the three arms share their prefix and the roll-in's own state at k, a run labelled twice gives identical bytes, a seed above the selection range is refused, the union choice set is inside the "pending" bound, and the scorer's record set is evidence/14's | that a label is right. Every line is about the mechanism. The scorer line now reads `score.py`, the one definition `weight.py` levels the arms on as well; `weight.py` makes the same comparison on all 40 000 of its own simulations, so this line is a sample of a check that also runs at scale |
 | `label.py` | the labels of every resolution-time decision of both cells' seeds 1 to 100 at J = 8, the per-cell label counts, the tie share, the margin spread, how many labels move when the censored records are dropped, and the per-run csv; it exits non-zero on a non-zero provisional-timer count | that a label is right, or stable, or the testbed's. It derives no pass line of its own |
 | `stability.py` | how far a label moves when the 8 passes behind it are replaced by 8 others, at four pass counts, over three populations plus the larger-margin half restricted to the both-labelled decisions, on seeds 1 to 10 of both cells; the same J = 8 agreement broken down by set A's own paired t and by the decision's position in its run (third pass, bins fixed before the numbers); and the J the full labelling runs with, by a rule fixed before the numbers | **it carries no pass line**, by the ticket's own wording. Two labellings that agree agree about the construction, not about the testbed; and it measures seeds 1 to 10, while the labelling runs 1 to 100. The disagreement it prints is an upper bound on the share of the labels on disk that are pass noise, not that share |
-| `observe.py` | every logged `state_poll_reschedule` row of the five nodes of one `s11a` run renders, and the record's key structure is the same built from the log and from the replay; and the characters per item | that the record carries what a policy needs. It carries what the state carries, less every node name and less the decider ordinal, plus the polled peer's POSITION (third pass). Whether that is enough is ticket 11's question |
+| `observe.py` | every logged `state_poll_reschedule` row of the five nodes of one `s11a` run renders; every record of the logged run, of the replay roll-in and of both label files carries exactly the declared keys in the declared order with the declared value types at every level, and carries no node name, no absolute stamp and no negative age in the record or in its text (fifth pass; the key check used to be over the two sources' unioned paths and the leakage check did not exist); and the characters per item | that the record carries what a policy needs. It carries what the state carries, less every node name and less the decider ordinal, plus the polled peer's POSITION (third pass). Whether that is enough is ticket 11's question |
 | `weight.py` | one number, reached in four printed steps from the committed value to the label's own score, with the two arms' mean scores under it, the per-stream spread, the censored share of each arm, the same four steps at p 0.4, the old fixed-arm path's value and the ticket's own estimate beside them; the generator gate; the per-pair seed prefix; the scorer against `early_score` on every one of its 40 000 simulations; the decider-call count; the provisional-timer count; and -- fourth pass -- the jackknife standard error of the step-2, step-3 and step-4 weights over the 100 seeds and the per-seed paired move between steps 2 and 3 | that the weight is right for the testbed, or for p 0.4, or for a labelled decision. Step 1 reproducing the committed value says the four steps are one quantity changing, not two measurements. The standard errors are reporting only: they do not move the fixed value and `weight.json` does not carry them |
 | `specnums.py` | the label files' own numbers, recomputed from the files at every run: the two margin medians per cell, the band the "one poll or less" share lands in, the labels the weight correction moved with their directions, the state situations the cells reach with their seeds, and the render-branch counts. It refuses to count anything if a label file's sha256 is not the one `labels.sha256` records | nothing about whether a count is right. It asserts on no value: whether a cell reaches a situation or takes a branch is a property of the workload, and a script that failed when a count moved would be refusing a different workload rather than finding a fault |
 
@@ -1318,8 +1410,8 @@ to the record, and a caller that renders many records in one prompt can hoist it
   exercised for their SHAPE only, against a `Tracker` fixture. **The second half's roll-in run reaches
   none of the five either** (0 of 316 calls, 0 of 774 advertised cells), which `valuecheck.py` prints
   as its own situation report. **The full labelling reaches two of the five, which splits the list**
-  (measured over the 32 219 labelled decisions of the two label files, not by a script in this
-  directory):
+  (measured over the 32 219 labelled decisions of the two label files by `specnums.py`, which is
+  where every count of this bullet is read):
   - unreached by every run of any pass: `in_flight > 0` (0 of 32 219), `truncated` (0, at most two
     origins per state against a cap of eight) and `last_poll_status` "pending" (0). These three
     branches have no coverage anywhere here beyond their shape;
@@ -1365,9 +1457,12 @@ to the record, and a caller that renders many records in one prompt can hoist it
 
 ## Not written here
 
-`README.md`, `RUN.txt`, the effort's `map.md` and the ticket's own Result section are not in this
-directory's scope; they are written after the numbers above are checked. No learner is written: this
-step produces the labels and the one road to the text, and both learners are later tickets.
+**No learner is written**: this step produces the labels and the one road to the text, and both
+learners are later tickets. `README.md` and `RUN.txt` ARE written, in this directory and in the
+table below; the effort's `map.md` bullets and the ticket's own Result section are written outside
+it. All four are written after the numbers above are checked and quote the generated files, never
+this one. (Until the fifth pass this section said the four were not written here at all, which had
+stopped being true of any of them.)
 
 ## Deliverables (this directory)
 
@@ -1385,7 +1480,9 @@ step produces the labels and the one road to the text, and both learners are lat
 | `valuecheck.py` | the state's VALUES against the source's own objects, which `statecheck.py` does not do |
 | `stability.py`, `stability.txt` | Acceptance 6 |
 | `observe.py`, `observe.txt` | Acceptance 7 |
-| `specnums.py`, `specnums.txt` | the numbers this file states that are read off the two label files and that no other script here printed: the labelled-row median margins, the at-or-below-the-weight shares with their floating-point band, the labels the weight correction moved, the state situations the labelling reaches, and the render-branch counts. Fourth pass; it runs no simulation, so it is rerun after any edit to this file's prose |
+| `specnums.py`, `specnums.txt` | the numbers this file states that are read off the two label files and that no other script here printed: the labelled-row median margins, the at-or-below-the-weight shares with their floating-point band, the labels the weight correction moved, the state situations the labelling reaches, the render-branch counts, and -- fifth pass -- the decisions at or after the instant a live agent stops, the retention of the t selection over all 100 seeds, and the rows whose t lands on the bar that selection cuts at with the range their rounding leaves its count. Fourth pass; it runs no simulation, so it is rerun after any edit to this file's prose |
+| `README.md` | the reading of all of it in Japanese, written by hand from the generated files and the check scripts' output; no script produces it |
+| `RUN.txt` | the commands in the order a rerun takes them, the wall times, what each script printed, the label files and their digests, and what was not run |
 
 The label files themselves are **outside** the repository, under
 `/home/lab_shared/semindex-learn/ev22/`, one gzipped JSON-lines file per cell; `labels.sha256` is
@@ -1459,11 +1556,11 @@ reproduced here before it was acted on, and none of them moved a label or the we
 | every `../13/replay.py` reference was re-verified and renumbered | every reference at or above `ask_decider`'s docstring was one line short of the statement it names -- 14 of the 16 in this directory, across `spec.md`, `statecheck.py`, `gate.py` and `label.py` -- because the docstring rewritten for finding 9 added a line inside `ask_decider` AFTER the renumbering pass, and `:1033` had never been renumbered at all. A fifteenth, the `:1006-1019` comment block, started one line later than the comment does. All of them now land on the statement, re-checked against the file line by line |
 | `0.3699` of p 0.2's labels are "decided by one poll of the windowed count or less" | that share is an exact `<=` against the weight with 1797 margins sitting on it: 652 a last bit below and 1145 a last bit above. With any tolerance it is 0.4501. It is now given as an interval, because which side of the atom a margin falls on is rounding and not a property of the workload |
 | `stability.py`'s t table is "over ALL decisions of a cell" | the bin loop dropped what matched no bin without a word, so the p 0.4 table covered 1621 of 1623 -- two set-A ties whose `fmean(a_j - b_j)` rounded a hair below zero. The bins are unchanged and nothing is clamped; the script now prints how many decisions the table covers and the t of anything outside it |
-| the p 0.4 paired-t agreement "runs from 0.4700 to 0.9607" | `stability.txt`'s own spread line for that cell says 0.4700 to 0.9615, because the `sd = 0` bucket sits above the top t bin there. Both cells now quote the generated line |
-| `t >= 3 or sd = 0` keeps 729 of p 0.2's decisions at a 0.9603 agreement rate | 700 of 729 is 0.9602. The rate was this file's arithmetic over two printed buckets; `stability.py` now prints the combined bucket itself, so the number is generated |
+| the p 0.4 paired-t agreement "runs from 0.4700 to 0.9607" | `stability.txt`'s own spread line for that cell says 0.4700 to 0.9615, because the `sd = 0` bucket sits above the top t bin there. Both cells now quote the generated line. **The fifth pass splits that bucket in two and the spread line moves with it; the current range is in "What the fifth pass changed" below** |
+| `t >= 3 or sd = 0` keeps 729 of p 0.2's decisions at a 0.9603 agreement rate | 700 of 729 is 0.9602. The rate was this file's arithmetic over two printed buckets; `stability.py` now prints the combined bucket itself, so the number is generated. **That retention counts unlabelled ties as kept, which the fifth pass corrects below; 729 and 0.9602 are not a retention a learner can read** |
 | `notified_max > hi` holds in "0 of 1519 advertised cells" | 1519 is no population of that run. `statecheck.py` now counts all five unreached situations over its own 348 port states and prints them; the advertised cells there are 923 |
 | the maximum record is "within 6 % of the median" | about 6 % with the legend and about 9 % without it, and the without-legend column is the one a caller that hoists the legend sees |
-| a null `polled_peer` means "a pair that has never answered a poll is in no `advertised` map" | that is the minority case: 5436 of the 6077 null records name no origin at all, 641 are the stated case. `observe.txt` prints both |
+| a null `polled_peer` means "a pair that has never answered a poll is in no `advertised` map" | that is the minority case: the records that name no origin at all are the common one, and `observe.txt` prints the split. **The predicate that split them tested the wrong condition, which the fifth pass corrects below: the current three-way split is there** |
 | `polled_peer` "carries nothing about that name" | it names no node, but it is not independent of the name: the marked position is the pair's rank in plain name order in 0.758 of the labelled records that name two or more peers, because the tie-break order and name order coincide here |
 | the null `polled_peer` branch is listed as a branch that "is not dead" | it is also a missing attribution: in 6077 of 32 219 labelled records (0.189) the marker says nothing about which peer the decision is about, which is the gap this pass set out to close |
 | a run of the main cell "has about 158 of these decisions" | about 161. 158 is the one logged seed-1 run's count; `labels.txt` measures 160.7 a run at p 0.2 and 161.5 at p 0.4 |
@@ -1478,7 +1575,34 @@ this file's prose and into a script.
 | what the earlier text said | the fourth pass's correction |
 |---|---|
 | step 3 "moved +3.001866 ms (+2.96 %)", with no account of why | the move is 0.95 times the step-2 weight's own jackknife standard error over the 100 seeds, so the two values do not separate at this cell. The keying hypothesis is UNDECIDED under a rule fixed before the measurement: the paired move of the weight is 1.17 standard errors from zero (claim 2 holds) but the per-pair keying cuts the standard error by 1.51 and not by 2.0 (claim 1 does not), because the outage instants and the record schedule vary from seed to seed as well and are identical in the two steps |
-| the fixed weight was given as a point value, 104.295959 ms per poll | with a jackknife standard error of 1.685586 ms over the 100 seeds, about 1.6 % of itself. Three of the four printed steps move it by less than that, and the whole distance from the committed value to the fixed one is 1.16 standard errors |
+| the fixed weight was given as a point value, 104.295959 ms per poll | with a jackknife standard error of 1.685586 ms over the 100 seeds, about 1.6 % of itself. Two of the three moves BETWEEN the four steps are smaller than that (there are three moves, not four, and the third is +3.001866), and the whole distance from the committed value to the fixed one is 1.16 times STEP 2's standard error, which is the error that distance is quoted against everywhere here |
 | the labelled-row median margins, the at-or-below-the-weight shares and their floating-point band, the old-against-new moved counts, the render-branch counts and the reached-situation counts "were measured over the two label files by hand" and "no check in this directory re-derives them" | `specnums.py` re-derives every one of them from the two label files at every run and writes `specnums.txt`, in about 5 seconds and with no simulation. It refuses to count anything if a label file's sha256 is not the one `labels.sha256` records |
 | the old-against-new moved counts needed the superseded label files, which are kept nowhere a reader can reach | they are recomputed from the new files alone: a row's `pass_scores` and `polls` give each pass's delay back as `score - weight x polls`, and the superseded score as `delay + superseded weight x polls`. The arithmetic loses about 3e-11 ms, enough to turn an exact tie into a margin of a few 1e-12, so a reconstructed margin at or below 1e-9 ms is read back as the tie it was; the reconstruction was checked against the real superseded files row by row, on all 32 219 rows, while they are still in the third pass's scratch. The row-by-row identity of `state`, `resolved` and `history` is the one comparison that still needs them |
 | nothing said how close a label's margin can sit to zero while still being a label | `label.py` calls a tie only at a margin of exactly 0.0, and 1 labelled row at p 0.2 and 4 at p 0.4 carry a label on a margin of a few 1e-12, the last bits of a mean over the 8 passes. `specnums.txt` counts them. Nothing is relabelled for it; it is named because a margin read as a preference is rounding on those five rows |
+
+## What the fifth pass changed in this file
+
+The fifth pass moved no value either: not the weight (`weight.json` is byte-identical), not a label,
+not J, not a bin, not the observation record. Two outside readings of the fourth pass's tree were
+reproduced here before anything was acted on. What they found was **one measurement counting the
+wrong population and one check that could not fail**, and both had been quoted in every document.
+
+| what the fourth pass's text said | the fifth pass's correction |
+|---|---|
+| `t >= 3 or sd = 0` keeps 0.4596 of p 0.2's decisions at 0.9602 agreement, handed to ticket 10 as the way to select labels | 191 of those 729 decisions TIE on set A and carry no label, so 0.4596 is not a retention a supervised learner can read. The selection is `t >= 3 or (sd = 0 and labelled)`: 538 decisions at p 0.2 (0.3392 of all, 0.3871 of the 1390 labelled) at 0.9777, and 588 at p 0.4 (0.3623, 0.3952) at 0.9643. The retention was overstated by those 191 decisions, 729 of p 0.2's 1586 claimed against the 538 a learner receives, and the agreement understated, since the unlabelled ties agree less than the labelled rows they were pooled with |
+| the `sd = 0` bucket is "every pass separated the two arms by the same amount, so there is no t" | true of 66 of its 257 rows at p 0.2 and 53 of 182 at p 0.4. The rest are decisions whose passes scored the two best arms EQUALLY (`d_j = 0` throughout), which have no label at all and whose agreement is `None == None`. The bucket is two buckets, each with its own gloss, and every bucket of both breakdowns prints its set-A ties, its rows labelled on both sides and the agreement over those |
+| the `sd = 0` gloss covers every decision with no t | `label.paired_t` also returns no t below 2 passes, where there is one sample and the spread does not enter it. Those decisions now have their own bucket, printed when it holds anything, so a J = 1 run cannot put a whole cell under a sentence about the sd |
+| Q4's 0.9597 and 0.9680 are the agreement near the end of a run | they are, and 160 of p 0.2's 397 and 125 of p 0.4's 406 are set-A ties: every tie of a cell sits in Q3 or Q4. Over the rows labelled on both sides the last quartile reads 0.9956 of 228 and 0.9964 of 275, so the ties were pulling that figure DOWN, and what they really change is the size of the population a learner gets |
+| nothing anywhere named the decisions the replay makes after a live agent has stopped | 4 of p 0.2's Q4 and 9 of p 0.4's sit at or after `t0 + 130 000 ms`, and 60 and 78 over all 100 seeds. Every one is an exact tie carrying no label, so no labelled row sits there and no relabelling would move one; `label.py` says so where the probes are labelled, `specnums.txt` counts them per cell and `stability.txt` prints them per quartile |
+| `observe.py` counts "the state names no origin at all" with `peers_known == 0`, and prints a two-way split of the null marker | that predicate is also true of a state that names an origin NO peer has told it about, so those records were reported under a sentence that does not describe them. The split is three disjoint causes read off `origins_shown` and `peers_known`: 4838 name no origin at all, 598 name an origin no peer has told them about and 641 have advertisers that do not include the polled pair, where the old split read 5436 and 641; the 598 are the misfiled ones, and the logged run's 35-and-1 is really 30, 5 and 1. Every document that quoted the two-way split is corrected |
+| `observe.py`'s second PASS line: "the record's key structure is the same built from the log and built from the replay" | it compared the UNION of the dotted paths of each source, which one record missing a key or holding a broken nested dict could not fail. Every record is now held to a declared schema -- key set, field order and value types, at each of the four levels -- one record at a time, over the logged run, the replay roll-in and all 32 219 label rows. The union is still printed, as a reported fact |
+| the record carries no node name, no absolute stamp and no negative age | promised in the docstring and checked nowhere. A second PASS line now searches every record and every rendered text for a node name, a 10-to-13-digit stamp and a negative age, over the same population |
+| `origins_omitted` is `bool(state["truncated"])` | and the function's own `MAX_ORIGINS` slice. A caller handing over nine origins with `truncated` False had them dropped while the record said none were left out. The source caps at the same eight, so this half has never fired here |
+| `specnums.py` prints "so this cell gives the field no value a learner could read" beside the count of `in_flight > 0`, `truncated` and "pending" | only when the count is 0. The sentence is false of any other count, and this script is written to be rerun on other label files |
+| `weight.py` prints "the +%f ms" and "inside the 2.0 standard errors claim 2 allows" | the sign comes from the number (`%+.6f`), since the move can be negative on another cell; and the band is read off `claim2`, since on the NOT SUPPORTED branch the old sentence would have asserted a move of 3 standard errors to be inside 2 |
+| `port.check_seeds` guards every script that takes seeds | every CLI that takes seeds. `label.run_dict` and `label.label_run` are documented entry points for a later ticket and `port.Engine` is the constructor every run here goes through; none of the three checked, so an import could reach the measuring seeds. All three doors refuse now |
+| `labelcheck.py` check 2 verifies the probed decision's own row | with `any()` over the rows matching (node, neighbour, stamp), so a duplicate row at that instant could sit beside the one it passed on. The lookup requires exactly one row, the count is printed, and the row is compared field by field |
+| `statecheck.py` check 5's poisoned rebuild | could not print a FAIL. The poison's `AssertionError` left the decider, killed the script from inside `engine.go()` and took the AST half of the check with it. The decider records the exception and check 5 reports it as the fault it is. It records EVERY exception of the rebuild and not that one type, because `Poison` overrides five dunders and cannot raise the named `AssertionError` for every way of touching a history: `o.hist.copy()` raised an `AttributeError` and `o.hist * 2` a `TypeError`, and either would have put the traceback back. `Poison.__getattr__` now raises as well, so the attribute path carries the named message instead of only landing in the FAIL line |
+| this file's own weight reading: "neither the step-3 move nor the correction as a whole is larger than the seed noise of the measurement it corrects" | that sentence is about the keying move alone, and `weight.txt` had already dropped it: 1.16 standard errors is larger than one, and +0.845362 ms of the distance is the same simulations rescored, which no standard error covers. Also "three of the four printed steps move it by less than that" -- there are three moves between four steps and two of them are smaller -- and the `769.9 s` wall, and the parenthetical saying the reached-situation counts come from no script in this directory when `specnums.py` is where they come from |
+| "`README.md`, `RUN.txt`, the effort's `map.md` and the ticket's Result are not in this directory's scope" | `README.md` and `RUN.txt` are in this directory and in the Deliverables table, which omitted them |
+| nothing anywhere said where the bar `t >= 3` falls among the values the t actually takes | it falls on a mass point of them, so the selection's row count holds only under THIS summation order. 39 rows of each cell have a t within 1e-06 of 3 and sit within 1e-13 of it, a value the statistic reaches exactly in real arithmetic, so `>=` splits them by the last bits: 19 kept at p 0.2 and 25 at p 0.4, which leaves the counts anywhere in 5677 to 5716 and 5872 to 5911 (536 to 541 and 586 to 590 over the ten measured seeds). The bar cuts a mass point of the statistic instead of a gap in it, which is a weakness of the bar and not of the arithmetic; `specnums.txt` counts those rows, prints the range and adds the 1246 and 1263 rows whose runner-up ties the third arm in mean, 2 and 5 of which cross the selection when the other arm is paired |

@@ -13,6 +13,15 @@ and one adapter, `from_logged_rows`, that builds the same five inputs from the d
 rows of one node's testbed `events.jsonl`, so that the two functions run unchanged on the
 logs of stage `s11a`.
 
+WHAT THE PASS LINES GATE (2026-11-23)
+  Every record this script builds -- the logged run's, the replay roll-in's and all the
+  label files' -- is held to the declared schema of `RECORD_TYPES` and its three nested
+  levels, per RECORD and not over the union of them, and to the leakage rule the second
+  and third bullets below promise: no node name, no absolute stamp, no negative age, in
+  the record and in its own rendered text.  Before this the second PASS line compared the
+  two sources' UNIONED paths, which one record missing a key could not fail, and nothing
+  anywhere checked the leakage the docstring promised.
+
 WHAT IS FIXED HERE, AND WHY (the ticket's own open point)
   * **No absolute time.**  Every instant becomes an age in seconds relative to `now`, to
     one decimal.  An absolute stamp is an epoch millisecond: it differs between two runs
@@ -37,11 +46,12 @@ WHAT IS FIXED HERE, AND WHY (the ticket's own open point)
     it writes, and on a node with two neighbours a learner could not otherwise tell its
     own peer's told value from the other one's.
     `polled_peer` is null when that neighbour advertises none of the shown origins, and
-    the text says which of the two it is.  2026-11-23, corrected: the reason given here
-    used to be "a pair that has never answered a poll is in no `advertised` map", which is
-    the MINORITY case.  Measured over the label files, most null records name no origin at
-    all, so there is no advertiser map for the pair to be absent from; the rest are the
-    case that was stated.  `observe.txt` prints both counts.
+    the text says which of the three causes it is.  2026-11-23, corrected twice: the
+    reason given here used to be "a pair that has never answered a poll is in no
+    `advertised` map", which is the MINORITY case; then the split that replaced it tested
+    `peers_known == 0` for "names no origin at all", which a state naming an origin that
+    nobody advertised also satisfies.  The causes are now three and disjoint, read off
+    `origins_shown` and `peers_known`, and `observe.txt` prints all three counts.
   * **Field order.**  The resolution first, because it is the one fact that is new since
     this pair's previous decision and the one every hand-written rule branches on; then
     the pair's own scalars; then the per-origin rows, which are the largest block and the
@@ -68,6 +78,7 @@ import collections
 import gzip
 import json
 import os
+import re
 import statistics
 import sys
 
@@ -164,10 +175,11 @@ def observation(state, resolved, history, now, neighbor):
     could not tell its own peer's `told` value from the other one's.
 
     `polled_peer` is None when that neighbour advertises no origin the record shows, which
-    is a real state and not a missing input.  Two states produce it, and `observe.txt`
-    counts both: most often the state names no origin at all (early in a run, before any
-    reply has arrived), and less often a known origin's advertisers simply do not include
-    this pair.  The text says which of the two it is in as many words.
+    is a real state and not a missing input.  THREE disjoint states produce it and
+    `observe.txt` counts all three (see `polled_peer_facts`): the state names no origin at
+    all (most often, early in a run before any reply has arrived); it names an origin that
+    no peer told it about, so the advertiser map is empty; or peers told it about an origin
+    and none of them is this pair.
     """
     peers = peer_order(state)
     origins = []
@@ -206,7 +218,13 @@ def observation(state, resolved, history, now, neighbor):
         "fetch_timeout_age_s": (None if state["last_timeout_s"] is None else
                                 age(now, state["last_timeout_s"] * 1000.0)),
         "origins_shown": len(origins),
-        "origins_omitted": bool(state["truncated"]),
+        # 2026-11-23: the slice above is counted here too. The flag used to carry the
+        # caller's `truncated` alone, so a caller handing over more origins than
+        # MAX_ORIGINS would have had them dropped by this function while the record said
+        # none were left out. The source caps at the same number, so this half has never
+        # fired on any state measured here; it is what makes the flag a statement about
+        # the record rather than about the input.
+        "origins_omitted": bool(state["truncated"]) or len(state["origins"]) > MAX_ORIGINS,
         # How many distinct advertisers the whole state names, which can exceed the
         # MAX_PEERS shown under any one origin; each origin states its own omitted count.
         "peers_known": len(peers),
@@ -351,6 +369,108 @@ def merged(records):
     return out
 
 
+# ---------------------------------------------------------------------------
+# The record's declared schema, and what may not appear in a record or its text
+# ---------------------------------------------------------------------------
+
+# 2026-11-23: declared here, level by level, and held against EVERY record rather than
+# against the union of all of them.  The union hides exactly the fault that matters: one
+# record missing a key or carrying a broken nested dict passes as long as another record
+# of the same list supplies the path.  The order is the record's field order, which is a
+# promise of `observation`'s docstring, so each level is compared as an ordered list and
+# not as a set.
+RECORD_TYPES = {
+    "resolved": {"dict", "NoneType"},
+    "in_flight": {"int"},
+    "consecutive_poll_timeouts": {"int"},
+    "last_poll_status": {"str", "NoneType"},
+    "fetch_timeout_age_s": {"float", "NoneType"},
+    "origins_shown": {"int"},
+    "origins_omitted": {"bool"},
+    "peers_known": {"int"},
+    "polled_peer": {"int", "NoneType"},
+    "origins": {"list"},
+    "exchanges": {"list"},
+}
+RESOLVED_TYPES = {"poll_age_s": {"float"}, "trigger": {"str"},
+                  "empty": {"bool", "NoneType"}}
+ORIGIN_TYPES = {"hi": {"int"}, "missing": {"int"}, "advertised": {"list"},
+                "advertisers_omitted": {"int"}}
+ADVERTISED_TYPES = {"peer": {"int"}, "hi": {"int"}, "notified_max": {"int"}}
+EXCHANGE_TYPES = {"age_s": {"float"}, "trigger": {"str"},
+                  "empty": {"bool", "NoneType"}, "interval_s": {"float"},
+                  "waited_s": {"float"}, "clamped": {"bool"}}
+
+# A node name as the topology writes it, and an absolute millisecond stamp.  The name
+# pattern is general and not the run's own names, so a record built on another topology
+# is held to the same rule; the caller's own names are checked beside it.
+NAME_RE = re.compile(r"\bh\d+\b")
+EPOCH_RE = re.compile(r"\d{10,13}")
+
+
+def level_faults(what, obj, types):
+    """Every way one level of a record departs from its declared keys and value types."""
+    if not isinstance(obj, dict):
+        return [f"{what} is a {type(obj).__name__} and not a dict"]
+    bad = []
+    if list(obj) != list(types):
+        bad.append(f"{what} carries {list(obj)} and not {list(types)}")
+    for key, want in types.items():
+        if key in obj and type(obj[key]).__name__ not in want:
+            bad.append(f"{what}.{key} is a {type(obj[key]).__name__}, "
+                       f"not one of {sorted(want)}")
+    return bad
+
+
+def record_faults(record):
+    """Every way one record departs from the schema, at every level, as readable text."""
+    bad = level_faults("the record", record, RECORD_TYPES)
+    if isinstance(record, dict):
+        if isinstance(record.get("resolved"), dict):
+            bad += level_faults("resolved", record["resolved"], RESOLVED_TYPES)
+        for i, row in enumerate(record.get("origins") or [], 1):
+            bad += level_faults(f"origin {i}", row, ORIGIN_TYPES)
+            if isinstance(row, dict):
+                for k, adv in enumerate(row.get("advertised") or [], 1):
+                    bad += level_faults(f"origin {i} advertiser {k}", adv,
+                                        ADVERTISED_TYPES)
+        for i, ex in enumerate(record.get("exchanges") or [], 1):
+            bad += level_faults(f"exchange {i}", ex, EXCHANGE_TYPES)
+    return bad
+
+
+def leak_faults(record, text, names):
+    """Every node name, absolute stamp or negative age in one record or its own text.
+
+    2026-11-23: the three things the module docstring promises are not in the record were
+    promised and never checked here.  `names` is what the caller knows the decision is
+    about -- the deciding node and the polled neighbour -- and it is checked beside the
+    general name pattern, because a name this workload does not spell as `hN` would slip
+    past the pattern alone.  An age is negative when a stamp is in the future, which
+    `age` deliberately does not clamp, so the check is where the fault becomes visible.
+    """
+    bad = []
+    blob = json.dumps(record, sort_keys=True)
+    for where, hay in (("the record", blob), ("its text", text)):
+        for hit in sorted(set(NAME_RE.findall(hay))):
+            bad.append(f"{where} carries the node name {hit}")
+        for hit in sorted(set(EPOCH_RE.findall(hay))):
+            bad.append(f"{where} carries the absolute stamp {hit}")
+        for name in sorted(set(names)):
+            if re.search(r"\b%s\b" % re.escape(str(name)), hay):
+                bad.append(f"{where} carries the name {name} of its own decision")
+    ages = [("resolved.poll_age_s",
+             None if record.get("resolved") is None
+             else record["resolved"]["poll_age_s"]),
+            ("fetch_timeout_age_s", record.get("fetch_timeout_age_s"))]
+    ages += [(f"exchange {i}.age_s", ex["age_s"])
+             for i, ex in enumerate(record.get("exchanges") or [], 1)]
+    for what, value in ages:
+        if value is not None and value < 0:
+            bad.append(f"{what} is {value}, an age before the decision's own instant")
+    return bad
+
+
 def dotted(path):
     return ".".join(path)
 
@@ -377,55 +497,87 @@ def from_replay(run):
                               decider=decider), "B", None, None, None, tag, tag)
     decider.engine = engine
     engine.go()
-    return [observation(c["state"], c["resolved"], c["history"], c["ts_ms"],
-                        c["neighbor"])
-            for c in decider.capture]
+    # The names travel beside the records (2026-11-23), because the leakage check has to
+    # know which node and which neighbour the record is about before it can say the
+    # record does not carry them.
+    return ([observation(c["state"], c["resolved"], c["history"], c["ts_ms"],
+                         c["neighbor"]) for c in decider.capture],
+            [(c["node"], c["neighbor"]) for c in decider.capture])
 
 
 def polled_peer_facts(records, names):
-    """(null, of those with no origin at all, >=2 peers and marked, marked == name rank).
+    """(null, no origin, origin nobody told, other peers told, marked >=2, == name rank).
 
     Two facts the text used to assert without measuring them.  The first splits the NULL
-    `polled_peer` records by their cause, because the two are not the same gap: a record
-    with `peers_known` 0 has no advertiser map for the pair to be missing from, while one
-    with origins known has a pair that those origins' advertisers do not include.  The
-    second counts how often the marked position is the polled pair's rank in plain
-    advertiser-NAME order, because "the position carries nothing about the name" is a
-    claim about independence and the two are not independent on this workload.
+    `polled_peer` records by their cause; the second counts how often the marked position
+    is the polled pair's rank in plain advertiser-NAME order, because "the position
+    carries nothing about the name" is a claim about independence and the two are not
+    independent on this workload.
+
+    THE THREE CAUSES ARE DISJOINT AND THE EARLIER SPLIT NAMED THE WRONG CONDITION.
+    2026-11-23: the split counted `peers_known == 0` as "the state names no origin at
+    all", and those are different states.  A state can name an origin whose `advertised`
+    map is empty -- a record this node created or stored with no reply folded in yet --
+    and that state has `peers_known == 0` while naming an origin, so it was counted into a
+    bucket whose sentence does not describe it.  Over the two label files that
+    misattribution covers hundreds of records.  The three causes:
+
+      * `origins_shown == 0`: the state names no origin at all, so there is no advertiser
+        map for the polled pair to be missing from;
+      * `origins_shown > 0` and `peers_known == 0`: the state names origins and NO peer
+        told it about any of them, which `render` prints as "no peer told it";
+      * `peers_known > 0`: peers did tell it about an origin and none of them is the
+        polled pair, which is the case the first version of this text gave as the only one.
 
     `records` and `names` are parallel: one built record and its polled neighbour's name.
     """
-    null = no_origin = rank_n = rank_same = 0
+    null = no_origin = untold = other_peers = rank_n = rank_same = 0
     for record, (state, neighbor) in zip(records, names):
         if record["polled_peer"] is None:
             null += 1
-            no_origin += record["peers_known"] == 0
+            if record["origins_shown"] == 0:
+                no_origin += 1
+            elif record["peers_known"] == 0:
+                untold += 1
+            else:
+                other_peers += 1
             continue
         order = peer_order(state)
         if len(order) >= 2:
             rank_n += 1
             rank_same += record["polled_peer"] == sorted(order).index(neighbor) + 1
-    return null, no_origin, rank_n, rank_same
+    return null, no_origin, untold, other_peers, rank_n, rank_same
 
 
 def label_file_stats(path, lines):
-    """Characters per item, and the polled-peer facts, over one cell's label file."""
+    """Characters per item, the polled-peer facts and the two faults, over one cell.
+
+    2026-11-23: the schema and the leakage are checked HERE as well as on the logged run,
+    because these 32 219 records are the ones a learner reads and the logged run is one
+    seed of one stage.  The faults travel back to `main`, which gates one PASS line per
+    fault kind over every record this script builds.
+    """
     with gzip.open(path, "rb") as fh:
         rows = [json.loads(line) for line in fh]
     with_legend, without, records, names = [], [], [], []
+    faults = {"schema": [], "leak": []}
     for row in rows:
         record = observation(row["state"], row["resolved"], row["history"],
                              row["ts_ms"], row["neighbor"])
-        with_legend.append(len(render(record)))
+        text = render(record)
+        with_legend.append(len(text))
         without.append(len(render(record, legend=False)))
         records.append(record)
         names.append((row["state"], row["neighbor"]))
+        faults["schema"] += record_faults(record)
+        faults["leak"] += leak_faults(record, text, (row["node"], row["neighbor"]))
     lines.append(f"  {os.path.basename(path)}: {len(rows)} labelled decisions, "
                  f"characters per item median {statistics.median(with_legend):.0f} "
                  f"max {max(with_legend)} (without the legend: median "
                  f"{statistics.median(without):.0f} max {max(without)})")
     print(lines[-1], flush=True)
-    return with_legend, without, polled_peer_facts(records, names), len(rows)
+    return (with_legend, without, polled_peer_facts(records, names), len(rows),
+            faults)
 
 
 def main(argv=None):
@@ -439,6 +591,7 @@ def main(argv=None):
     run = R.load_run(STAGE, P, SEED)
     logged, counts, no_legend, per_node = [], [], [], {}
     logged_names = []
+    faults = {"schema": [], "leak": []}
     for node, rows in run["events"].items():
         for nb, state, resolved, history, now in from_logged_rows(rows):
             record = observation(state, resolved, history, now, nb)
@@ -448,6 +601,8 @@ def main(argv=None):
             counts.append(len(text))
             no_legend.append(len(render(record, legend=False)))
             per_node[node] = per_node.get(node, 0) + 1
+            faults["schema"] += record_faults(record)
+            faults["leak"] += leak_faults(record, text, (node, nb))
             if not text or "\n" not in text:
                 raise AssertionError(f"{node}->{nb} at {now} rendered nothing usable")
     rows_total = sum(
@@ -461,14 +616,39 @@ def main(argv=None):
     bad = say(len(logged) == rows_total,
               f"every logged state_poll_reschedule row of all {len(run['events'])} nodes "
               f"renders: {len(logged)} of {rows_total}", lines)
-    simulated = from_replay(run)
+    simulated, simulated_names = from_replay(run)
+    for record, (node, nb) in zip(simulated, simulated_names):
+        faults["schema"] += record_faults(record)
+        faults["leak"] += leak_faults(record, render(record), (node, nb))
+    # 2026-11-23: EVERY record against the declared schema, in place of the comparison of
+    # the two sources' unioned paths that stood here.  The union comparison passed as long
+    # as some record of each list carried a path, so one record missing a key or holding a
+    # broken nested dict was invisible to it -- the same union masking `statecheck.py`
+    # check 1b was written to end, in the one place still left with it.  The schema also
+    # holds each level's field ORDER, which `observation`'s docstring promises.
+    bad += say(not faults["schema"],
+               "every one of the %d logged and %d simulated records carries exactly the "
+               "declared keys, in the declared order, with declared value types, at every "
+               "level of the record (%d fault(s)%s)"
+               % (len(logged), len(simulated), len(faults["schema"]),
+                  "" if not faults["schema"] else ": " + str(faults["schema"][:3])),
+               lines)
+    bad += say(not faults["leak"],
+               "no one of those %d records, and no text rendered from one, carries a node "
+               "name, a 10-to-13-digit absolute stamp or a negative age (%d fault(s)%s)"
+               % (len(logged) + len(simulated), len(faults["leak"]),
+                  "" if not faults["leak"] else ": " + str(faults["leak"][:3])),
+               lines)
     a, b = merged(logged), merged(simulated)
     extra = sorted(dotted(p) for p in set(b) - set(a))
     missing = sorted(dotted(p) for p in set(a) - set(b))
-    bad += say(not extra and not missing,
-               f"the record's key structure is the same built from the log and built from "
-               f"the replay: {len(a)} paths from {len(logged)} logged decisions against "
-               f"{len(b)} from {len(simulated)} simulated ones", lines)
+    # Reported and not gated: the two sources are each held to the schema above, which is
+    # the stronger statement, and this line is the path COUNT a reader of the table below
+    # wants beside it.
+    out(f"  the union of the record's dotted paths is {len(a)} from the "
+        f"{len(logged)} logged decisions and {len(b)} from the {len(simulated)} simulated "
+        "ones, and the two sets are "
+        + ("the same" if not extra and not missing else "NOT the same"))
     if extra:
         out(f"  only the replay's records have: {extra}")
     if missing:
@@ -488,16 +668,28 @@ def main(argv=None):
             "yet, so this script has to be run again after label.py")
     else:
         every = []
-        facts = [0, 0, 0, 0]
+        facts = [0, 0, 0, 0, 0, 0]
         n_labelled = 0
+        file_faults = {"schema": [], "leak": []}
         for name in files:
-            with_legend, _n, cell, nrows = label_file_stats(
+            with_legend, _n, cell, nrows, cell_faults = label_file_stats(
                 os.path.join(learn, name), lines)
             every += with_legend
             facts = [a + b for a, b in zip(facts, cell)]
             n_labelled += nrows
+            for kind in file_faults:
+                file_faults[kind] += cell_faults[kind]
         out(f"  every cell together, {len(every)} labelled decisions: median "
             f"{statistics.median(every):.0f}, max {max(every)}")
+        bad += say(not file_faults["schema"] and not file_faults["leak"],
+                   "the same two checks over the %d labelled decisions of the label "
+                   "files, which are the records a learner reads: %d schema fault(s) and "
+                   "%d leak(s)%s"
+                   % (n_labelled, len(file_faults["schema"]), len(file_faults["leak"]),
+                      "" if not (file_faults["schema"] + file_faults["leak"])
+                      else ": " + str((file_faults["schema"]
+                                       + file_faults["leak"])[:3])),
+                   lines)
     out()
     out("One rendered item, in full (the median-length one of the logged run):")
     median_len = statistics.median_low(counts)
@@ -507,7 +699,8 @@ def main(argv=None):
                 out("  | " + line)
             break
     out()
-    lnull, lno_origin, lrank_n, lrank_same = polled_peer_facts(logged, logged_names)
+    (lnull, lno_origin, luntold, lother,
+     lrank_n, lrank_same) = polled_peer_facts(logged, logged_names)
     polled = len(logged) - lnull
     out(f"The polled peer's position is in the record ({polled} of {len(logged)} logged "
         "records name one). It is derived from the polled neighbour's NAME, which is the "
@@ -522,18 +715,25 @@ def main(argv=None):
     # predicate that reads as what it is.
     out(f"IN {lnull} OF THE {len(logged)} LOGGED RECORDS THE MARKER IS NULL, so for those "
         "decisions the record still cannot tell a learner which peer the decision is "
-        f"about. Two different states produce that: in {lno_origin} the state names no "
-        "origin at all, so there is no advertiser map for the pair to be missing from, "
-        f"and in {lnull - lno_origin} a known origin's advertisers do not include the "
-        "polled pair.")
+        f"about. THREE disjoint states produce that: in {lno_origin} the state names no "
+        "origin at all, so there is no advertiser map for the pair to be missing from; in "
+        f"{luntold} it names an origin that NO peer told it about, so the advertiser map "
+        f"is empty; and in {lother} peers did tell it about an origin and none of them is "
+        "the polled pair.")
     if files:
-        null, no_origin, rank_n, rank_same = facts
+        null, no_origin, untold, other, rank_n, rank_same = facts
         out(f"Over the {n_labelled} labelled decisions of the label files the same marker "
             f"is null {null} times, so THE ATTRIBUTION THIS RECORD ADDED IS ABSENT FROM "
-            f"{null / n_labelled:.3f} OF THE RECORDS A LEARNER WILL SEE. "
-            f"{no_origin} of those name no origin at all and "
-            f"{null - no_origin} have a known origin whose advertisers do not include the "
-            "pair.")
+            f"{null / n_labelled:.3f} OF THE RECORDS A LEARNER WILL SEE. {no_origin} of "
+            f"those name no origin at all, {untold} name an origin that no peer told them "
+            f"about, and {other} have origins peers told them about whose advertisers do "
+            "not include the polled pair.")
+        # 2026-11-23: the middle count is the one the earlier predicate hid. It tested
+        # `peers_known == 0` for "names no origin at all", which a state naming an
+        # unadvertised origin also satisfies, so these records were reported under a
+        # sentence that does not describe them.
+        out(f"  The middle cause is a state that DOES name an origin: {untold} of the "
+            f"{null} nulls, which an earlier predicate counted into the first cause.")
         out("The position names no node, but it is NOT independent of the neighbour's "
             f"name: over the {rank_n} labelled records that mark a position and name at "
             f"least two peers, the position is the polled pair's rank in plain "

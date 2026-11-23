@@ -4,9 +4,12 @@
     PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=<this worktree>/src \
       /home/lab_shared/cefore-semindex/.venv/bin/python3 -B specnums.py
 
-Writes its whole printed output to specnums.txt.  Reads the two label files and nothing
-else; it runs no simulation, so it takes seconds and may be rerun after any edit to this
-directory's prose.
+Writes its whole printed output to specnums.txt.  The two label files are its only source
+of data; it runs no simulation, so it takes seconds and may be rerun after any edit to
+this directory's prose.  2026-11-23: it imports `label` and `stability` for two
+definitions and no data -- the paired t and the bin edge the selection in
+`retention_facts` is defined by -- because a copy of either here would be a second
+definition of the thing being selected on.
 
 WHY THIS FILE EXISTS
   2026-11-23.  `labels.txt` carries the counts the labelling itself printed, `observe.txt`
@@ -18,6 +21,18 @@ WHY THIS FILE EXISTS
   reaches.  Those were measured once by hand, quoted in `spec.md`, and re-derived by
   nothing.  Everything here is recomputed from the files on disk at every run, so a number
   in the prose that no longer matches the data is a diff in this file's output.
+  2026-11-23 added two more of the same kind: the decisions the replay makes at or after
+  the instant a live agent stops (`post_stop_facts`), and how much of a cell the selection
+  `stability.py` hands a learner keeps over all 100 seeds (`retention_facts`, a retention
+  and not an agreement -- an agreement would need a second labelling, which no file on
+  disk carries for seeds beyond the ten `stability.py` ran).
+  2026-11-23, the same day and the same kind again: the rows whose paired t lands ON the
+  bar that selection cuts at, counted in `retention_facts` beside the retention itself.
+  The bar sits on a mass point of the statistic, so the retention above is a count that
+  floating-point rounding settles for a few dozen rows of each cell, and a t recomputed
+  elsewhere gives a different one. The count of those rows, which side the
+  float put each on, and how far the nearest row off the mass point lies are printed, so
+  the size of that slack is a number in this file and not a worry nobody measured.
 
   It asserts nothing about the values.  Whether a cell reaches a situation or a branch is a
   property of the workload, and a script that failed when a count moved would be refusing a
@@ -51,9 +66,19 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import observe as OBS  # noqa: E402
+# 2026-11-23, for `retention_facts` and nothing else: the paired t and the bin edge the
+# selection uses are `label.paired_t` and `stability.T_BINS`, and a second copy of either
+# here would be a second definition of the thing the selection is defined by.  Neither
+# import runs a simulation; `label` reads `weight.json` at import, which this file reads
+# anyway, and `stability`'s module body builds its seed list and nothing else.
+import label as L  # noqa: E402
+import stability as ST  # noqa: E402
 
 ARMS = [3.695, 6.0, 10.043]
 CELLS = ((0.2, "labels_p0.2.jsonl.gz"), (0.4, "labels_p0.4.jsonl.gz"))
+# The seeds `stability.py` labels twice, so that the retention below can be read over the
+# same rows its agreement is measured on as well as over the whole file.
+STABILITY_SEEDS = frozenset(ST.SEEDS)
 LEARN = "/home/lab_shared/semindex-learn/ev22"
 SHA_FILE = os.path.join(HERE, "labels.sha256")
 OUT_TXT = os.path.join(HERE, "specnums.txt")
@@ -62,6 +87,14 @@ OUT_TXT = os.path.join(HERE, "specnums.txt")
 # lands ON the weight, so an exact `<=` cuts a cluster of margins that are the weight to
 # the last bit; the share is reported both ways and the band between them printed.
 ATOM_TOL = 1e-9
+# 2026-11-23.  How close a paired t has to be to the selection bar to count as sitting ON
+# it, in units of t, which is dimensionless.  Absolute and not relative, because what is
+# being measured is the distance to one fixed bar and not a spread around a scale.  The
+# number itself is loose by seven orders of magnitude: the rows it catches are exactly
+# on the bar in real arithmetic and sit within 1e-13 of it in doubles, and the nearest row
+# off the mass point is printed beside them, so the tolerance can be read as deciding
+# nothing rather than taken on trust.
+BAR_TOL = 1e-6
 # The tie tolerance of the reconstructed superseded label, in ms of score.  Three orders of
 # magnitude above the reconstruction's own error, which is about 3e-11 ms.
 #
@@ -111,11 +144,12 @@ def rows_of(path):
 def pick(means):
     """`label.py`'s own choice rule, on an arm -> mean score map.
 
-    Written again here rather than imported, because importing `label.py` pulls the
-    labelling's engine and run dicts onto the import path of a script that only reads
-    files.  The two are held together by the file itself: the new label this rule picks
-    from the row's own `pass_scores` is compared against the row's stored `label` below,
-    on every row, and a disagreement is printed as a fault.
+    Written again here rather than imported, and kept that way after `label` became an
+    import of this file: this copy IS a check.  The label this rule picks from the row's
+    own `pass_scores` is compared against the row's stored `label` below, on every row of
+    both cells, so a drift between the rule that wrote the files and the rule stated here
+    is printed as a fault.  `paired_t` gets the opposite treatment -- imported, not
+    copied -- because no column of the file can check a t against anything.
     """
     order = sorted(ARMS, key=lambda a: (means[a], ARMS.index(a)))
     margin = means[order[1]] - means[order[0]]
@@ -218,6 +252,165 @@ def drop_facts(rows):
         "two have to agree" % (moved, len(rows), moved / len(rows)))
 
 
+def post_stop_facts(rows):
+    """The decisions the replay makes at or after the instant a live agent stops.
+
+    2026-11-23.  A live agent stops at `t0 + replay.STOP_AT_MS`; the replay goes on
+    resolving polls that were already in flight at that instant, so the labelling probes
+    decisions no testbed makes.  The rows stay in the file and no label moves: a poll
+    scheduled after that instant falls outside the scoring window, so the three arms score
+    identically and the row carries no label at all.  That is what the counts below say,
+    and it is why a relabelling would move no labelled row.  Counted per cell so that a
+    reader filtering on `ts_rel_ms` knows how many rows the filter takes.
+    """
+    late = [r for r in rows if r["ts_rel_ms"] >= OBS.R.STOP_AT_MS]
+    labelled = [r for r in late if r["label"] is not None]
+    nonzero = [r for r in late if r["margin"] != 0.0]
+    out("  decisions at or after ts_rel_ms %.0f, the instant a live agent stops and the "
+        "replay keeps resolving past: %d of %d%s. %d of them carry a label and %d have a "
+        "margin other than exactly 0.0, so %s"
+        % (OBS.R.STOP_AT_MS, len(late), len(rows),
+           ", the latest at %.0f" % max(r["ts_rel_ms"] for r in late) if late else "",
+           len(labelled), len(nonzero),
+           "every one of them is an exact tie and no labelled row sits there"
+           if not labelled and not nonzero else
+           "a labelled row sits past the stop and a filter on ts_rel_ms would drop it"))
+
+
+def retention_facts(rows, seeds_of_stability):
+    """What `stability.py`'s t selection keeps over this cell's own rows, retention only.
+
+    `stability.py` measures that selection's AGREEMENT on seeds 1 to 10, where every
+    decision is labelled twice from two disjoint sets of 8 passes.  Nothing on disk
+    carries a second labelling of seeds 1 to 100, so no agreement can be computed here.
+    What can be computed is how much of the file the selection keeps, and that is the
+    number a reader of the selection needs beside an agreement measured on ten seeds.
+
+    The labelling on disk IS set A of that measurement -- the same 8 passes, keyed the
+    same way -- so `label.paired_t` over a row's own `pass_scores` is the same statistic
+    the breakdown bins on.  The selection is `t >= 3 or (sd = 0 and labelled)`: a row whose
+    passes all scored the two best arms equally has `sd = 0` and no label, and keeping it
+    would keep a row no learner can train on.
+
+    2026-11-23.  The same loop counts what that retention is worth to the row, because the
+    bar cuts a mass point of the t.  A pattern of per-pass differences as plain as seven
+    passes at +a and one at -a gives mean 6a/8 against a sample sd of a/sqrt(2), so t is
+    exactly 3 in real arithmetic, and the whole-multiples-of-one-poll shape these cells are
+    full of lands on it too.  In doubles those rows sit within 1e-13 either side of 3 and
+    `>=` splits them by the order the sums happened to run in.  What is printed is how many
+    there are, how the float split them, the range the retention could take and the two
+    numbers that say the clump is isolated.  The runner-up tie is counted beside it: when
+    the second and third arm have the same mean, the arm the t is computed against is
+    picked by the order of `ARMS`, and the selection moves on some of those rows if the
+    other arm is taken instead.
+    """
+    bar = ST.T_BINS[-1][0]
+    kept = {True: [0, 0], False: [0, 0]}      # [kept rows, kept rows carrying a label]
+    labelled = {True: 0, False: 0}
+    total = {True: 0, False: 0}
+    on_bar = {True: [], False: []}            # (|t - bar|, kept) per row sitting ON the bar
+    outside = {True: None, False: None}       # nearest |t - bar| of a row NOT on the bar
+    tied = {True: [0, 0], False: [0, 0]}      # [runner-up ties, of them with no t]
+    flips = {True: 0, False: 0}               # ties the other runner-up moves across
+    for row in rows:
+        # Every row counts into the whole-cell tally (key False) and a row of the ten
+        # measured seeds into that tally as well (key True), so the two populations come
+        # out of one pass over the file.
+        ten = row["seed"] in seeds_of_stability
+        has = row["label"] is not None
+        idx = range(len(row["pass_scores"][repr(ARMS[0])]))
+        t, sd, _n = L.paired_t(row["pass_scores"], idx)
+        take = (t is not None and t >= bar) or (t is None and sd == 0.0 and has)
+        means = {arm: statistics.fmean(row["pass_scores"][repr(arm)]) for arm in ARMS}
+        order = sorted(ARMS, key=lambda a: (means[a], ARMS.index(a)))
+        runner_up_tie = means[order[1]] == means[order[2]]
+        flipped = False
+        if runner_up_tie:
+            # Sending the runner-up's own scores to infinity leaves the winner where it is
+            # and makes the third arm the runner-up, so the imported `paired_t` forms the
+            # pairing the other `ARMS` order would have formed.  Computing that t here
+            # instead would put a second definition of the statistic in this file.
+            other = dict(row["pass_scores"])
+            other[repr(order[1])] = [float("inf")] * len(other[repr(order[1])])
+            t2, sd2, _n2 = L.paired_t(other, idx)
+            take2 = (t2 is not None and t2 >= bar) or (t2 is None and sd2 == 0.0 and has)
+            flipped = take2 != take
+        dist = None if t is None else abs(t - bar)
+        for key in {ten, False}:
+            total[key] += 1
+            labelled[key] += has
+            if take:
+                kept[key][0] += 1
+                kept[key][1] += has
+            if runner_up_tie:
+                tied[key][0] += 1
+                tied[key][1] += t is None
+                flips[key] += flipped
+            if dist is None:
+                continue
+            if dist <= BAR_TOL:
+                on_bar[key].append((dist, take))
+            elif outside[key] is None or dist < outside[key]:
+                outside[key] = dist
+    for key, what in ((False, "this cell's own %d rows" % total[False]),
+                      (True, "the seeds %d to %d of it, which stability.py measured"
+                       % (min(seeds_of_stability), max(seeds_of_stability)))):
+        if not total[key]:
+            continue
+        n, n_lab = kept[key]
+        out("  t >= %g or (sd = 0 and labelled), over %s: keeps %d rows, %d of them "
+            "carrying a label (%.4f of all the rows and %.4f of the %d labelled ones). "
+            "RETENTION ONLY -- the agreement of this selection needs a second labelling "
+            "from disjoint passes and the files on disk are one labelling."
+            % (bar, what, n, n_lab, n_lab / total[key], n_lab / labelled[key],
+               labelled[key]))
+        atoms = on_bar[key]
+        on_kept = sum(1 for _d, take in atoms if take)
+        if atoms:
+            # The clause about the tolerance follows the two distances instead of being
+            # asserted over them.  What makes the tolerance decide nothing is room on BOTH
+            # sides: the clump a hundredfold inside it and the nearest t off the clump a
+            # hundredfold outside, so a BAR_TOL a hundred times larger or smaller would
+            # catch the same rows.  Both factors are printed, and on label files where the
+            # room is not there the line says the tolerance is deciding the count.
+            inner = max(d for d, _k in atoms)
+            room = (inner * 100.0 <= BAR_TOL
+                    and (outside[key] is None or outside[key] >= 100.0 * BAR_TOL))
+            out("    of those rows %d have a t within %g of the bar %g, and the float "
+                "comparison keeps %d of them and drops %d. A t of exactly %g is reachable "
+                "in real arithmetic: seven passes at +a and one at -a give mean 6a/8 "
+                "against a sample sd of a/sqrt(2), and per-pass differences in whole "
+                "multiples of one poll's weight can land on it too, so the statistic has "
+                "a mass point where the bar is. The largest |t - %g| among these rows is "
+                "%g, which is %.3g of the tolerance, and the nearest |t - %g| outside the "
+                "tolerance is %s, so %s."
+                % (len(atoms), BAR_TOL, bar, on_kept, len(atoms) - on_kept, bar,
+                   bar, inner, inner / BAR_TOL, bar,
+                   "%g, which is %.3g times it" % (outside[key], outside[key] / BAR_TOL)
+                   if outside[key] is not None
+                   else "none, every t of this population sitting on the bar",
+                   "the clump is isolated and a tolerance a hundred times wider or "
+                   "narrower would catch the same rows" if room else
+                   "the tolerance has no room on one of its sides and is itself deciding "
+                   "which rows these counts cover"))
+            out("    SO THE COUNT ABOVE IS NOT REPRODUCIBLE ROW BY ROW, which is a "
+                "weakness of the bar as this step defined it: `t >= %g` cuts a mass point "
+                "of the statistic instead of a gap in it. The selection would hold %d "
+                "rows if none of those %d were kept and %d if all of them were, and which "
+                "side a row falls on is settled by the order its sums ran in. A reader who "
+                "recomputes the t anywhere else lands somewhere inside that range and not "
+                "on this number."
+                % (bar, n - on_kept, len(atoms), n - on_kept + len(atoms)))
+        else:
+            out("    no row of this population has a t within %g of the bar %g, so the "
+                "count above does not turn on a floating-point comparison" % (BAR_TOL, bar))
+        out("    rows whose runner-up ties the THIRD arm in mean, where the order of "
+            "`ARMS` and nothing in the data picks which arm the t is taken against: %d, "
+            "%d of them with no t at all. Taking the other arm of the tie instead moves "
+            "%d of them across the selection, so that many rows of the count above rest "
+            "on this directory's arm order." % (tied[key][0], tied[key][1], flips[key]))
+
+
 def situation_facts(rows, records):
     """The state situations the labelling reaches, and the three no run of it reaches."""
     tmo = [r for r in rows if r["state"]["last_timeout_s"] is not None]
@@ -249,8 +442,14 @@ def situation_facts(rows, records):
                              ("truncated", bool, "true"),
                              ("last_poll_status", lambda v: v == "pending", '"pending"')):
         n = sum(1 for r in rows if want(r["state"][field]))
-        out("  %s %s: reached by %d of the %d decisions, so this cell gives the field no "
-            "value a learner could read" % (field, how, n, len(rows)))
+        # 2026-11-23: the clause follows the count instead of being printed over it. The
+        # sentence "gives the field no value a learner could read" is true of 0 and false
+        # of anything else, and this script is meant to be rerun on other label files.
+        out("  %s %s: reached by %d of the %d decisions%s"
+            % (field, how, n, len(rows),
+               ", so this cell gives the field no value a learner could read" if not n
+               else ", so the field carries a value on those decisions and nothing on the "
+               "rest"))
 
 
 def branch_facts(rows, records):
@@ -285,7 +484,7 @@ def branch_facts(rows, records):
         % (sum(1 for rec in records if rec["resolved"] is None), len(records)))
     named = sum(1 for rec in records if rec["polled_peer"] is not None)
     out("  records that name the polled peer: %d of %d (observe.txt prints the null side "
-        "of this and its two causes)" % (named, len(records)))
+        "of this and its three causes)" % (named, len(records)))
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +532,8 @@ def main():
         margin_facts(rows, w_new)
         moved_facts(rows, w_new, w_old)
         drop_facts(rows)
+        post_stop_facts(rows)
+        retention_facts(rows, STABILITY_SEEDS)
         out("  the state situations this cell reaches")
         situation_facts(rows, records)
         out("  the render branches, counted over every decision of the cell")

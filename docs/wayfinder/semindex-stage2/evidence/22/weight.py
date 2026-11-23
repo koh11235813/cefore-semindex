@@ -410,8 +410,12 @@ def print_part_a(res, p, weights):
         f"seeded with (seed, node name) and NOT with the replicate, so all {NREP} streams "
         "of a seed share one jitter sequence and the jitter is averaged over "
         f"{len(SEEDS)} independent draws; steps 3 and 4 key it per (seed, replicate) and "
-        f"average over {len(SEEDS) * NREP}. If that is the whole story, the +"
-        f"{move:.6f} ms is sampling noise of the step-2 measurement.")
+        f"average over {len(SEEDS) * NREP}. If that is the whole story, the "
+        # 2026-11-23: the sign comes out of the number and is not written into the
+        # sentence.  On another cell or another seed set this move can be negative, and
+        # the literal "+" that stood here would then have printed "+-"; the move is
+        # positive on this cell, so no output of this script ever showed it.
+        f"{move:+.6f} ms is sampling noise of the step-2 measurement.")
     out("  Jackknife standard error of the weight over the %d seeds, and the move set "
         "against it:" % len(SEEDS))
     for step in (2, 3):
@@ -478,13 +482,20 @@ def print_part_a(res, p, weights):
     # carries no seed-to-seed draw that a standard error could cover.  The noise comparison
     # belongs to the KEYING move alone, and the two are now printed apart.
     span = weights[4] - weights[1]
+    # 2026-11-23: the band this sentence puts the paired move in is read off `claim2` and
+    # not written into the sentence.  It used to assert "inside the 2.0 standard errors
+    # claim 2 allows" in every branch, so on the NOT SUPPORTED branch -- where the move is
+    # 3 standard errors or more -- the file would have printed a false statement in the
+    # voice of a result.
     out("  Either way, and about the KEYING move alone: the step 2 -> step 3 move is %.2f "
         "times the step-2 weight's own standard error and the paired move is %.2f of its "
-        "own, inside the %.1f standard errors claim 2 allows, so step 2's %.6f and step "
-        "3's %.6f do not separate at these %d seeds and this cell cannot tell the two "
-        "jitter keyings apart."
-        % (abs(move) / se[2], abs(wm) / wse, NOISE_SIGMA,
-           weights[2], weights[3], len(SEEDS)))
+        "own, %s the %.1f standard errors claim 2 allows, so step 2's %.6f and step "
+        "3's %.6f %s at these %d seeds and this cell %s the two jitter keyings apart."
+        % (abs(move) / se[2], abs(wm) / wse,
+           "inside" if claim2 else "OUTSIDE", NOISE_SIGMA,
+           weights[2], weights[3],
+           "do not separate" if claim2 else "DO separate", len(SEEDS),
+           "cannot tell" if claim2 else "DOES tell"))
     out("  The step 1 -> step 2 move of %+.6f ms is a different kind of quantity and no "
         "standard error covers it: it is the SAME %d simulations of this cell scored "
         "twice, the censored records left out of the delay and then entered at their lower "

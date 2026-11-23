@@ -2,7 +2,9 @@ The observable state as one record and one text, on s11a p 0.2 seed 1
 ==============================================================================
 Logged run: 148 state_poll_reschedule rows over 5 nodes ['h0', 'h1', 'h2', 'h3', 'h4'], 148 rendered.
 PASS every logged state_poll_reschedule row of all 5 nodes renders: 148 of 148
-PASS the record's key structure is the same built from the log and built from the replay: 30 paths from 148 logged decisions against 30 from 158 simulated ones
+PASS every one of the 148 logged and 158 simulated records carries exactly the declared keys, in the declared order, with declared value types, at every level of the record (0 fault(s))
+PASS no one of those 306 records, and no text rendered from one, carries a node name, a 10-to-13-digit absolute stamp or a negative age (0 fault(s))
+  the union of the record's dotted paths is 30 from the 148 logged decisions and 30 from the 158 simulated ones, and the two sets are the same
   the record's paths and their value types, from the logged run:
     consecutive_poll_timeouts=int
     exchanges=list
@@ -40,6 +42,7 @@ Characters per item
   labels_p0.2.jsonl.gz: 16071 labelled decisions, characters per item median 1170 max 1237 (without the legend: median 796 max 863)
   labels_p0.4.jsonl.gz: 16148 labelled decisions, characters per item median 1162 max 1232 (without the legend: median 788 max 858)
   every cell together, 32219 labelled decisions: median 1166, max 1237
+PASS the same two checks over the 32219 labelled decisions of the label files, which are the records a learner reads: 0 schema fault(s) and 0 leak(s)
 
 One rendered item, in full (the median-length one of the logged run):
   | state poll reschedule
@@ -61,7 +64,8 @@ One rendered item, in full (the median-length one of the logged run):
 
 The polled peer's position is in the record (112 of 148 logged records name one). It is derived from the polled neighbour's NAME, which is the fifth input and never reaches the record. What the record still does not carry is any node name and the decider ordinal, neither of which a live loop can hand a policy in a form that transfers.
 
-IN 36 OF THE 148 LOGGED RECORDS THE MARKER IS NULL, so for those decisions the record still cannot tell a learner which peer the decision is about. Two different states produce that: in 35 the state names no origin at all, so there is no advertiser map for the pair to be missing from, and in 1 a known origin's advertisers do not include the polled pair.
-Over the 32219 labelled decisions of the label files the same marker is null 6077 times, so THE ATTRIBUTION THIS RECORD ADDED IS ABSENT FROM 0.189 OF THE RECORDS A LEARNER WILL SEE. 5436 of those name no origin at all and 641 have a known origin whose advertisers do not include the pair.
+IN 36 OF THE 148 LOGGED RECORDS THE MARKER IS NULL, so for those decisions the record still cannot tell a learner which peer the decision is about. THREE disjoint states produce that: in 30 the state names no origin at all, so there is no advertiser map for the pair to be missing from; in 5 it names an origin that NO peer told it about, so the advertiser map is empty; and in 1 peers did tell it about an origin and none of them is the polled pair.
+Over the 32219 labelled decisions of the label files the same marker is null 6077 times, so THE ATTRIBUTION THIS RECORD ADDED IS ABSENT FROM 0.189 OF THE RECORDS A LEARNER WILL SEE. 4838 of those name no origin at all, 598 name an origin that no peer told them about, and 641 have origins peers told them about whose advertisers do not include the polled pair.
+  The middle cause is a state that DOES name an origin: 598 of the 6077 nulls, which an earlier predicate counted into the first cause.
 The position names no node, but it is NOT independent of the neighbour's name: over the 18448 labelled records that mark a position and name at least two peers, the position is the polled pair's rank in plain advertiser-NAME order in 13992 of them (0.758), against 0.5 for a coin on a two-peer record. That is the ranking's own tie-break and name order coinciding on this workload, not a name being recoverable from the record.
   on the logged run: 66 of 81.

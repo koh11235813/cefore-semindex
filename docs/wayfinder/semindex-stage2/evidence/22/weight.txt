@@ -114,4 +114,4 @@ Provisional timers that fired before their own poll had resolved: 0, over the 40
   The resolution-time decision is the one that takes effect, so a fired provisional timer is a poll whose send-time interval decided the next send on its own, and a label on that decision would be a label on the wrong instant.
 Decider calls over the port simulations of this script: 12354458. That is how many nested state copies a defensive deep copy of `obs["state"]` would cost here, and the reason the contract is the guard instead.
 
-wall 158.5 s on 5 workers
+wall 161.4 s on 5 workers

@@ -159,6 +159,14 @@ class Engine(B.Engine):
 
     def __init__(self, run, mode, lags, sim_rng, rule=None, pair_lag_seed=None,
                  pair_jitter_seed=None):
+        # 2026-11-23: the seed guard is here as well as in every CLI entry point, because
+        # the CLI is not the door a later ticket comes through.  A caller that imports this
+        # module and hands over a run dict built for seed 121 reaches the measuring seeds
+        # without touching a command line, and this is the one constructor every run of
+        # this directory goes through.  `run` without a seed is left alone: the key is the
+        # replay's own and a run dict that lacks it is not a run this guard can read.
+        if "seed" in run:
+            check_seeds([run["seed"]], "port.Engine")
         super().__init__(run, mode, lags, sim_rng, rule)
         self.pair_lag_seed = pair_lag_seed
         self.pair_jitter_seed = pair_jitter_seed

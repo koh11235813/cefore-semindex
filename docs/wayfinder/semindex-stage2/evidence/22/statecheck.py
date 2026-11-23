@@ -182,7 +182,15 @@ class Poison:
     def _blow(self, *_a, **_k):
         raise AssertionError("the state builder read an _Origin.hist")
 
-    __iter__ = __len__ = __getitem__ = __bool__ = __contains__ = _blow
+    # 2026-11-23: `__getattr__` is here beside the five dunders because the five cover only
+    # the ways of reading a history that this file happened to think of.  A builder writing
+    # `o.hist.append(...)` or `o.hist.copy()` used to get an AttributeError, which is not
+    # the named AssertionError and carries nothing about what the builder did wrong.  Every
+    # attribute of a history now raises `_blow`'s message, so the recorded fault names the
+    # fault.  Operators the type does not define (`o.hist * 2`, a comparison) still miss
+    # it, which is why the caller records any exception and not only this one.
+    __iter__ = __len__ = __getitem__ = __bool__ = __contains__ = __getattr__ = _blow
+    __add__ = __radd__ = _blow
 
 
 def walk(obj, path=()):
@@ -294,6 +302,17 @@ def port_run(run):
             origin_state.hist = Poison()
         try:
             rebuilt = engine.nodes[node].decision_state(nb)
+        # 2026-11-23: every exception of the rebuild is caught here, not the poison's
+        # AssertionError alone.  Letting one leave the decider killed the script with a
+        # traceback from inside `engine.go()`, so check 5 printed no FAIL line, its own
+        # comparison never ran and the AST half below it was never reached -- a builder
+        # that read a neighbour's store history would have ended this file in a crash
+        # instead of in a named failing check.  `Poison` cannot raise the named
+        # AssertionError on every operator a builder might reach for, so catching that one
+        # type would have left the crash in place for the operators it misses.  The
+        # rebuild is recorded as the exception, which check 5 reports as the fault it is.
+        except Exception as blown:
+            rebuilt = f"{node}->{nb} at {obs['where']['ts_ms']}: {blown}"
         finally:
             for origin_state, h in saved:
                 origin_state.hist = h
@@ -528,11 +547,21 @@ def check_no_hist(captured):
     decision instant cannot see it and the rebuild is equal by construction.  That
     content is a real reply's content (see the module docstring).
     """
-    bad = say(all(rebuilt == obs["state"] for obs, rebuilt in captured),
+    # A rebuild that raised comes back as the text of its own exception, which is how the
+    # decider records a builder that reached for a poisoned history (2026-11-23); a
+    # rebuild that differs from the state the decider was handed is the other way this
+    # fails, and the two are counted apart because they are different faults.
+    blown = [r for _obs, r in captured if isinstance(r, str)]
+    differ = [obs["where"] for obs, r in captured
+              if not isinstance(r, str) and r != obs["state"]]
+    bad = say(not blown and not differ,
               f"all {len(captured)} decisions: the state the BUILDER produces with every "
               "_Origin.hist poisoned is the state the decider was handed, so the builder "
               "reads no history at the decision instant (reply-time content is not "
-              "covered by this; see the module docstring)")
+              "covered by this; see the module docstring)"
+              + ("" if not blown and not differ else
+                 f" -- {len(blown)} rebuild(s) raised {blown[:2]} and {len(differ)} "
+                 f"differed {differ[:2]}"))
     # 2026-11-23: `obs` and `where` held to their exact key sets, per call.  Nothing read
     # them before, so a key added to `obs` inside `ask_decider` -- an engine attribute, a
     # second name, anything -- passed every line of this file.

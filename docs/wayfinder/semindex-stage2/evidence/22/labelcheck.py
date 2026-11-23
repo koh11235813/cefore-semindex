@@ -137,6 +137,30 @@ def check_f_is_f():
     return bad
 
 
+def probed_row(events, probe, arm):
+    """(the row carries the probe's own inputs and the forced arm, how many rows matched).
+
+    One decision's identity in these runs is (node, neighbour, stamp), and the row at that
+    identity is the one the label row reports the state of.  2026-11-23: the lookup has to
+    find EXACTLY one row.  It used to be an `any` over the matches, so a second
+    reschedule row at the same millisecond for the same pair could sit beside the row the
+    comparison passed on and nothing here would say so; the count is now returned and the
+    caller prints it, so a duplicate fails the line instead of hiding behind the match.
+    """
+    rows = [e for node, evs in events.items() for e in evs
+            if node == probe["node"] and e.get("kind") == "state_poll_reschedule"
+            and e["ts_ms"] == probe["ts_ms"]
+            and e["action"]["neighbor"] == probe["neighbor"]]
+    if len(rows) != 1:
+        return False, len(rows)
+    action = rows[0]["action"]
+    return (rows[0]["state"] == probe["state"]
+            and action["poll_epoch_ms"] == probe["resolved"]["poll_epoch_ms"]
+            and action["trigger"] == probe["resolved"]["trigger"]
+            and action["empty"] == probe["resolved"]["empty"]
+            and action["interval_s"] == arm), len(rows)
+
+
 def check_prefix():
     """Check 2: the three arms, and the roll-in, agree at every stamp before k."""
     bad = 0
@@ -150,31 +174,23 @@ def check_prefix():
             probe = roll.capture[k]
             stamp = probe["ts_ms"]
             want = before(roll_ev, stamp)
-            seen, obs_ok = [], True
+            seen, obs_ok, matched = [], True, []
             for arm in L.ARMS:
                 events, _e, _d = L.simulate(run, tag, tag, k, arm, f"k{k}j0")
                 seen.append(before(events, stamp))
                 # The probe's own inputs, which the label row reports as the state the
                 # decision was made in.  Compared here because the row takes them from the
                 # roll-in run and not from the arm's run.
-                hit = [e for node in events for e in events[node]
-                       if e.get("kind") == "state_poll_reschedule"
-                       and e["ts_ms"] == stamp
-                       and e["action"]["neighbor"] == probe["neighbor"]
-                       and node == probe["node"]]
-                obs_ok = obs_ok and any(
-                    e["state"] == probe["state"]
-                    and e["action"]["poll_epoch_ms"] == probe["resolved"]["poll_epoch_ms"]
-                    and e["action"]["trigger"] == probe["resolved"]["trigger"]
-                    and e["action"]["empty"] == probe["resolved"]["empty"]
-                    and e["action"]["interval_s"] == arm
-                    for e in hit)
+                ok, n_rows = probed_row(events, probe, arm)
+                obs_ok = obs_ok and ok
+                matched.append(n_rows)
             equal = all(s == want for s in seen)
             bad += say(equal and obs_ok,
                        f"p {p} seed {PREFIX_SEED} k {k} of {n}: the three arms and the "
                        f"roll-in carry the same {len(want)} events before the decision's "
-                       f"own stamp (prefix equal {equal}), and each arm's row at that "
-                       f"instant carries the roll-in's state and resolution and the "
+                       f"own stamp (prefix equal {equal}), and each arm's ONE row at that "
+                       f"instant ({matched} rows matched the decision's node, neighbour "
+                       f"and stamp) carries the roll-in's state and resolution and the "
                        f"forced arm ({obs_ok})")
             if not equal:
                 for i, s in enumerate(seen):

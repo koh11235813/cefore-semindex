@@ -118,7 +118,13 @@ def run_dict(p, seed):
     as it lengthens, so the set has to be the closure (`port.union_choices`).  A labelling
     run never takes the send-time uniform draw -- its decider decides every decision -- so
     the wider set costs nothing but a reader of these rows seeing six intervals.
+
+    2026-11-23: the seed passes the guard HERE and not only in `main`.  This function and
+    `label_run` are documented as direct entry points for a later ticket, and a caller
+    that imports them never goes near the command line that checks `--seeds`, so without
+    this line seed 121's outage schedule was one import away.
     """
+    PORT.check_seeds([seed], "label.run_dict")
     run = PR.run_dict(p, seed)
     return dict(run, policy=None, rule=None, choices=list(CHOICES), choice_jitter=JF,
                 redecide=True, decider=None)
@@ -333,6 +339,15 @@ def label_run(task):
     probes = decider.capture
     t0 = run["t0"]
     rows = []
+    # 2026-11-23, a fact of these files and not a filter: every probe the roll-in captured
+    # is labelled, including the ones the replay resolves at or after `t0 +
+    # R.STOP_AT_MS`, where a live agent has already stopped.  60 such decisions at p 0.2
+    # and 78 at p 0.4 are in the files on disk (`specnums.txt` counts them per cell and
+    # `stability.txt` shows which quartile holds them).  They are left in because a poll
+    # scheduled after that instant falls outside the scoring window, so all three arms
+    # score identically, the margin is exactly 0.0 and the row carries NO label: dropping
+    # them would move no labelled row and would move every count in every document.  A
+    # consumer that wants only decisions a testbed can make filters on `ts_rel_ms`.
     for k, probe in enumerate(probes):
         per = {arm: [] for arm in ARMS}
         for j in passes:
