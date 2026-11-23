@@ -1060,3 +1060,1087 @@ THE CHECKS, AS THEY PRINTED
   ONE EDIT TO spec.md BY THIS SESSION: the base model's "unquantised" was attributed to
   the user; it is the worker's choice the ticket records under 作業者が決めたこと, and the
   line now says so.  Threats 15 gained the sentence that points here.
+
+========================================================================
+17. THE TWO TUNED CANDIDATES                                      1820 s
+========================================================================
+  New files: S2/evidence/23/decider.py (L as a port decider and the read-out every later
+  script of this step decides with; imported, no main) and S2/evidence/23/tune.py with its
+  output tune.txt.  Nothing else in the directory changed.
+
+  Commands:
+    local -I <scratch>/selfcheck_local.py     with SMOKE_ROOT=<scratch>/localroot, a
+          directory holding only a `repo` symlink to this worktree: six lines that import
+          decider, read one label row and call decider.self_check.  It proves the card-free
+          half of decider.py runs on a machine with no GPU.  THE HARNESS IS NOT IN THE
+          REPOSITORY (it lives in the session's scratch directory), so the archived copy of
+          this output is part 5 of tune.txt and not a file of its own, and decider.py
+          carries the sys.path line that makes the symlinked ROOT work: port.py asserts the
+          realpath of the engine modules, so evidence/22 is resolved from decider.py's own
+          location and not from ROOT/repo.
+                               exit 0, "all 18 mutations produced a failure"
+    bash S2/evidence/23/push_inputs.sh                       (local, 3 s; 198 code files,
+          6 111 460 bytes, "digests: all 198 files agree on both sides")
+    ssh hpc-debian 'nvidia-smi --query-compute-apps=... --format=csv,noheader'
+                               printed nothing, i.e. the card was free; 61 MiB of 48 935
+                               MiB in use by the desktop
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > tune.t0 && nohup env \
+        PYTHONDONTWRITEBYTECODE=1 STORE=ROOT/store PYTHONPATH=ROOT/repo/src \
+        HF_HUB_OFFLINE=1 ./.venv/bin/python -B \
+        repo/docs/wayfinder/semindex-stage2/evidence/23/tune.py ROOT \
+        > tune.log 2> tune.err < /dev/null &'
+                               exit 0, tune.t0 20:22:56Z, the script's own last lines
+                               "wall clock 1819.8 s (30.3 min)" and "finished
+                               2026-11-24T05:53:16+0900"
+    ssh hpc-debian 'cat ROOT/tune.log' > S2/evidence/23/tune.txt
+    ssh hpc-debian 'cat ROOT/tune.log' | diff - S2/evidence/23/tune.txt
+                               diff empty; sha256 of both
+                               15fef38f3fa625d2596ba631309bcb2f652c09307e05998fdf8dac367dea0928
+                               323 lines, 21 599 bytes
+
+  ONE INVOCATION FOR BOTH CANDIDATES, b first.  The two have to start from the same
+  untuned adapter, which in one process is a fresh base plus a fresh get_peft_model under
+  torch seed 20261124 per candidate rather than a claim.  b runs first because it is 4018
+  rows against a's 10013: it takes every code path -- three epochs, three held-out passes,
+  three saves, the choice, the deletions, the reload and the digests -- for less than half
+  the card time of a, on a card shared with other accounts.  The order cannot move a
+  number: each candidate gets its own base, its own adapter under the same seed, and its
+  own per-epoch permutation.
+
+  THE WALL TIME AGAINST THE PLAN'S ESTIMATE.  spec.md's table says "about 24 minutes of
+  card time for the two candidates together"; the run took 30.3 min.  The difference is
+  accounted for line by line in tune.txt and is not a surprise in the training:
+    training   b 3 x 116 s = 348 s, a 3 x 289 s = 867 s, i.e. 0.460 and 0.462 s per step
+               against precheck.txt part 4's 0.447, so 20.3 min against the plan's 19.6
+    held out   b 3 x 41 s, a 3 x 103 s = 432 s, i.e. 72 ms per row against the 43.02 ms
+               the plan multiplied by.  THE 29 ms DIFFERENCE IS THE TOKENIZER: the shared
+               read-out tokenizes the prompt it is handed, and precheck's 43.02 ms is the
+               forward pass alone with the ids already on the card.  The plan's held-out
+               estimate of 1.4 min for both candidates is therefore 7.2 min in fact.  It
+               is named here because latency.py has to time the render and the tokenize
+               beside the pass for exactly this reason.
+               [2026-11-24, THE ONE LINE INSERTED INTO AN EARLIER SECTION OF THIS LOG,
+               and the reason it is inserted here rather than only appended: the capital
+               sentence above is WRONG and a reader meets it before reaching the
+               correction.  latency_dry.txt measures the tokenizer at 0.409 ms median and
+               the chat template at 0.214 ms, while the attached adapter costs about 25 ms
+               a pass, so the 29 ms is the ADAPTER.  Corrected in section 18 and again in
+               section 19, which lists every correction to an earlier section.  Nothing
+               above was deleted or changed.]
+    the reload 144 s more: the kept adapter is read back from disk and its held-out slice
+               re-read, which the plan's estimate does not contain because this check was
+               added here (see below).
+    the rest   model loads 4 x 2.7 s, 11 438 prompts rendered in 2.7 s and tokenized in
+               4.2 s, and part 5's mutations.
+
+  WHAT THE RUN SETTLED, with the numbers as tune.txt prints them:
+    THE ROW SETS.  All 29 counts of rows.txt reproduced on the host from the label file's
+    own bytes (sha256 fe194e3c... == evidence/22/labels.sha256), including candidate b's
+    4586 and the bare float's 4571.  So the host tunes on the rows the frozen plan names,
+    and section 16's one-row residue does not reach this run: fmean is exactly rounded and
+    the count is the same on both machines.
+    THE ADAPTER.  205 matched modules, 24 158 208 trainable parameters of 5 128 455 712
+    (0.4711 %), adapter dtype float32 over the bf16 base, 410 adapter tensors of which 205
+    lora_B exactly zero before the first step, 0 base parameters with a gradient, 205 LoRA
+    layers and none merged -- every one of precheck.txt part 4's numbers, re-derived.
+    Peak allocated 25.02 and 25.03 GB against part 4's 24.95.
+    THE PER-EPOCH TABLE (training loss first/last/mean, held-out cross-entropy, held-out
+    agreement, that slice's own always-10.043 s baseline):
+      candidate b, 568 held-out rows, baseline 0.6831
+        1   3.9074 0.4163 0.7903   0.643996   412/568 0.7254    ties 6
+        2   0.8273 0.3560 0.6680   0.789407   389/568 0.6849    ties 0
+        3   0.6487 0.3991 0.6400   0.622174   408/568 0.7183    ties 18   <- kept
+      candidate a, 1425 held-out rows, baseline 0.5102
+        1   5.9417 0.9632 0.9970   0.898804   725/1425 0.5088   ties 108
+        2   0.8058 1.0112 0.9200   0.895778   747/1425 0.5242   ties 45
+        3   1.0554 0.6599 0.9072   0.893928   777/1425 0.5453   ties 197  <- kept
+    BOTH KEPT EPOCH 3, by the lowest held-out cross-entropy, the rule fixed before any of
+    these numbers existed.  For a the three cross-entropies are 0.8988 / 0.8958 / 0.8939,
+    i.e. the choice rests on 0.0019, and the two epochs not kept were deleted.
+    THE AGREEMENT IS BARELY ABOVE THE CLASS PRIOR for candidate a: 0.5453 against 0.5102,
+    and its epoch 1 was BELOW it (0.5088).  For b it is 0.7183 against 0.6831.  Neither
+    number is a result -- they are tuning-half numbers on the slice the epoch was chosen on
+    -- and both sit inside what "always the most frequent arm" already buys.
+    THE ANSWER DISTRIBUTION SWINGS BETWEEN EPOCHS, which is worth recording because the
+    plan's pass-count estimate for the evaluation depends on which arm L leans to: a's
+    three epochs answered " short"/" mid"/" long" 28/84/1313, then 802/0/623, then
+    206/145/1074 of 1425.  One epoch of tuning moves the model from almost always " long"
+    to mostly " short" and back.
+    EXACT TIES ARE COMMON AND THE TIE RULE HAS A REACH: 197 of candidate a's 1425 held-out
+    decisions (0.138) had two or three candidate logits exactly equal at the maximum, and
+    the first-maximum rule sent every one of them to the shortest tied arm.  precheck.txt
+    part 1d had the bf16 margin minimum at 0.0000 over 512 UNTUNED rows; after tuning the
+    logits sit in a narrower band (the repeat check's row reads 18.75 / 18.875 / 19.25) and
+    bf16 has about three decimal digits there, so ties stop being a corner case.  eval.py's
+    tie count is therefore not a footnote and this is the reason.
+    THE REPEAT CHECK HOLDS WITH AN ADAPTER ATTACHED, for both candidates: two passes over
+    the same row give bit-identical logits and the same arm, and the check fires when one
+    of the two triples is moved by one unit.  That is the ticket's Acceptance 2 second half
+    for a read-out that decides, which smoke.txt had only for the untuned model.
+    THE FILE ON DISK IS THE MODEL THAT WAS MEASURED.  The kept adapter was read back with
+    PeftModel.from_pretrained, attached and unmerged, and reproduced its cross-entropy,
+    its agreement count and its tie count exactly (b 0.622174, 408/568, 18; a 0.893928,
+    777/1425, 197).  This check is an ADDITION to the plan, which asks for neither; it is
+    here because the epoch is chosen from numbers taken in memory while every later script
+    loads the adapter from disk, and because agree.py's free cross-check (a's agreement on
+    seeds 71-80 must equal this run's) compares against the file and not against the
+    process.
+    THE DIGESTS of the two kept adapters:
+      adapters/b/adapter_model.safetensors  96 693 360 bytes
+        64fb49840b79a2d16ac32225c8e5e4274bce18f96799e1725d110b4b9edb8172
+      adapters/a/adapter_model.safetensors  96 693 360 bytes
+        98f671bf49e25ff21236f503c57a1dc0d4d8c4f23b9565b6df5a05c842c94adf
+      adapter_config.json (1398 bytes) and README.md (5250 bytes) are BYTE-IDENTICAL
+      between the two candidates -- fcc7437735d098187b778ccecf0c4c4e7b71f37f03d08aecb9778a70e1f52552
+      and adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0 -- which is what
+      "the same recipe on two row sets" looks like on disk and is not a sign that the same
+      adapter was written twice: the weight files differ.
+    ROOT/adapters holds exactly six files, three per candidate, and no epoch directory.
+
+  EVERY CHECK, SHOWN FAILING (part 5 of tune.txt, 18 + 13 mutations, all of them fired):
+    decider.py, with a stub read-out and no card: card_free (the branch section 12 listed
+    as having no mutation, which it now has, because the check takes the nvidia-smi TEXT),
+    seeds_tuning, port.check_seeds, target_of, arm_order (the three answer words against
+    the port's three floats), candidate_ids, no_node_name (a name spliced into a real
+    rendering), render_roundtrip, prompt_len, adapter_dtype, unmerged/none,
+    unmerged/merged, pick/tie, pick/max, repeat/logits, repeat/arm, memory_empty,
+    no_read_at_send.
+    tune.py: digest, counts, roles/range, roles/measuring, targets/tower,
+    targets/arithmetic, targets/set, all_zero, changed, finite, prompt_len at a lowered
+    bound (300 tokens: 9458 of the prompts fire it, longest 519), reload, batch_of/left-pad.
+    NOT MUTABLE, and said so in the output rather than counted: batch_of's second check
+    (the read position is length-1) is an invariant of the builder's own arithmetic, shown
+    by section 7's mutation k.  The KEEP RULE is demonstrated and not counted, because a
+    rule has no failing input: on cross-entropies [1.0, 1.0, 0.5] it keeps epoch 3 and on
+    [0.5, 0.5, 1.0] it keeps epoch 1, i.e. the earlier of two tied epochs.
+    check_roles tests the measuring seeds BEFORE the ranges on purpose: in the other order
+    the measuring branch could not fire on any input the range test admits, and a branch
+    that cannot fail is not evidence.
+
+  WHAT HAS NO MUTATION, named rather than counted, as section 12 does.  Four refusals of
+  these two files are never fed a mutated input, so they are claims and not evidence:
+  tune.py part 1's inline "candidate b is not a subset of candidate a" (rows.py has the
+  same test as check_subset WITH a mutation, and the inline form here was not given one);
+  tune.py build()'s "base parameters are trainable"; decider.candidate_ids' "%r is not one
+  token at this position"; and the two positive assertions inside decider.self_check that
+  a pair's first send answers 6.0 and that the send after a resolution answers the pair's
+  own arm, which are the behaviour being demonstrated and have no mutated argument of
+  their own (the checks beside them, memory_empty and no_read_at_send, do).
+  ONE COSMETIC DEFECT IN THE ARCHIVED OUTPUT, said here because tune.txt is the run's and
+  is not edited: the self-check's prompt_len line reads "1 prompt(s) longer than 8 tokens,
+  longest 694", where 694 is the rendered text's CHARACTER count -- the stub hands the
+  check a character length because it has no tokenizer.  The mutation is of the bound and
+  fires correctly; only the unit in that one message is wrong.
+
+  WHERE THIS RUN DOES LESS THAN spec.md ASKS, with the sentence each item is measured
+  against, so that the main session decides and this step does not decide quietly:
+  - spec.md, the tuning recipe: "The tuning script asserts that exactly 205 modules
+    matched, AND NAMES THE 205."  The assertion is there and is set equality against the
+    language model's own projection list, so a missing or extra module stops the run; the
+    NAMING is not: tune.txt prints the count, the arithmetic (35 layers, 20 kv-shared) and
+    one example module, and not the 205 names nor precheck.txt's per-name breakdown
+    (q/o/gate/up/down 35 each, k/v 15 each).
+  - spec.md, the tuning recipe: "Expected: 24 158 208 trainable parameters of
+    5 128 455 712 (0.4711 %), adapter dtype float32, 410 adapter tensors of which 205
+    lora_B exactly zero before the first step, and 0 base parameters carrying a gradient --
+    all asserted".  Four of those are asserted (the module set, the dtype, the 205 zero
+    lora_B, the 0 base gradients); the two LITERALS, 24 158 208 and 410, are printed and
+    are equal to precheck.txt's, and are not compared against the literals.
+  - spec.md, the repeat check: "every script ... that produces a decision with an adapter
+    attached -- tune.py's HELD-OUT PASS, agree.py, eval.py's gate, latency.py -- reads out
+    one fixed label row twice".  The repeat check is made once per candidate, on the kept
+    adapter read back from disk, after the three held-out passes rather than inside them.
+    It is the same adapter and the same read-out, and the path it covers is
+    PeftModel.from_pretrained, which is the path eval.py, agree.py and latency.py will
+    take; it is not where the sentence puts it.
+  - brief rule 9, "Do not recreate a function that exists; import it".  precheck.py and
+    rows.py are scripts whose work happens at import, and rows.py additionally reads a
+    digest file by an absolute path of the other machine, so neither can be imported on
+    this host.  Carried over rather than imported, each with its reason in the code:
+    check_targets, check_all_zero, check_changed, check_finite and the nvidia-smi card
+    check (precheck.py), load_model as decider.load_base, forward_last plus pass_batch1 as
+    decider.readout, check_identical as decider.check_repeat, and t_of plus keeps_b
+    (rows.py).  `../22/label.py`'s paired_t itself IS imported, so the statistic candidate
+    b is selected by has one definition; the evidence that the restated FILTER agrees with
+    rows.py's is that all 29 counts reproduced.
+
+  THREE THINGS THIS STEP ADDED THAT spec.md DOES NOT NAME, each one an addition and not a
+  change of a frozen setting:
+    1. torch.manual_seed(20261124) before get_peft_model.  lora_A is randomly initialised
+       and the plan names a seed only for the per-epoch shuffle, so without this the
+       adapter's starting point was the only unseeded draw in the recipe and a re-run would
+       not reproduce.
+    2. the reload-and-reproduce check above.
+    3. the render round trip in decider.py's self-check: one decision rendered from a port
+       observation against the same decision rendered from the label row it came from.  The
+       model is tuned on rows and read out inside a simulation, and if the two roads to the
+       text ever differ, both scripts print plausible numbers and nothing else compares
+       them.  694 characters, equal.
+
+  THE EPOCH SEED INDEXING, because the plan's wording allows two readings.  "one
+  permutation per epoch from numpy.random.default_rng(20261124 + epoch)" is implemented
+  with epoch 0-based, so the three permutations come from 20261124, 20261125 and 20261126
+  and the seed the plan names is actually used.  tune.txt prints the arithmetic per epoch
+  ("permutation from default_rng(20261124 + 0)") rather than the resulting number alone.
+
+  WHAT WAS NOT DONE
+  - No evaluation and no agreement number.  No simulation was run, no port was built, no
+    decider drove a run, and seeds 81-100 were not opened: tune.py reads the label file and
+    cuts the row list at seed 80 before anything is rendered.  eval.py, ana.py, agree.py
+    and latency.py do not exist yet.
+  - L's send-time convention, its per-pair memory and its tie rule are exercised only by
+    decider.py's stub self-check.  No forward pass of this run went through L.__call__.
+  - Nothing is timed with an adapter attached.  The repeat check makes two passes and times
+    neither, and the 72 ms per held-out row above is a pass plus a tokenizer call plus
+    python, not a latency measurement.
+  - The read-out and the training forward are not the same arithmetic, and this run does
+    not price the difference.  The training forward is batch 16 under a bf16 autocast; the
+    read-out is batch 1 with none, and peft's LoRA branch casts its input to the adapter's
+    float32 (lora/layer.py:1203, read on the host's peft 0.22.0) while the autocast would
+    run that matmul in bf16.  Both calls are the ones the plan froze and precheck measured.
+    So the kept epoch minimises a cross-entropy of the read-out arithmetic over weights
+    fitted in another one -- Threats 7 in the flesh, now with the mechanism named.
+  - Nothing tuned was scored.  Every number here is on seeds 1 to 80, the agreement is on
+    the slice the epoch was chosen on, and which candidate is better is the replay score's
+    to say.
+  - WHAT THIS RUN LEFT UNDER ROOT: adapters/{a,b} (three files each), tune.log, tune.err
+    (the four weight-loading progress bars and nothing else) and tune.t0.  The epoch
+    directories are gone.  ROOT/tune.t1 was written by a polling command of this session
+    and not by the run, so it was removed rather than left to be read as the finish
+    instant; the wall time above is the script's own first-to-last-line figure beside
+    tune.t0.
+
+========================================================================
+18. THE EVALUATION PIPELINE, PROVEN ON DRY RUNS ONLY             438 s
+========================================================================
+  New files: S2/evidence/23/eval.py, ana.py, agree.py, latency.py with the four dry
+  outputs eval_dry.csv, eval_dry.txt, ana_dry.txt, agree_dry.txt, latency_dry.txt.
+  CHANGED: decider.py, by two ADDITIONS and no change of behaviour (see below).
+  NOT RUN AND NOT PRESENT: eval.csv, eval.txt, ana.txt, agree.txt, latency.txt.  No
+  seed above 80 was simulated and no model was read out on one.
+
+  Commands, in the order they ran, local machine first:
+    bash S2/evidence/23/push_inputs.sh            (local, 3 s; 200 then 205 then 208
+          code files, "digests: all N files agree on both sides" each time)
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > evaldry.t0 && nohup env \
+        PYTHONDONTWRITEBYTECODE=1 STORE=ROOT/store PYTHONPATH=ROOT/repo/src \
+        HF_HUB_OFFLINE=1 ./.venv/bin/python -B \
+        repo/docs/wayfinder/semindex-stage2/evidence/23/eval.py ROOT --dry \
+        > eval_dry.log 2> eval_dry.err < /dev/null &'
+                               exit 0, evaldry.t0 2026-11-23T21:25:05Z, the script's own
+                               "wall clock 107.1 s (1.8 min)" and "finished
+                               2026-11-24T06:26:53+0900"; eval_dry.err EMPTY (the parent
+                               loads no weights, so no progress bar reaches it)
+    the same command twice more, > eval_dry2.log and > eval_dry3.log
+                               exit 0 in 5.0 s each, "to run now (nothing)", all seven
+                               part files skipped, and eval_dry.csv rewritten from them
+                               to the SAME sha256 f24f08da...  That is the restart path
+                               the real run depends on, exercised rather than described
+    the same command with ONE part file's script digest edited by hand
+                               exit 1, nothing scored, stderr ending
+                               "decider.Fail: the part file of F: script_sha
+                               'deadbeefdaf...' against '637bab6da...'".  The part file
+                               was restored from its backup and eval_dry.csv then
+                               rebuilt to the same sha256 again (eval_dry3.log)
+    ssh hpc-debian 'cd ROOT && env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=ROOT/repo/src \
+        ./.venv/bin/python -B repo/.../23/ana.py eval_dry.csv --dry > ana_dry.log'
+                               exit 0, 217 lines; no card, no model, no store.
+                               RUN TWICE: the first run printed one literal "%%" where a
+                               per cent sign belonged, the format string was corrected and
+                               the run repeated on both machines, so every number in
+                               ana_dry.txt is the second run's and none is edited
+    local  docs/.../23/ana.py docs/.../23/eval_dry.csv --dry
+                               exit 0, and `diff` against the host's output is EMPTY,
+                               sha256 ff8ba76f... on both machines although the
+                               interpreters are python 3.12.13 and 3.13.5.  That is what
+                               "ana.py reads the csv only and runs anywhere" means,
+                               measured; ana.txt carries no clock time and no path for
+                               exactly this reason, as parity.txt does not
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > agreedry.t0 && nohup env ... \
+        agree.py ROOT --dry > agree_dry.log 2> agree_dry.err &'
+                               exit 0, "wall clock 277.0 s (4.6 min)", finished
+                               2026-11-24T06:42:01+0900
+    ssh hpc-debian 'cd ROOT && env ... latency.py ROOT a --dry > latency_dry.log \
+        2> latency_dry.err'
+                               exit 0, "wall clock 53.4 s (0.9 min)", finished
+                               2026-11-24T06:45:24+0900.  RUN TWICE: the first run's
+                               table misaligned one label column, the format string was
+                               corrected and the run repeated, so every number in
+                               latency_dry.txt is the second run's and none is edited
+    ssh hpc-debian 'cat ROOT/<name>.log' > S2/evidence/23/<name>.txt, then
+    ssh hpc-debian 'cat ROOT/<name>.log' | diff - S2/evidence/23/<name>.txt
+                               diff EMPTY for all four; the archived files are the
+                               hosts' bytes.  eval_dry.csv was copied and diffed the
+                               same way.
+      eval_dry.txt     305 lines  sha256 d15db720c4910d6817ab3d077812ce24fb4fb4ba31e069aa5f1c1951e56c7ba1
+      eval_dry.csv      29 lines  sha256 f24f08dabdbee3cc0060ab0e2c57eca2aca1803debe1f3863d88f32f1175a40a
+      ana_dry.txt      217 lines  sha256 ff8ba76fc18b345988f1429f6b9039c5b3b3a30e3f01a446127a0cdcbe92dc0c
+      agree_dry.txt    198 lines  sha256 53efff0ca49585b5f83d8b1e96136c23acc6fdd01bb50b884b421a96b680aefd
+      latency_dry.txt  153 lines  sha256 fcba64d11f07258f0e0d4c7b42fabf1011873c549e54611800b1e2ab8b5cd879
+
+  THE K = 4 GATE PASSED, AND THAT CLOSES SECTION 13's LARGEST OPEN ITEM.  Section 13
+  says the K = 2 and K = 4 workers of precheck.py were timed and their logits "were
+  never compared with each other or with batch 1".  eval.py compares them with batch 1:
+  one child process, alone on the card, read out a fixed set of 64 label rows of seeds
+  1 to 80 at batch 1 for each of the three model deciders and wrote those logits to
+  disk; that child EXITED; then four workers each loaded their own copy and read out the
+  same 64 rows, and every one of the 4 x 3 x 64 x 3 = 2304 logits was bit-identical to
+  the reference under torch.equal.  The parent held no model at any time (it holds a
+  cuda context of about 0.5 GB), which is the arrangement precheck.txt:121 measured the
+  K = 4 rate under.  The gate is shown failing on one value moved by one unit and on a
+  wrong shape.
+  WHAT THE GATE DOES NOT SAY: it compares 64 rows per model and not the 452 000 passes
+  the real run will make, and it was passed on this build on this card on one day.
+
+  THE ADAPTER ON DISK IS THE ONE THE TUNING MEASURED, and the read-out is the tuning's.
+  eval.py, agree.py and latency.py all read out seed 71 k 72 -- tune.py's own repeat row
+  -- with PeftModel.from_pretrained, and all three reproduced tune.txt's triples exactly:
+  a [18.75, 18.875, 19.25] and b [19.375, 18.75, 19.5].  agree.py reproduced MORE than
+  that: candidate a's agreement over the 1425 labelled rows of seeds 71 to 80 came out
+  777/1425 = 0.545263 with 197 ties, which is tune.txt's held-out agreement and tie count
+  for a's kept epoch to the row.  That is the cross-check the brief asks for, asserted and
+  not merely printed.
+
+  WHAT THE DRY EVALUATION MEASURED, AND WHAT IT CANNOT MEAN.  Seeds 1 and 2, streams 0
+  and 1, four runs per decider, all seven deciders.  THE SEEDS ARE TUNING SEEDS THAT BOTH
+  CANDIDATES WERE FITTED ON, so the scores are scores on training data over four runs and
+  say nothing about which candidate is better.  The mean selecting scores came out F
+  34572.7, b 37605.8, a 38018.0, const6.000 39997.1, const10.043 40300.8, const3.695
+  40313.2, untuned 41139.7 ms.  One free cross-check: const3.695 seed 1 stream 0 scores
+  40921.49078708623 in eval_dry.csv, which is parity.txt's own figure for that seed and
+  decider, so the port, the streams and the scorer are the ones parity.py reproduced on
+  both machines.
+
+  THE RESOLUTION-TIME DECISIONS PER RUN, which is the number the plan's wall-time
+  estimate could not have: the plan multiplies by the roll-in's 160.7, and L's own count
+  is not that.  Measured, min / mean / max over the four dry runs:
+    untuned   279 / 280.0 / 282      it answers " short" on 1119 of 1120 decisions
+    a         122 / 125.8 / 132      it answers " long" on about 0.72 of them
+    b         151 / 159.2 / 165      the only one near the plan's 160.7
+  decider_ord["state_poll"] equals decider_ord["state_poll_reschedule"] on every run and
+  the decider's own pass count equals the latter, so one decision cost exactly one
+  forward pass and a send cost none, counted and not described.
+
+  THE REAL EVALUATION, RE-ESTIMATED FROM THOSE NUMBERS.  800 runs x the mean above x
+  three model deciders = 452 000 forward passes, against the plan's 385 704.
+    at K = 4   59.4 passes/s measured over the workers' own windows -> 126.9 min (2.1 h)
+               against the plan's 84.7 min
+    at K = 1   an INFERENCE and not a measurement here: the reference child, alone on the
+               card, read out at 62.5 ms per row (the tokenizer call and the pass), and a
+               render is 0.1 ms on the cpu, so 452 000 x 62.6 ms = 471.6 min (7.9 h)
+               against the plan's 278.3 min
+  Both figures are above the plan's because the plan priced a pass at 43.02 ms and a
+  decision costs more than a pass: see the latency finding below.
+
+  THE LATENCY FINDING, AND IT CORRECTS SECTION 17.  Section 17 reads "THE 29 ms
+  DIFFERENCE IS THE TOKENIZER", of the gap between the tuning's 72 ms per held-out row
+  and precheck.txt's 43.02 ms pass.  THAT IS WRONG AND THE TOKENIZER IS NOT WHAT IT IS.
+  latency.py timed the two models alternating pass by pass in one process on the
+  median-length prompt of the labelled rows of seeds 1 to 80 (seed 1 k 111, 473 tokens,
+  against precheck's 478):
+    candidate a   median 69.76 ms   p90 72.71   p99 77.34   max 84.41
+    untuned base  median 44.36 ms   p90 45.67   p99 49.48   max 51.31
+    difference        +25.39 ms        +27.04      +27.85      +33.10
+  and, timed separately and named as NOT part of the pass: observation + render 0.043 ms,
+  chat template 0.214 ms, tokenizer 0.409 ms, all medians over 300 calls.  So THE ADAPTER
+  COSTS ABOUT 25 ms AT BATCH 1 and the three cpu parts cost 0.67 ms together.  The
+  untuned 44.36 ms reproduces precheck.txt's 43.02 ms on a row five tokens shorter, which
+  is what says the two measurements are of the same thing.  100 ms is printed beside the
+  figures with no verdict, as the ticket requires.
+
+  THE AGREEMENT NUMBERS OF THE DRY RUN, on seeds 71 to 80, which are the rows that CHOSE
+  each candidate's kept epoch and are therefore not a held-out slice in the ordinary
+  sense.  1425 labelled rows, baseline always 10.043 s = 727/1425 = 0.5102:
+    untuned  472/1425 = 0.3313, BELOW the baseline by 0.179, answers 970/53/402
+    a        777/1425 = 0.5453, above it by 0.035, answers 206/145/1074, ties 197
+    b        756/1425 = 0.5306, above it by 0.020, answers 659/0/766, ties 83
+  Candidate b answered " mid" ZERO times on all 1425 rows, so its middle column is empty
+  and the 3 x 3 table shows a decider that uses two of its three words.  No pass or fail
+  is attached to any of these numbers and none of them is on the seeds the ticket asks
+  for.
+
+  THE TWO STATISTICS, EXERCISED.  ana_dry.txt computes the mean selecting score, the
+  frontier gain through ../20/predict.py's own interp and gain with this step's three
+  re-run arms stored under ARM_STAGES, its own 2000-resample loop over seeds with the
+  drop-and-count rule, the 297 ms band, the paired bootstrap and the verdict.  At two
+  seeds the gap was 412.216 ms, which clears the band, while the paired bootstrap's
+  interval was -3311.291 to 4135.722 ms and contains 0, so the run printed "SEPARATED,
+  NOT RESOLVED" -- the branch of the plan that was hardest to be sure of, reached by the
+  data rather than by a test.  Every gain's interval came out with 0 resamples dropped
+  and 3 distinct resample values of 2000, which is what "degenerate at two seeds" means
+  and which ana_dry.txt says in its own first lines.
+
+  THE COLUMN ORDER IS CHECKED AND NOT COMMENTED.  spec.md names the one defect of this
+  analysis that raises nothing and prints a plausible number: the per-seed row handed to
+  predict.gain must be [n4, c4, lat, polls].  ana.py compares that row against the four
+  sums re-read from the csv by column name AND requires predict.vals to read the delay,
+  the polls and the censored share back out of it; the mutation hands it the earlier
+  draft's [lat, n, c, polls] and it fires.  A second mutation swaps n4 and c4.
+
+  EVERY CHECK, SHOWN FAILING (19 + 17 + 14 + 13 = 63 mutations, all of them fired):
+    eval.py (19): card_free, seeds_tuning, port.check_seeds, roles/range,
+      roles/measuring, fits at K = 8, choices/narrowed, choices/redecide, the port's own
+      refusal of an interval outside the choice set (a real simulation whose decider
+      returns 5.0), memory_empty on a memory seeded by hand and driven through the
+      wrapper every simulation goes through, counters/reads, counters/sends,
+      sidecar/script digest, sidecar/model digest, complete/one row missing,
+      complete/one row twice, prompt_len at a lowered bound, gate/one value moved by 1,
+      gate/shape.
+    ana.py (17): port.check_seeds, roles/range, roles/measuring, one script digest, one
+      model digest, weight, score/one lat moved, score/one poll moved, complete/one row
+      missing, complete/one decider twice, row order/[lat, n, c, polls], row order/n4 and
+      c4 swapped, boot/shape, boot/index out of range, gain/one stage scaled,
+      gain/not monotone, gain/polls outside the arms.
+    agree.py (14): card_free, seeds_tuning, port.check_seeds, roles/range,
+      roles/measuring, slice/one row lost, baseline/count, baseline/share, the
+      cross-check against tune.txt, table/one decision lost, target_of, pick/tie,
+      prompt_len at a lowered bound, no_node_name.
+    latency.py (13): card_free, seeds_tuning, port.check_seeds, roles/range,
+      roles/measuring, median/a closer row exists, timed/one pass short, timed/a zero
+      pass, cost order/one loop twice, adapter_dtype, unmerged, prompt_len at a lowered
+      bound, no_node_name.
+    The repeat check's own mutation runs inside decider.repeat_lines once per model
+    decider in eval.py, once per model decider in agree.py and once in latency.py: one
+    of the two stored logit triples is moved by one unit.
+    decider.py's own eighteen are NOT re-run: tune.txt part 5 archives them and these
+    four scripts import that module unchanged apart from the two additions below.
+
+  WHAT HAS NO MUTATION, named and not counted, as section 12 does:
+  - eval.py's two subprocess failure branches (a worker that exits before the gate, a
+    worker that never reaches it in the deadline).  Staging either needs a killed child
+    and the run then has no scores, so both are claims here and not evidence.
+  - ana.py's closeness RULE.  A rule has no failing input; its three branches are
+    reached by the data and which one was reached is printed with both numbers beside it.
+  - the two "no gain" lines are predict.gain's OWN refusals and not checks of ana.py.
+    They are shown because the report prints a sentence where a number would go, and a
+    reader needs to know the sentence was reached by a real refusal; they are counted
+    among ana.py's 17 as the demonstrations they are and the output says so.
+
+  TWO ADDITIONS TO decider.py, MADE AFTER tune.txt WAS ARCHIVED, and the evidence that
+  neither changed a value:
+    1. `readout` was split into `forward_three(model, cand_ids, ids)` plus the tokenizer
+       call, so that latency.py can time the pass without the tokenizer in it.  Same ops,
+       same order, same ids.  THE EVIDENCE: eval.py, agree.py and latency.py all read out
+       tune.py's own repeat row with both adapters through the split function and got
+       tune.txt's triples bit for bit, and agree.py reproduced tune.txt's whole held-out
+       agreement for candidate a (777/1425, 197 ties) over 1425 rows.  A refactor that
+       moved any arithmetic would not do that.
+    2. `check_roles(roles, want, where)` was added, because the three scripts that run
+       after the tuning each have to assert the seed roles and a third and fourth copy of
+       the ranges would be a third and fourth definition of which seeds select.  tune.py
+       keeps its own (it cannot import it from a file that did not have it when it ran),
+       and ana.py keeps a restatement of its own because it must import neither prefill
+       nor decider: prefill resolves ROOT at import and ana.py is the one script that
+       needs no ROOT, no card and no model.  That is two definitions of the ranges where
+       one would do, and it is named rather than hidden.
+    NOTHING TUNED WAS RE-RUN, because nothing tuned changed: no setting of the recipe,
+    no row set, no adapter.  ROOT/adapters holds the same six files with the same digests
+    tune.txt printed.
+
+  WHERE THIS RUN DOES LESS THAN spec.md ASKS, with the sentence each item is measured
+  against:
+  - spec.md, the read-out: "**Before any score is computed**, one single process alone on
+    the card reads out one fixed set of 64 label rows ... as the REFERENCE".  All three
+    references are taken, by one child that then exits, before any worker is spawned and
+    before any score of the run is computed -- but the four deciders that call no model
+    are scored in the parent BEFORE the model deciders run, and their scores involve no
+    read-out at all.  So "before any score" holds for every score a read-out reaches and
+    not literally for all seven.
+  - spec.md, the latency measurement: "on the median-length prompt of the seeds 1 to 80
+    rows".  Over an even number of rows the median is an average of two lengths that need
+    not be any row's, so the rule implemented is "the row closest to the median, the
+    earlier (seed, k) winning a tie", checked and shown failing.  Here the median is
+    exactly 473.0 and a 473-token row exists, so the tolerance was not used.
+  - brief rule 9, "Do not recreate a function that exists; import it".  precheck.py's
+    barrier, ready-file and go-file protocol is not importable (that script does its work
+    at import), so eval.py carries the same shape with the reason in the code, as
+    section 17 recorded for the other carried-over functions.  ana.py's `check_roles` is
+    the second carried-over check and is named above with its reason.
+
+  WHAT THIS STEP LEFT UNDER ROOT, so that a reader of the directory is not surprised:
+  eval_dry.csv, eval_dry.log, eval_dry.err (empty), eval_dry2.log, eval_dry2.err,
+  eval_dry3.log, ana_dry.log, ana_dry.err, agree_dry.log, agree_dry.err,
+  latency_dry.log, latency_dry.err, the three t0 stamps (evaldry.t0, agreedry.t0,
+  latdry.t0), ROOT/eval-dry-parts (seven per-decider csv files, 32 KB, which is what the
+  restart path reads) and ROOT/eval-dry-tmp (the reference and worker logit tensors and
+  the worker logs, 380 KB).  The real mode writes ROOT/eval-real-parts and
+  ROOT/eval-real-tmp instead, so a real run can never resume a dry run's rows.  Nothing
+  under ROOT that this step did not create was deleted or altered.  Three files this
+  session wrote outside ROOT while demonstrating the digest refusal (/tmp/F.csv.bak,
+  /tmp/mix.log, /tmp/mix.err) were removed.
+
+  WHAT WAS NOT DONE
+  - THE REAL EVALUATION, and with it everything the ticket actually asks for.  No seed
+    above 80 was simulated, no model was read out on a row of seeds 81 to 100, and
+    eval.csv, eval.txt, ana.txt, agree.txt and latency.txt do not exist on either
+    machine.  The four commands that start those runs are in the report of this step.
+  - No candidate was chosen.  ana_dry.txt's verdict is the arithmetic running on tuning
+    seeds and names b only because b scored lower on four runs it was fitted on.
+  - Nothing about the real run's wall time beyond the extrapolation above, which rests on
+    four runs per decider and on a card that was otherwise idle.
+  - The K = 1 fallback was never exercised: the gate passed, so no run of this step took
+    the `--k 1` branch, and the message that prints the fallback command is reached by no
+    run here.
+  - Nothing about what the 452 000-pass real run does to the card's thermal or clock
+    state over two hours.  The dry run's longest model block was 15 s.
+
+========================================================================
+19. THE TWO REVIEWS ANSWERED, AND WHAT WAS RE-RUN FOR IT
+========================================================================
+  Two reviews of section 18's build were made by other agents of this workflow: lens 1
+  (conformance to spec.md, and leakage; verdict no blocker, no leakage, 14 findings) and
+  lens 2 (reproduction, and whether the checks can fail; 19 of 20 probed checks fired,
+  10 findings).  Every finding was reproduced against the file or the output it names
+  before anything was changed.  Neither review changed a file in the repository and
+  neither left scratch under ROOT.
+
+  CHANGED FILES: decider.py, eval.py, ana.py, agree.py, latency.py, and this log.
+  NOT CHANGED: spec.md (frozen, and a finding against the plan itself is in the hand-over
+  report instead), tune.py and tune.txt (see the three deferred findings below).
+  RE-RUN AND RE-ARCHIVED: all four dry runs, because all four scripts changed.
+  STILL NOT RUN: the real evaluation.  No seed above 80 was simulated and no model was
+  read out on one.  eval.csv, eval.txt, ana.txt, agree.txt and latency.txt exist on
+  neither machine.
+
+  ------------------------------------------------------------------
+  19.1  EVERY FINDING, WHAT IT WAS CHECKED AGAINST, AND WHAT WAS DONE
+  ------------------------------------------------------------------
+  LENS 1 (conformance and leakage).  Its verdict was no blocker and no leakage, and both
+  halves of that verdict were re-checked here and hold.
+
+  1  major.  decider.py's render round trip could not fail: self_check built `obs` from
+     the label row's five fields and then compared `text_of` of those fields against
+     `text_of` of the same fields, so "equal: True" was an identity for any row while the
+     output called it the check that covers the seam between the tuning and the replay.
+     REPRODUCED: the five lines restated in a scratch harness print (694, 694, True) for
+     the first row of the label file, and they print it whatever the row is; the only way
+     to make them disagree is to move a field of `obs` after it is built, which
+     self_check never does.
+     FIXED, in both halves, and NOTHING was deleted:
+       - self_check now compares the text `L.__call__` ITSELF rendered (the new
+         `L.last_text`) against the text the row renders to.  That is two call sites over
+         one row, it catches an L that reads another field of the observation, and it has
+         a firing mutation: "render_roundtrip/L", an observation whose `ts_ms` is moved
+         60 s, which fires at character 51.  Its printed line now says what it covers and
+         what it does not.
+       - the real seam is closed in eval.py part 1, against the live object: the LABELLING
+         roll-in of one tuning seed is re-run (no model, no card, 0.0 s, 158 captured
+         decisions), its own captured observation of decision k 79 is rendered, and that
+         is held against the rendering of the gzip-JSON row of the same (seed, k).  Both
+         render to 1157 characters and are equal, so the JSON round trip moves no
+         character.  Two mutations: the row of k + 1 (fires at character 51) and the
+         roll-in anchor (`check_rollin`, which is what says the re-run simulation IS the
+         run the row came from).
+     The comparator's docstring now states, per caller, what that caller covers.
+
+  2  major, with LENS 2's finding 1: tune.txt records no digest of any code file, and
+     decider.py was edited after tune.txt was archived, so the two adapters ticket 12
+     takes are bound to no code state.
+     REPRODUCED: `grep -n 'sha256|digest' tune.txt` returns the label file (lines 27-28)
+     and the six adapter files (151-153, 206-208) and nothing else; `find` over the
+     session scratchpad for `decider*` finds no pre-edit copy.
+     FIXED AS FAR AS THIS STEP CAN, and the unrecoverable part is stated rather than
+     glossed:
+       - eval.py, agree.py and latency.py each print the sha256 of EVERY file that
+         decides what their numbers are, one per line, plus the combined digest, plus the
+         list of what the digest does not cover.  ana.py prints the combined digest the
+         csv carries and says it cannot name the parts, because it imports neither
+         prefill nor decider.
+       - the code state of this step, recorded here so that it is on record at all:
+             tune.py     e01f84d1d53053c16ca526fd6677d3f1dcf63c20ab561bfde815f3b72e1f0950
+             tune.txt    15fef38f3fa625d2596ba631309bcb2f652c09307e05998fdf8dac367dea0928
+             prefill.py  bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+             decider.py  c75a27911fbfe01afc160a6958276e5b58380ad9f40e24566500bea4abeafda8
+                         (the post-section-18 state, which the two reviews read)
+             decider.py  a3a913e9e1c0422d9bae5afb1c9f2974c01c3ddbfbfdc1e616d02f312d7080b0
+                         (this section's state, which the four dry runs below were made
+                         with)
+         THE DIGEST OF THE decider.py THE TUNING RAN IS UNRECOVERABLE.  It was never
+         written down and no copy of that file survives on either machine, so no digest
+         of it can be computed now and none is invented here.  tune.py did not and does
+         not depend on either addition made since (it carries its own `check_roles` and
+         calls `D.readout`), so tune.py as it stands would still run under the pre-edit
+         module; that is an argument and not a digest.
+       - what IS evidence about the values, and it is stronger than before: agree.py's
+         dry run reproduces tune.txt's held-out CROSS-ENTROPY for candidate a, the number
+         that CHOSE the kept epoch, to six decimals, over the same 1425 rows through the
+         current decider.py -- not only the agreement count, which is what the earlier
+         build checked.  See 19.3.
+       - closing it outright needs a re-run of tune.py (about 30 min of card), which
+         would rewrite the adapters every number of sections 18 and 19 was measured on.
+         That is the main session's call and it is in the hand-over.
+
+  3  minor, with LENS 2's finding 8: forward_three's docstring said the 29 ms between the
+     tuning's 72 ms per held-out row and precheck's 43.02 ms "is the tokenizer call
+     `readout` makes".
+     REPRODUCED: latency_dry.txt part 4 measures the tokenizer at 0.409 ms median and the
+     chat template at 0.214 ms, and the adapter at +25.39 ms median.
+     FIXED: the docstring now states the measured mechanism (the adapter, about 25 ms,
+     the tokenizer about a sixtieth of it) and KEEPS the reason the split exists, which is
+     spec.md's requirement that the render and the tokenize be printed beside the pass.
+     The wrong sentence in section 17 line 1116 carries one inserted, dated line pointing
+     here; nothing in section 17 was deleted or changed.  That is the only in-place
+     insertion in this log, and it is made because a reader meets a capitalised wrong
+     claim there before reaching any correction.
+
+  4  minor, with LENS 2's finding 5: script_sha covered eval.py, decider.py and
+     prefill.py only, and model_sha covered adapter_model.safetensors only.
+     REPRODUCED: the code; and on the host `sha256sum adapters/*/adapter_config.json`
+     gives fcc7437735d0... for BOTH candidates, so the config is byte-identical between a
+     and b and is not incidentally covered by the differing weight digests.
+     FIXED: script_sha is now one digest over eval.py, decider.py, prefill.py,
+     ../22/observe.py, ../22/port.py, ../22/label.py, ../22/score.py and
+     ../13/replay.py -- the renderer, the engine wrapper, the run dict and F, the scorer
+     and the engine, i.e. every file that decides what a score IS.  model_sha is now a
+     digest over adapter_config.json AND adapter_model.safetensors, because r and
+     lora_alpha scale the LoRA output and therefore every logit.  `check_digest_cover`
+     asserts the membership of the list, with its own mutation.  What the digests do not
+     cover is PRINTED beside them in every script's output.
+     Consequence recorded: the seven part files under ROOT/eval-dry-parts carried the old
+     script_sha, so they were removed before the re-run rather than resumed.  That is the
+     refusal working.
+
+  5  minor.  K was in no digest and in no row, so a run started at --k 4 and restarted at
+     --k 1 produced one csv scored at two concurrency levels with nothing recording it.
+     REPRODUCED: the code (`K` parsed at eval.py, absent from COLUMNS).
+     FIXED: every csv row carries `k`; the part-file sidecar compares it FOR THE MODEL
+     DECIDERS ONLY, because a constant arm's score cannot depend on how many processes
+     were reading out a model beside it and refusing those would shut the plan's own
+     --k 1 fallback; ana.py asserts one k over the three model deciders and 1 over the
+     four that make no pass.  Three mutations (sidecar/K, K/two worker counts, K/a
+     no-pass decider at K > 1).
+
+  6  minor.  ana.py's completeness check was handed the csv's own keys, so a csv that
+     lost an entire stream from every decider agreed with itself.
+     REPRODUCED: the dry csv with every stream-1 row removed (14 of 28 rows) fed to the
+     pre-review ana.py --dry: EXIT 0, "stream column min 0 max 0, 1 distinct", "runs 2
+     per decider", "VERDICT: SEPARATED, NOT RESOLVED".
+     FIXED: `check_grid` asserts the (seed, stream) product the MODE declares -- 2 x 2 in
+     the dry mode, 20 x 40 in the real one -- before `check_complete` runs.  The same
+     stripped csv now exits 1: "the csv carries 2 of the 4 (seed, stream) pairs this mode
+     declares".  Two mutations (a whole stream gone, a whole seed gone).
+
+  7  minor.  The three tuned logit triples were hand-transcribed into eval.py, agree.py
+     and latency.py, so three archives carried a typed number; and tune.py prints
+     "weight decay 1e-2" as a typed string.
+     REPRODUCED: the three literals are equal to tune.txt lines 145 and 200, so no
+     transcription was wrong; the hazard was drift, not a wrong printed number.
+     FIXED for the triples: `decider.tune_kept` PARSES tune.txt's own kept-epoch block --
+     the keep line's three cross-entropies, the kept epoch, the agreement, the tie count
+     and the repeat check's two passes -- and checks the parse against itself (the two
+     passes must agree, the kept cross-entropy must be the lowest of the three, the kept
+     epoch must be the one the frozen rule picks).  Three mutations on the parser and one
+     on `check_triple`, which is the comparison and not the parse.  agree.py's dry
+     cross-check reads 1425 and 777 off that parse too, so neither is typed any more.
+     NOT FIXED, deferred with its reason: tune.py:390's typed weight decay.  See 19.2.
+
+  8  minor.  Section 18 records a deviation from spec.md's "before any score is computed"
+     that is not one.
+     REPRODUCED, and the finding is right: eval.py takes the reference in part 3 and
+     scores the non-model deciders in part 4, and eval_dry.txt shows that order -- the
+     heading "3  THE REFERENCE READ-OUT, MADE BY A CHILD THAT EXITS FIRST", then "the
+     reference child now exits, before any worker is spawned", and only then the first
+     "const3.695 4 runs in 0.1 s".  So eval.py conforms LITERALLY and section 18
+     understated what it does.
+     CORRECTED HERE, not deleted there: this log is append-only but for the one insertion
+     named in finding 3, and section 18's entry stands with this correction beside it.
+     The only path on which a score is produced with no reference is the resume path with
+     MODEL_TODO empty, where no read-out happens at all.
+
+  9  minor, with LENS 2's finding 10: three definitions of the seed role ranges exist
+     (decider.check_roles, tune.py's own, ana.py's).
+     REPRODUCED: all three bodies read; no drift today -- the measuring test, the
+     ordering and the messages agree.
+     NOT CHANGED, recorded instead.  See 19.2.  LENS 2 offers exactly this disposition
+     ("or named in the record as a historical third copy that predates the shared one");
+     LENS 1 asks for the code change.  The conflict is named in the hand-over.
+
+ 10  nit.  ana.py's per_seed refusal had no mutation and was in neither list.
+     REPRODUCED: `grep -n per_seed ana.py` finds the definition and one call, no mutation.
+     FIXED with a mutation rather than a name, which is the stronger of the two options:
+     "per_seed/seeds of unequal length" FIRES.  ana.py's "no mutation" list now says that
+     nothing else of that script is in it by omission.
+
+ 11  nit.  The timed pass includes a host-to-device copy that precheck.py's forward_last
+     excluded, and latency.txt did not say so.
+     FIXED: latency.py part 1 names the copy in its own output, beside the token
+     difference, and forward_three's docstring names it for a reader of the code.
+
+ 12  nit.  latency.py's prompt population is the LABELLED rows of seeds 1 to 80, which is
+     narrower than spec.md's "the seeds 1 to 80 rows".
+     FIXED: the output now prints the population and the count left out (the ties that
+     carry no label), says it is the population tune.py took its own median over, and
+     says plainly that it is narrower than the plan's sentence.
+
+ 13  nit.  The repeat check with an adapter attached is made in the reference child and
+     not in the workers that produce the scored decisions.
+     FIXED: eval.py part 3 prints where the check is made and where it is not, and what
+     covers the workers instead (the gate's 64 x 3 logits by torch.equal, which is a
+     statement about two processes agreeing and not about a worker repeating itself).
+
+ 14  nit.  The four disclosed deviations confirmed, and the cosmetic defect in tune.txt's
+     prompt_len message (694 is a CHARACTER count printed as "tokens") -- the same as
+     LENS 2's finding 7.
+     REPRODUCED: tune.txt:258 beside tune.txt:241.
+     FIXED: `check_prompt_len` takes its unit from the caller, so the card-free self-check
+     says "longer than 8 characters" and every real call still says "tokens".  tune.txt
+     itself is the tuning run's own stdout and is NOT edited; the corrected line is in the
+     self-check output archived at 19.4.
+
+  LENS 2 (reproduction, and whether the checks can fail).  Its findings 1, 5, 7, 8 and 10
+  are answered above with lens 1's.  The rest:
+
+ L2-2  major.  Candidate a's kept epoch is not distinguished from epoch 2 by anything in
+     the step: the three held-out cross-entropies are 0.898804 / 0.895778 / 0.893928, so
+     the margin is 0.001850, which is 0.207 % of the value, over a three-epoch span of
+     0.004876.
+     REPRODUCED: the argmin and the margins recomputed from tune.txt's own keep line.
+     FIXED as far as the data allows, and the part that cannot be fixed is stated:
+     agree.py now computes the per-row three-way cross-entropy from the logits it already
+     reads (no extra pass), prints its mean and the standard error of that mean per
+     decider, prints each candidate's margin from tune.txt's own three numbers, and
+     prints the margin against that standard error.  It then says, in its own output, that
+     a's kept epoch is ARBITRARY among its three.
+     WHAT IS NOT COMPUTABLE, and this is why the finding's own suggested fix cannot be
+     taken as written: the quantity that would settle the margin is the standard error of
+     the PAIRED per-row cross-entropy differences between two epochs.  The frozen keep
+     rule DELETED the two epochs that were not kept, so no per-row cross-entropy of
+     epoch 1 or epoch 2 exists on either machine and the paired figure cannot be
+     recovered without re-tuning.  The unpaired standard error printed is smaller
+     evidence than the paired one would be -- a paired error is typically the smaller
+     number -- so it is published as the margin's SCALE and not as its test.
+
+ L2-3  major.  Candidate b behaves differently outside its own row filter than inside it,
+     and the replay is outside; spec.md's threat list does not name this.
+     REPRODUCED exactly, from three generated files:
+       where b was measured                        n     ' short'          ' long'
+       inside its own filter (tune.txt:128)       568   148  0.2606    420  0.7394
+       all labelled rows of 71-80 (agree_dry)    1425   659  0.4625    766  0.5375
+       the rows the filter EXCLUDES, by subtr.    857   511  0.5963    346  0.4037
+       in the replay (eval_dry.txt, 4 runs)       637   335  0.5259    302  0.4741
+     b answers ' mid' nowhere it was measured, so the middle column is 0 throughout.  Its
+     replay behaviour is closer to the COMPLEMENT of its training filter than to the
+     filter itself, and the cost shows it: b makes 159.2 passes per run against a's 125.8.
+     RECORDED HERE, which is the only place it can go: spec.md is frozen and may not be
+     edited by this workflow, and the finding asks for these shares to be written into the
+     threat list or into this log.  Threat 13 names the `history` distribution shift and
+     Threat 12 names b's measured-agreement gap; NEITHER names the shift b's own filter
+     creates.  A READER OF b's REPLAY SCORE MUST READ IT AS A SCORE ON THE HALF OF THE
+     DISTRIBUTION b's FILTER DISCARDED.  It is in the hand-over as a question for the main
+     session, because whether it becomes a numbered threat is the plan's owner's call.
+
+ L2-4  minor.  The first-maximum tie rule decides up to 56 % of candidate a's departures
+     from ' long', and the printed tie count did not say so.
+     REPRODUCED from agree_dry.txt's own table: a has 197 ties of 1425 and 351 answers
+     that are not ' long', so at most 197 of those 351 had a strict maximum behind them
+     (<= 0.561); b is 83 against 659 (<= 0.126) and untuned 12 against 1023 (<= 0.012).
+     FIXED: agree.py prints the tie count BESIDE the count of answers that are not the
+     most frequent arm, and the ratio, with the reason the ratio is an upper bound (every
+     tie resolves to a shorter arm, never to the longest).
+
+ L2-6  minor.  eval.py's memory-empty assertion did nothing on a decider whose per-pair
+     state is neither `mem` nor `ival`.
+     REPRODUCED: the wrapper's logic restated on a decider holding a dirty
+     `pair_interval` dict prints "DID NOT FIRE", while the same wrapper on a dirty L
+     fires.  One of the twenty checks lens 2 probed, and the only one that did not fire.
+     FIXED: `FirstCallEmpty` takes the caller's claim (`keeps_memory(inner)`, declared by
+     type in one place) and RAISES on a decider that is said to keep per-pair state and
+     carries neither name.  Mutation "memory_empty/a decider it cannot read" FIRES.  A
+     closure over a dict would still pass, which is why the test is the decider's type and
+     the reason is written down in the code.
+
+ L2-9  nit.  The host's pushed copy of ana_dry.txt was the superseded run (6802c812...
+     against the archive's ff8ba76f..., one line differing, "95 %%" against "95 %").
+     REPRODUCED: `sha256sum` of both copies.
+     FIXED: push_inputs.sh was re-run after every archive was rewritten, and the digests
+     of all 208 code files agree on both sides.  Every *_dry.* file in the repository is
+     now the output of the run archived here.
+
+  ------------------------------------------------------------------
+  19.2  THE THREE FINDINGS THAT WERE NOT FIXED IN CODE, AND WHY
+  ------------------------------------------------------------------
+  All three are in tune.py, and all three would be one-line changes.  None was made,
+  for one reason that applies to all of them:
+
+    tune.txt IS tune.py's OWN STDOUT, ARCHIVED BYTE FOR BYTE.  That is this directory's
+    convention for what "done" means, and it is what makes tune.txt evidence rather than
+    a report.  Editing tune.py by one line makes tune.txt no longer that script's output,
+    so the honest change is tune.py plus a re-run: about 30 min of a shared card, which
+    REWRITES ROOT/adapters/{a,b}.  Every number of sections 18 and 19 -- the four dry
+    runs, the 2304 bit-identical gate logits, the 777/1425 and 0.893928 cross-checks, the
+    two logit triples, both model digests -- was measured on the adapter files now on
+    disk.  A re-run that produced bit-identical adapters would cost 30 min and change
+    nothing; a re-run that did not would invalidate all of it, and nothing in this step
+    measures which of the two happens (the adapter's own random init is seeded, so
+    nothing but cuda nondeterminism is left -- which is exactly the thing not measured).
+    Spending that is the main session's call, not this workflow's, and it is in the
+    hand-over with both findings attached.
+
+  The three:
+  a) tune.py:165's own `check_roles`, a third definition of the seed role ranges beside
+     decider.py's and ana.py's (LENS 1 finding 9, LENS 2 finding 10).  It is HISTORY and
+     not a new choice: it predates decider.check_roles, which was added after tune.py had
+     already run, so tune.py could not have imported it.  ana.py's third copy keeps its
+     own stated reason (it must import neither prefill nor decider).  All three bodies
+     were compared here: the measuring test is first in all three, the ranges agree, the
+     messages agree, so there is no drift today.  NAMED HERE as a historical third copy,
+     which is the disposition LENS 2 offers.
+  b) tune.py:390's "torch's other defaults (weight decay 1e-2)", a TYPED string where
+     `OPT.defaults["weight_decay"]` would be a reading (LENS 1 finding 7).  spec.md
+     singles this setting out precisely because it is not visible in the call, so the
+     script makes it visible by typing it rather than by reading it, and a torch upgrade
+     that changed the default would leave tune.txt asserting the old value.  The value
+     itself is right for the host's torch 2.15.0, read on 2026-11-24 (spec.md, the
+     optimiser paragraph).  WHAT WOULD CLOSE IT: one line in tune.py plus a re-tune.
+  c) tune.py prints no digest of any code file (LENS 1 finding 2, LENS 2 finding 1), so
+     the adapters are bound to no code state.  The other four scripts now print those
+     digests; tune.py cannot be made to without a re-run.  The digests of the current
+     files, and the statement that the tuning's own decider.py is unrecoverable, are at
+     19.1 finding 2.
+
+  NOT A DEVIATION AND NOT CHANGED: spec.md was not edited.  Two findings bear on the plan
+  itself rather than on the code -- LENS 2's finding 3 (b's filter shift is named by no
+  threat) and the 297 ms band's direction, which spec.md already flags as a worker's
+  choice for the user -- and both are in the hand-over as questions for the main session.
+
+  ------------------------------------------------------------------
+  19.3  WHAT WAS RE-RUN, AND WITH WHAT RESULT
+  ------------------------------------------------------------------
+  All four scripts changed, so all four dry runs were re-run and re-archived.  The card
+  was checked free by `nvidia-smi --query-compute-apps` immediately before each launch
+  and by each script itself; no other account's process was touched; nothing was staged
+  or committed.
+
+  THE ONE THING THAT HAD TO BE DELETED FIRST, and it is the refusal working: the seven
+  part files under ROOT/eval-dry-parts carried the OLD script_sha, which the widened
+  digest no longer matches, so eval.py would have refused the resume (exit 1, nothing
+  scored).  ROOT/eval-dry-parts and ROOT/eval-dry-tmp -- both written by section 18 of
+  this step -- were removed before the first re-run and were written again by it.
+
+  Commands, in the order they ran:
+    bash S2/evidence/23/push_inputs.sh            (local, four times as the scripts were
+          corrected; "digests: all 208 files agree on both sides" each time, and "OK:
+          every file under the store is one of the four kinds the replay opens")
+    ssh hpc-debian 'cd ROOT && rm -rf eval-dry-parts eval-dry-tmp && \
+        date -u +%FT%TZ > evaldry.t0 && nohup env PYTHONDONTWRITEBYTECODE=1 \
+        STORE=ROOT/store PYTHONPATH=ROOT/repo/src HF_HUB_OFFLINE=1 ./.venv/bin/python \
+        -B repo/docs/wayfinder/semindex-stage2/evidence/23/eval.py ROOT --dry \
+        > eval_dry.log 2> eval_dry.err < /dev/null &'
+    ssh hpc-debian 'cd ROOT && env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=ROOT/repo/src \
+        ./.venv/bin/python -B repo/.../ana.py eval_dry.csv --dry > ana_dry.log'
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > agreedry.t0 && nohup env ... \
+        agree.py ROOT --dry > agree_dry.log 2> agree_dry.err &'
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > latdry.t0 && env ... \
+        latency.py ROOT a --dry > latency_dry.log 2> latency_dry.err'
+  Each archive was then copied off with `cat` and `diff`ed against the host's own file:
+  DIFF EMPTY for all five, and each sha256 equal on both sides.
+
+  HOW MANY TIMES EACH SCRIPT ACTUALLY RAN, because the convention of this directory is
+  every real run and not the tidy one: eval.py --dry ran TWICE (plus two resume runs),
+  agree.py --dry THREE times and latency.py --dry a THREE times.  THE REASON IS WORTH
+  NAMING RATHER THAN HIDING: three of the corrections above first introduced exactly the
+  defect class the reviews were about, and the first archive of each caught it -- a typed
+  mutation count ("twenty-three", "five") in eval.py's own prose, a typed 44.36 ms in
+  latency.py's comparison with precheck, and a sentence in agree.py's epoch paragraph that
+  my insertion broke in half.  Each was made computed or rewritten and the run repeated,
+  so every number in every archive here is the last run's and none is edited.  EVERY
+  NUMBER OF EVERY SUPERSEDED RUN MATCHED ITS SUCCESSOR EXCEPT CLOCKS AND TIMINGS: the
+  superseded agree_dry output carried the same 472/777/756, the same 12/197/83 ties and
+  the same 0.893928, and the superseded latency output the same tokenizer 0.410 ms and
+  the same adapter cost to 0.01 ms.
+
+  THE RESTART PATH, EXERCISED AGAIN because the digest it refuses on changed: the same
+  eval.py --dry command was run twice more after the archived run.  Both exited 0 in
+  about 5 s, printed "to run now (nothing)", skipped all seven part files under the new
+  script digest and the new model digests, and rewrote eval_dry.csv to the SAME sha256.
+  That is the path the 2.1 h real run depends on.
+
+  ------------------------------------------------------------------
+  19.4  THE HEADLINE NUMBERS OF THE RE-RUN, AND WHAT MOVED
+  ------------------------------------------------------------------
+  NOTHING THAT IS A MEASUREMENT MOVED.  The comparison below is against section 18's own
+  archived outputs, which were kept in the session scratchpad before being overwritten.
+
+  eval_dry.csv, 28 rows, column by column against section 18's: EVERY column of EVERY
+  row is identical except `script_sha` (widened), `model_sha` (widened) and `k` (new).
+  So the K = 4 worker read-out is reproducible across two runs of different code around
+  it, which is a stronger statement than the gate itself makes (the gate compares
+  processes within one run).
+
+  eval_dry.txt: the only differing lines are clocks (two "loaded in 2.6" became 2.7, the
+  wall clock 107.1 s became 107.4 s) plus the new blocks.  THE GATE PASSED AGAIN: 4
+  workers x 3 model deciders x 64 rows x 3 logits = 2304 values, every one bit-identical
+  to the single-process reference under torch.equal.  Both adapters still reproduce
+  tune.txt's triples: a [18.75, 18.875, 19.25], b [19.375, 18.75, 19.5].  Mutations: all
+  23 fired (19 before, plus the four new ones).
+
+  ana_dry.txt: every number identical to section 18's; the differing lines are the two
+  widened digests, the new grid and K blocks, and the five new mutation lines.  Still
+  byte-identical between the host's python 3.13.5 and the local 3.12.13.  Mutations: all
+  22 fired (17 before, plus five).
+
+  agree_dry.txt: every agreement, every tie count, every share and both logit triples
+  identical to section 18's.  Mutations: all 17 fired (14 before, plus three).  NEW AND
+  IT MATTERS: candidate a's held-out three-way CROSS-ENTROPY over those 1425 rows is
+  0.893928, which is tune.txt's own number for a's kept epoch to six decimals -- the
+  quantity that CHOSE the epoch, reproduced through the current decider.py, where
+  section 18 reproduced only the agreement count 777/1425.
+
+  latency_dry.txt: the adapter's cost reproduces and the timings move as timings do.
+  Section 18 / this run, median ms: candidate a 69.76 / 70.07, untuned 44.36 / 44.03,
+  the adapter's cost +25.39 / +26.03.  The cpu parts: render 0.043 / 0.043, chat template
+  0.214 / 0.214, tokenizer 0.409 / 0.410 ms.  SO THE 29 ms OF SECTION 17 IS THE ADAPTER
+  AND NOT THE TOKENIZER, measured twice on two days' runs.  Mutations: all 15 fired (13
+  before, plus two).
+
+  THE FIVE ARCHIVES, as they now stand (sha256 of the file in the repository, equal to
+  the host's own on each side of a `cat | diff -` that was empty for all five):
+    eval_dry.txt    85f9c333d592af7605352443ed9a04235ae4435bd399a9db817116943d9cb325
+    eval_dry.csv    b4fcddef2594f8846748869053b555d0d27e828a278b32f0d8d2a6d9c372a2a0
+    ana_dry.txt     664ddcb28ce405a588119b1f9fc944ad8aa68e2d7e335ec87b502a3ae84192b0
+    agree_dry.txt   4a74e084bc3841ef2f7bd1d5f4ea7aedf5e6c18d54a1ca02139eb88361c7664c
+    latency_dry.txt b78fbb2be34a9ce01233adea966b9ca388dcca47153406c49b15dc2c81cb1afa
+  and the five scripts as this section leaves them:
+    decider.py      a3a913e9e1c0422d9bae5afb1c9f2974c01c3ddbfbfdc1e616d02f312d7080b0
+    eval.py         077690dbbafa98ebe949458a8aa6cee38a952af305af2ba34d634c0e18f34256
+    ana.py          6650310331ddd31898370ee87e32b46697fd02eca3e205846b0f731f04add26a
+    agree.py        96f666c970e5d46ec148a1f0ee05d878e85f7a4862dd65f545c101bbcbd64130
+    latency.py      26d86b4642b02b6e41c14949ea61c4390ee51a74299a31a5323d3949e91d5c36
+    tune.py         e01f84d1d53053c16ca526fd6677d3f1dcf63c20ab561bfde815f3b72e1f0950
+                    (unchanged by this section; see 19.2)
+  THE CSV's COMBINED SCRIPT DIGEST IS 1071e451e4ebce92... over the eight files eval.py
+  names one by one in its part 2.  The two model digests are over each adapter's config
+  and weights together; the WEIGHT digests inside them are still tune.txt's own
+  98f671bf... (a) and 64fb4984... (b), printed per file so a reader can still match the
+  adapter against tune.txt.
+
+  THE REAL RUN'S COST, re-estimated from this run's own numbers and unchanged from
+  section 18: untuned 280.0, a 125.8, b 159.2 resolution-time decisions per run, so
+  452 000 forward passes for the three model deciders over 800 runs each; 127.5 min
+  (2.1 h) at K = 4 from the measured 59.1 passes/s, and 468.6 min (7.8 h) at K = 1,
+  which is an INFERENCE from the reference child's 62.1 ms per read-out and not a
+  measurement.  The plan's own figures were 385 704 passes, 84.7 min and 278.3 min.
+
+  ------------------------------------------------------------------
+  19.5  decider.py's CARD-FREE SELF-CHECK, ARCHIVED HERE BECAUSE tune.py WAS NOT
+        RE-RUN
+  ------------------------------------------------------------------
+  tune.txt part 5 is the only archive of this self-check, and it is the output of the
+  PRE-REVIEW module: 18 mutations, the identity round-trip line, and "longer than 8
+  tokens" over a character count.  The module now has 24 mutations and the two lines
+  the findings changed, so its output is no longer the one tune.txt holds, and tune.py
+  was not re-run (19.2).  So it is archived here, which is what the brief allows for a
+  check whose own script's archive cannot be rewritten ("in its own output or in
+  RUN.txt").
+
+  Command, local machine, no card, harness in the session scratchpad and NOT in the
+  repository (six lines: open the label file, take the first row, call
+  decider.self_check):
+    SMOKE_ROOT=<scratch> STORE=<scratch>/store PYTHONDONTWRITEBYTECODE=1 \
+        PYTHONPATH=/home/lab_shared/wt/semindex-ev23/src ROOT=<scratch> \
+        /home/lab_shared/cefore-semindex/.venv/bin/python3 -I -B <harness>
+    -> exit 0
+
+  THE OUTPUT, VERBATIM:
+    one real label row, seed 1 k 0: 694 characters rendered, no node name in it
+    the text L rendered from the port observation of that row: 694 characters, equal
+    to the text the row renders to: True.  That is two CALL SITES over one row and NOT
+    the JSON round trip, which is on both sides of it: eval.py part 1 closes that
+    seam against the live engine's own captured observation.
+    a pair's first send answers 6.000 s and makes no model pass
+    its resolution answers 10.043 s and makes one
+    the next send answers the same 10.043 s and makes none, so these 3 decisions cost
+    1 forward pass(es) in all
+    logits [1.0, 0.0, 1.0] pick index 0 (' short', 3.695 s) and count as a tie: True
+    
+    the mutations:
+      card_free                FIRES: mutated: another compute process is on the GPU: 1234, python, 10240 MiB
+      seeds_tuning             FIRES: mutated: seeds above 80: [81]
+      port.check_seeds         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+      target_of                FIRES: 7.0
+      arm_order                FIRES: mutated: the candidate words stand for (10.043, 6.0, 3.695), the arms are (3.695, 6.0, 10.043)
+      candidate_ids            FIRES: mutated: candidate ids [1, 2, 3], expected [2822, 5453, 1440]
+      no_node_name             FIRES: mutated: the rendered text contains the node name(s) ['h3']
+      render_roundtrip         FIRES: mutated: the two renderings differ at character 192: 's 0, this decision polls a peer none of ' against ' 0, this decision polls a peer none of t'
+      render_roundtrip/L       FIRES: mutated: the two renderings differ at character 51: '60.0 s ago was answered, reply empty\nin ' against '0.0 s ago was answered, reply empty\nin f'
+      prompt_len               FIRES: mutated: 1 prompt(s) longer than 8 characters, longest 694
+      adapter_dtype            FIRES: mutated: adapter dtype ['torch.bfloat16'], not ['torch.float32']
+      unmerged/none            FIRES: mutated: no adapter layer is attached
+      unmerged/merged          FIRES: mutated: 1 of 2 adapter layers are merged into the base
+      pick/tie                 FIRES: mutated: picked 2, but position(s) [0] tie it and come first
+      pick/max                 FIRES: mutated: picked 0 (0.0), which is not the maximum of [0.0, 1.0, 0.0]
+      repeat/logits            FIRES: mutated: 1 of 3 logits differ, first at 2: 3.0 against 4.0
+      repeat/arm               FIRES: mutated: the two passes chose 2 and 1
+      memory_empty             FIRES: mutated: the per-pair memory is not empty: 1 entr(ies), e.g. [(('h0', 'h1'), 3.695)]
+      no_read_at_send          FIRES: mutated: 1 model pass(es) were made at a send
+      digest_cover             FIRES: mutated: the digest covers ['prefill.py', '../22/observe.py', '../22/port.py', '../22/label.py', '../22/score.py', '../13/replay.py'], not ['decider.py', 'prefill.py', '../22/observe.py', '../22/port.py', '../22/label.py', '../22/score.py', '../13/replay.py']
+      triple                   FIRES: mutated: the read-out of a does not reproduce tune.txt's triple: [1.0, 2.0, 3.0] against [1.0, 2.0, 4.0]
+      tune.txt/two passes      FIRES: tune.txt: candidate b printed [19.375, 18.75, 19.5] and [19.375, 18.75, 20.5] for one row
+      tune.txt/one candidate   FIRES: tune.txt: the kept epoch was found for ['b'], not for a and b
+      tune.txt/the keep rule   FIRES: tune.txt: candidate b kept epoch 1 where the frozen rule picks 3 from [0.643996, 0.789407, 0.622174]
+    
+    all 24 mutations produced a failure
+    SELF CHECK OK: True
+
+  WHAT DIFFERS FROM tune.txt PART 5, line by line, so that a reader of the two can
+  tell a change from a drift:
+    - the round-trip line.  tune.txt: "the same decision rendered from a port
+      observation: 694 characters, equal: True", which was the identity of finding 1.
+      Now four lines naming what the comparison is over (L's own rendering against the
+      row's) and what it is NOT over (the JSON round trip, which eval.py part 1 closes).
+    - prompt_len's message: "longer than 8 tokens" became "longer than 8 characters",
+      because the stub has no tokenizer and 694 is a character count.
+    - six mutations added: render_roundtrip/L, digest_cover, triple, and three on
+      tune.txt's own kept-epoch block (two passes, one candidate, the keep rule), so
+      18 became 24.
+    - every other line is unchanged, including all 18 earlier mutation messages.
+
+  ------------------------------------------------------------------
+  19.6  WHAT IS STILL OPEN AFTER THIS SECTION
+  ------------------------------------------------------------------
+  - THE REAL EVALUATION, and with it everything the ticket asks for.  Unchanged by this
+    section: no seed above 80 was simulated, no model was read out on a label row of
+    seeds 81 to 100, and eval.csv, eval.txt, ana.txt, agree.txt and latency.txt exist on
+    neither machine.  The four commands are in the hand-over report.
+  - THE TUNING'S OWN decider.py IS UNRECOVERABLE (19.1 finding 2) and the three tune.py
+    findings are not fixed in code (19.2).  A re-run of tune.py closes all four and costs
+    about 30 min of card and the rewriting of both adapters.
+  - ana.py's gain arithmetic passes through ../20/predict.py (`interp`, `gain`,
+    `boot_index`, `ci`, `word`) and NO digest of this step covers that file.  eval.py's
+    digest covers what produces a ROW of the csv, which is what a resume has to refuse
+    on, and ../20/predict.py produces no row; but the printed gain does depend on it and
+    a reader should not take the digest list as covering the whole analysis.  Named here
+    rather than fixed, because ana.py prints no digest of its own: it imports neither
+    prefill nor decider, which is what lets a reader re-run it on any machine.
+  - THE SEAM CHECK IN THE REAL MODE reads one label row of seed 81 and re-runs that
+    seed's labelling roll-in (no model, no card), because it takes SEEDS[0] and the real
+    mode's seeds are 81 to 100.  That is new behaviour in a command the main session will
+    run, and it is inside what the real mode reads anyway -- but spec.md's sentence "the
+    ONE place the selection half is read before any score exists is the class-share
+    baseline of the agreement section" was written against the old part 1, so the real
+    mode now reads one selection-half row before its first score as well.  No model
+    touches it and no simulation of it is scored.  WHETHER TO LEAVE IT OR PIN THE SEAM
+    CHECK TO SEED 1 IN BOTH MODES (one line, `_SEAM_SEED = DRY_SEEDS[0]`) IS THE MAIN
+    SESSION'S CALL: the seam is about JSON against the live engine and not about which
+    seed, so seed 1 would lose nothing.
+  - eval_dry.csv GAINED A COLUMN, `k`.  ana.py reads it, so ana.py run against a csv
+    written before this section raises `KeyError: 'k'` out of `read_csv` and not a `Fail`
+    with a message.  No csv of this step predates it, and the real run writes the column
+    from the start; it is named because a reader with an old copy would meet a bare
+    traceback.
+  - K = 1 WAS NEVER RUN, by section 18 or by this one.  The `--k 1` fallback command is
+    printed by a branch no run here reached, and the 7.8 h figure beside it is an
+    inference from the reference child's own 62.1 ms per read-out and not a measurement.
+  - THE GATE covers 64 rows per model on one build on one day, not the 452 000 passes the
+    real run will make, and nothing here measures what a two-hour run does to the card's
+    clocks or what another account's load does to the rate.
+  - b's FILTER SHIFT (19.1, LENS 2 finding 3) is recorded here and is named by no
+    numbered threat of spec.md, which this workflow may not edit.
+  - README.md was not written and no number of this step is in Japanese anywhere.
+  - WHAT THIS SECTION LEFT UNDER ROOT: the same files section 18 named, rewritten --
+    eval_dry.csv, the four *_dry.log / *_dry.err pairs, the three t0 stamps,
+    ROOT/eval-dry-parts (seven per-decider csv files) and ROOT/eval-dry-tmp (the
+    reference and worker logit tensors and the worker logs).  ROOT/eval_dry2.log and
+    ROOT/eval_dry3.log are section 18's resume demonstrations, rewritten by this
+    section's own.  Nothing under ROOT that this step did not create was deleted or
+    altered, no other account's process was touched, and the card is free.
