@@ -1022,3 +1022,76 @@ Every one of these scripts shows each of its own checks failing on a mutated inp
 (`/home/lab_shared/semindex-learn/ev22/`, pinned by `../22/labels.sha256`), the host's venv, and every
 intermediate log under ROOT. **No adapter or weight file enters the repository**, and the adapter kept for
 ticket 12 lives under ROOT until that ticket takes it.
+
+## Amendments after the freeze, written before any score on seeds 81 to 100 exists (2026-11-24)
+
+Everything above this heading is the plan as frozen. The scripts were then written, both candidates were
+tuned once, and the pipeline was run in its dry mode on seeds 1 to 80 (`RUN.txt` sections 17 to 19). That
+work found the six things below. They are written here, and committed, before `eval.py` is started in its
+real mode, so that a reader can tell what was decided with no selection-half score in hand. No setting of
+the recipe, no row set, no wording, no read-out rule and no statistic above is changed by this section.
+
+**A1. The seam check of `eval.py` reads a tuning seed in both modes.** The reviews asked for a check that
+the text rendered from a label row equals the text rendered from the live engine's observation of the same
+decision, and the fix placed it in `eval.py`'s first part on the first simulated seed, which is seed 81 in
+a real run. That would have rendered one label row of seed 81 before any score, against the sentence above
+("The one place the selection half is read before any score exists is the class-share baseline"). The seam
+is about a JSON row against a live object and not about which seed, so the check is pinned to seed 1 in
+both modes and the sentence stays true as written.
+
+**A2. One thing did touch seed 81 during the build, and it is named here.** A scratch probe that is not
+in the repository called `label.run_dict(0.2, 81)` once to time the call. That builds the outage timeline
+and the record schedule of seed 81. No simulation was run on it, no model was read out, and no label row
+was opened (`RUN.txt` section 18). The list of what read the selection half before any score is therefore
+two items long: the class-share baseline, and this one call.
+
+**A3. The tuning is run a second time under the final code, and the second run's adapters are the
+candidates.** `tune.txt` of the first run names no digest of the code that wrote the adapters, and
+`decider.py` was edited after it, so the first run's adapters cannot be tied to a code state. The values
+do reproduce through the current code (candidate a's held-out cross-entropy to six decimals, both repeat
+triples bit for bit), which is evidence about values and not a recipe. A second run is the only clean
+repair, and this is the last moment it can be made without a selection-half score in hand. The rule, fixed
+before the second run starts:
+
+- `tune.py` changes in four places and in nothing that reaches a weight: it prints the sha256 of itself
+  and of every module it imports from this step; it calls `decider.check_roles` instead of carrying a third
+  copy of the seed ranges; it reads the weight decay off the optimiser and stops unless it is 1e-2, instead
+  of printing a typed string; and it keeps each epoch's per-row held-out cross-entropy long enough to print
+  the paired difference between the kept epoch and each other epoch with its standard error. The keep rule
+  is untouched and the new numbers choose nothing.
+- **The second run's adapters are the candidates whatever its numbers are.** No comparison of the two runs
+  selects one. The first run's adapters are moved aside to `ROOT/adapters-run1` (renamed, not deleted) and
+  its log is kept in this directory as `tune_run1.txt`.
+- The record says whether the two runs' weight files are byte-identical. If they are, the recipe is shown
+  reproducible on this host. If they are not, the differences between the two runs' held-out numbers are
+  reported as the run-to-run spread of the recipe at n = 2, and every dry run is repeated on the second
+  run's adapters, because every dry number on record was measured on the first run's.
+
+**A4. Threat 16: candidate b answers differently outside its own row filter, and the replay is outside
+it.** b was tuned and held out on rows its filter kept. On the first run's kept epoch b answers the 3.695 s
+word on 0.2606 of its own held-out rows (148 of 568), on 0.4625 of all labelled rows of seeds 71 to 80 (659
+of 1425), on 0.5963 of the rows its filter excludes (511 of 857, by subtraction), and on 0.5259 of its
+simulated decisions on seeds 1 and 2 (335 of 637). It never answers the 6.0 s word anywhere it was
+measured. **What a reader may therefore not conclude: that b's held-out numbers describe the decider that
+is scored.** b's replay score is a score on a population closer to the complement of its filter than to
+its filter. Threat 12 names the gap in b's measured agreement and Threat 13 names the `history` shift;
+neither names the shift the filter itself makes.
+
+**A5. Threat 17: candidate a's kept epoch is not distinguished from its other two.** The three held-out
+cross-entropies of the first run are 0.898804, 0.895778 and 0.893928. The margin between the kept epoch
+and the runner-up is 0.001850, and the standard error of the kept epoch's own mean over the same 1425 rows
+is 0.015423, 8.34 times that margin. That is the unpaired scale; the paired one is what A3's fourth change
+prints. The three epochs are visibly different deciders (their answers over the 1425 rows are 28/84/1313,
+802/0/623 and 206/145/1074), so "candidate a" is one of three deciders the rule could not tell apart on
+the quantity it uses. **What a reader may therefore not conclude: that a's score is the score of "every
+labelled row" as a training set.** It is the score of one epoch of it.
+
+**A6. The cost of the real evaluation, measured, in place of the plan's arithmetic.** A decision with an
+adapter attached takes about 70 ms at batch 1 against the untuned 44 ms, so the adapter costs about 26 ms
+(`latency_dry.txt`); the plan priced every decision at the 43.02 ms untuned pass. Resolution-time
+decisions per run on seeds 1 and 2 were 280.0 for the untuned model, 125.8 for a and 159.2 for b, against
+the plan's single anchor of 160.7. The real evaluation is therefore about 452 000 forward passes and about
+2.1 h at four workers, measured at 59.2 passes per second, in place of the table's 385 704 passes and
+84.7 min. The four-worker gate passed on the dry run (2304 logits bit-identical to the single-process
+reference), so four workers is what the real run uses unless its own gate refuses. The single-worker
+fallback was never run and its 8.0 h is an inference.
