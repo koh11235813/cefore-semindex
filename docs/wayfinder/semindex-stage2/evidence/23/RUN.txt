@@ -3584,3 +3584,87 @@ THE CHECKS, AS THEY PRINTED
     branch or worktree change.  The worktree still carries four modified files
     (README.md, this log, the ticket, map.md) and two untracked ones (spread.py,
     spread.txt).
+
+========================================================================
+26. THE OUTSIDE REVIEW, WHAT IT FOUND, AND THREE STALE SENTENCES IN ARCHIVES
+========================================================================
+2026-11-24 14:53 JST.  A detached checkout of commit e9f2906 was made at
+/home/lab_shared/wt/semindex-ev23-review and the request was written to its untracked
+.review/prompt.md (read-only, no key file, no token, no ssh, no card, nothing under
+the run store or the label store).
+
+  26.1  THE REVIEWER THAT REPORTED
+  ------------------------------------------------------------------
+  cd /home/lab_shared/wt/semindex-ev23-review && pi --no-session --tools read,grep,find,ls \
+      --model opencode-go/glm-5.3 -p @.review/prompt.md "..." </dev/null > .review/pi.md
+  exit 0, stderr 0 bytes, 11963 bytes of report, about 8 minutes.  Its tools are read,
+  grep, find and ls: it could run no code and no git command, and says so.
+  Its last line: "VERDICT: no blocker -- the three findings are stale provenance
+  prose and an incomplete setup sentence; every traced number, rule and selection
+  step matches the archive it cites."  (The reviewer wrote a dash where "--" stands.)
+
+  26.2  ITS THREE FINDINGS, EACH REPRODUCED BEFORE IT WAS ANSWERED
+  ------------------------------------------------------------------
+  1. minor, REAL, CORRECTED HERE AND NOT IN THE SCRIPTS.  eval.py (lines 1208-1210 and
+     1352-1355, printed in eval.txt part 7 and part 8, and in eval_run1.txt) and
+     agree.py (line 528, printed in agree.txt part 4) say that decider.py's own
+     card-free mutations are archived in "tune.txt part 5 (the pre-review module)",
+     "because tune.py was not re-run", and agree.py counts them as "eighteen".
+     THAT IS STALE.  tune.py was re-run (section 20), and the tune.txt of this
+     directory is the SECOND run's: its part 5 ends "all 24 mutations produced a
+     failure" and carries the six that those sentences say are not there.  The
+     pre-review eighteen are in tune_run1.txt part 5 ("all 18 mutations produced a
+     failure").  Reproduced: `grep -n "all 24 mutations\|all 18 mutations" tune.txt
+     tune_run1.txt` -> tune.txt:316 and tune_run1.txt:269.
+     No number is touched by it.  The two scripts are NOT edited: both are inside the
+     script digest that eval.csv and eval_run1.csv carry (f3a34ad0...), and an edit
+     now would leave the archives naming a digest no file has.  The sentences are to
+     be corrected the next time either script is changed for a reason of its own.
+  2. minor, REAL, RECORDED.  agree.py:528-530 introduces its part 4 as "this script's
+     own, plus the two of decider.py's this script is a load-bearing caller of", and
+     the seventeen lines that follow restate more than two of decider.py's checks
+     (card_free, seeds_tuning, target_of, pick/tie, prompt_len, triple, digest_cover,
+     no_node_name).  The sentence names no two, so it cannot be reconciled with the
+     list.  Same reach and same disposition as item 1: prose in a digested script.
+  3. nit, REAL, FIXED.  README.md's reproduction table and the ticket's spread
+     paragraph said the second root differs from the production root in two places.
+     There is a third: the five part files of the deciders that carry no adapter were
+     copied into S/eval-real-parts beforehand so that the resume path would skip them
+     (24.1 records the command).  Both sentences now name it.  24.1's "exactly those
+     two things" and 24.7's "two things, a log file and a symlink" are about what the
+     CODE reads differently and are left standing; the copied part files are the
+     third difference of the DIRECTORY, and this entry is the record of it.
+
+  26.3  WHAT THAT REVIEWER COULD NOT CHECK, AND WHO DID
+  ------------------------------------------------------------------
+  - It recomputed no mean and no interval.  The main session's two independent
+    recounts stand for that (22.3 and 24.5: every digit of versus.txt and spread.txt).
+  - It could not read the history.  The order, checked here:
+      git log --format='%h %ci %s' 111913d..e9f2906
+      e4c9c04 2026-11-24 04:59:28  the frozen plan
+      286b5a9 2026-11-24 08:12:28  the scripts, the first tuning run, the dry runs
+      f1b5e7a 2026-11-24 08:13:47  amendments A1 to A6, among them A3's rule
+      d540ecd 2026-11-24 09:47:35  the second tuning run, amendments A7 to A9
+      4110b35 2026-11-24 11:58:12  the real archives, alone
+      cc7eb8f 2026-11-24 12:53:21  the reading of them
+      d4de8b4 2026-11-24 13:42:44  the first run's adapters' archives, alone
+      e9f2906 2026-11-24 14:22:45  the reading of them
+    against the runs' own stamps: the second tuning started 08:27:35 (tune.t0
+    2026-11-23T23:27:35Z), after A3 was committed at 08:13:47; the real evaluation
+    started 09:47:54 (eval.t0 2026-11-24T00:47:54Z), after A7 to A9 were committed at
+    09:47:35.  A commit time is this machine's clock and a stamp file is the host's;
+    nothing here compares the two clocks, and 19 seconds is the smallest margin.
+
+  26.4  THE REVIEWER THAT DID NOT REPORT
+  ------------------------------------------------------------------
+  The same request was sent to a second outside reviewer that can run code.  Its
+  session stopped before it read the request and no report exists.  So no outside
+  party recomputed a number of this directory; the recounts of 26.3 are the main
+  session's own.
+
+  26.5  WHAT WAS NOT DONE
+  ------------------------------------------------------------------
+  - No script and no archive was edited.  Two sentences changed, one in README.md and
+    one in the ticket.  No number moved.
+  - The stale sentences of items 1 and 2 are still in eval.py, agree.py and four
+    archived outputs.

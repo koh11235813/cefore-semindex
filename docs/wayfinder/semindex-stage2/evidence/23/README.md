@@ -243,7 +243,7 @@
 | `tune.py` | `hpc-debian` | `tune.txt`（2 回目、候補のアダプタ）、`tune_run1.txt`（1 回目、残した物） |
 | `decider.py` | `hpc-debian`（import されるだけ、`main` 無し） | 出す file は無い |
 | `eval.py` | `hpc-debian` | `eval.csv`（データの行 5600 本）、`eval.txt` |
-| `eval.py`（台本は 1 行も直さず、1 回目のアダプタの上で） | `hpc-debian` の 2 つめの root `ROOT/run1root`（`repo` の写しの `E/tune.txt` に `tune_run1.txt` を入れ、`adapters` を `adapters-run1` へ向けた物。この 2 か所だけが本番の root と違う） | `eval_run1.csv`（a と b の 1600 行が新しく、見出しと残る 4000 行は本番の byte そのまま）、`eval_run1.txt` |
+| `eval.py`（台本は 1 行も直さず、1 回目のアダプタの上で） | `hpc-debian` の 2 つめの root `ROOT/run1root`（`repo` の写しの `E/tune.txt` に `tune_run1.txt` を入れ、`adapters` を `adapters-run1` へ向けた物。本番の root と違うのはこの 2 か所と、モデルを呼ばない 5 つの決め方の行の file を `eval-real-parts` に先に写しておいた事の、合わせて 3 つである） | `eval_run1.csv`（a と b の 1600 行が新しく、見出しと残る 4000 行は本番の byte そのまま）、`eval_run1.txt` |
 | `ana.py` | どこでも（`eval.csv` だけを読む） | `ana.txt` |
 | `ana.py`（`eval_run1.csv` の上で） | こちらの機械 | `ana_run1.txt` |
 | `agree.py` | `hpc-debian` | `agree.txt` |
@@ -252,7 +252,7 @@
 | `spread.py` | こちらの機械（`eval.csv` と `eval_run1.csv` だけを読む。段取りの外の後付け） | `spread.txt` |
 | `*_dry.*` | 同じ台本の `--dry`、seed 1 と 2 の上の試し回し | `eval_dry.txt`・`eval_dry.csv`・`ana_dry.txt`・`agree_dry.txt`・`latency_dry.txt` |
 
-命令と順番と時間、digest は `RUN.txt`（この一手は 17〜25）。台本が `hpc-debian` に届く道は `push_inputs.sh` だけである。元の重み（10.2 GB）、アダプタ、ラベルの file はリポジトリに入れない。`ana.py` と `versus.py` は時刻も path も印字しないので、2 つの機械の出力を `cmp` で突き合わせられる（`ana.txt` は python 3.12.13 と 3.13.5 で byte まで同じだった）。
+命令と順番と時間、digest は `RUN.txt`（この一手は 17〜26）。台本が `hpc-debian` に届く道は `push_inputs.sh` だけである。元の重み（10.2 GB）、アダプタ、ラベルの file はリポジトリに入れない。`ana.py` と `versus.py` は時刻も path も印字しないので、2 つの機械の出力を `cmp` で突き合わせられる（`ana.txt` は python 3.12.13 と 3.13.5 で byte まで同じだった）。
 
 この README は `ana.txt`・`ana_run1.txt`・`eval.txt`・`eval_run1.txt`・`agree.txt`・`latency.txt`・`tune.txt`・`tune_run1.txt`・`versus.txt`・`spread.txt`・`RUN.txt` から手で書いたもので、これを作る台本は無い。
 
