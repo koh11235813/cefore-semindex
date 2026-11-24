@@ -1,0 +1,149 @@
+
+========================================================================
+0  THE CARD IS FREE
+========================================================================
+nvidia-smi compute apps: (none)
+OK: no other compute process on the GPU
+
+========================================================================
+1  LOADING
+========================================================================
+tokenizer       GemmaTokenizer, vocab 262144, in 1.4 s
+processor       NOT loaded: ValueError: Could not load any image processor class for /home/yamakawa/Development/semindex-learn/models/gemma-4-E2B-it. The model configuration resolves to the following image processor classes: pil: Gemma4ImageProcessorPil, torchvision: Gemma4ImageProcessor. None of these classes could be imported. Missing optional dependencies: torchvision, Pillow. Please install the missing dependencies or select a backend that is available in your environment.
+text-only load  Gemma4ForCausalLM in 23.0 s, missing_keys 541, unexpected_keys 1940
+                first missing keys: ['lm_head.weight', 'model.embed_tokens.weight', 'model.embed_tokens_per_layer.weight', 'model.layers.0.input_layernorm.weight', 'model.layers.0.layer_scalar']
+                first unexpected keys: ['model.audio_tower.layers.0.feed_forward1.ffw_layer_1.input_max', 'model.audio_tower.layers.0.feed_forward1.ffw_layer_1.input_min', 'model.audio_tower.layers.0.feed_forward1.ffw_layer_1.linear.weight', 'model.audio_tower.layers.0.feed_forward1.ffw_layer_1.output_max', 'model.audio_tower.layers.0.feed_forward1.ffw_layer_1.output_min']
+model           Gemma4ForConditionalGeneration in 2.2 s, dtype torch.bfloat16, device cuda:0
+after loading   allocated 9.52 GB, reserved 9.55 GB, card in use 9.95 GB of 47.27 GB
+text-only:      loads but 541 weights were NOT in the checkpoint, so the text tower would be partly random: not usable
+forward takes logits_to_keep: True
+
+========================================================================
+2  THE PREFILL
+========================================================================
+label rows      16071 from labels_p0.2.jsonl.gz
+seeds           min 1 max 100
+rows for step 4 seed 1 k 0 h1->h0 label 3.695, seed 17 k 14 h3->h4 label 6.0, seed 32 k 144 h4->h3 label 6.0, seed 48 k 129 h0->h1 label 10.043, seed 64 k 125 h0->h1 label 10.043
+
+--- the exact final prompt, special tokens visible (row 1 of the five) ---
+<bos><|turn>user
+A node decides how long to wait before polling this peer for state again.
+Answer with one word: short (3.695 s), mid (6.0 s) or long (10.043 s).
+
+state poll reschedule
+just resolved: the poll sent 0.0 s ago was answered, reply empty
+in flight 0, consecutive poll timeouts 0, previous poll answered, last fetch timeout none
+origins 0, peers 0, this decision polls a peer none of these origins names
+last 0 exchanges, newest first: age, outcome, reply, decided, waited
+o1.. and p1.. are positions in this record, not names. origins are ordered by missing then held, both highest first, ties in the state's own order; peers by their highest told value then by how many origins they cover, ties in the order the state first names them. the same p number is the same peer on every line. the peer this decision polls is named on the origins line.<turn|>
+<|turn>model
+Interval:
+--- end of prompt (nothing after the last character above) ---
+
+bos id 2 appears 1 time(s), at position(s) [0]
+tokenize=True and tokenize=False+tok() agree: 224 ids
+the prompt ends with the prefill 'Interval:', unaltered
+
+the last 12 tokens of the prompt (id, string):
+   212      580  ' on'
+   213      506  ' the'
+   214    38320  ' origins'
+   215     1757  ' line'
+   216   236761  '.'
+   217      106  '<turn|>'
+   218      107  '\n'
+   219      105  '<|turn>'
+   220     4368  'model'
+   221      107  '\n'
+   222    16312  'Interval'
+   223   236787  ':'
+
+========================================================================
+3  THE CANDIDATE TOKENS
+========================================================================
+' short' one token, id   2822  as the vocabulary lookup said  (3.695 s)
+' mid'   one token, id   5453  as the vocabulary lookup said  (6.000 s)
+' long'  one token, id   1440  as the vocabulary lookup said  (10.043 s)
+the 3 ids are distinct
+
+the one-token check fires: ' 10.043' adds 7 tokens, not 1: [' ', '1', '0', '.', '0', '4', '3']
+the one-token check fires: ' 6.0' adds 4 tokens, not 1: [' ', '6', '.', '0']
+
+========================================================================
+4  ONE FORWARD PASS, FIVE ROWS (the model is UNTUNED)
+========================================================================
+Nothing is expected of the answers.  What is being shown is that the read-out works
+and repeats exactly.
+
+row 1  seed 1 k 0 h1->h0  label 3.695  tokens 224  (two passes identical)
+        short logit +19.3750 p 0.9890  mid logit +14.6875 p 0.0091  long logit +13.1250 p 0.0019
+        top 10 next tokens: ' short' 19.3750, ' mid' 14.6875, ' long' 13.1250, 'short' 13.1250, ' **' 12.6250, ' ' 11.8125, ' medium' 10.0625, '<turn|>' 9.8750, '  ' 8.8750, '\n\n' 8.8125
+row 2  seed 17 k 14 h3->h4  label 6.0  tokens 249  (two passes identical)
+        short logit  +2.2031 p 0.0000  mid logit  +2.6406 p 0.0000  long logit +13.7500 p 1.0000
+        top 10 next tokens: ' long' 13.7500, ' **' 5.9375, ' ' 4.4062, 'long' 4.2500, ' longterm' 2.6875, ' mid' 2.6406, ' Long' 2.2031, ' short' 2.2031, '<turn|>' 2.1250, ' medium' 2.0625
+row 3  seed 32 k 144 h4->h3  label 6.0  tokens 473  (two passes identical)
+        short logit +13.9375 p 1.0000  mid logit  -1.4688 p 0.0000  long logit  -0.2109 p 0.0000
+        top 10 next tokens: ' short' 13.9375, ' **' 5.0000, ' ' 4.8750, 'short' 2.9531, '\n\n' 1.1875, '<turn|>' 1.1016, ' Short' 0.8984, ' `' 0.6250, ' $\\' 0.5859, '  ' 0.5312
+row 4  seed 48 k 129 h0->h1  label 10.043  tokens 474  (two passes identical)
+        short logit +17.2500 p 0.9914  mid logit +11.7500 p 0.0041  long logit +11.8750 p 0.0046
+        top 10 next tokens: ' short' 17.2500, ' ' 12.0625, ' long' 11.8750, ' mid' 11.7500, ' **' 10.8125, 'short' 9.2500, ' medium' 8.9375, '  ' 7.4062, '\n\n' 7.2500, '3' 7.0625
+row 5  seed 64 k 125 h0->h1  label 10.043  tokens 477  (two passes identical)
+        short logit +17.8750 p 0.9507  mid logit +14.3125 p 0.0270  long logit +14.1250 p 0.0224
+        top 10 next tokens: ' short' 17.8750, ' mid' 14.3125, ' long' 14.1250, ' ' 13.1250, ' **' 12.6250, ' medium' 10.1875, '  ' 8.3750, 'short' 8.1875, ' `' 8.0625, '\n\n' 7.9688
+
+rows 1 and 2 give different logits (max difference 19.1562), so the read-out does depend on the prompt
+
+========================================================================
+5  TOKEN LENGTHS OVER ALL 16071 LABEL ROWS
+========================================================================
+instruction alone: 48 tokens
+rendered and tokenized 16071 prompts twice in 16.8 s
+prompt, with legend    min  224  median  477  p99  509  max  519
+prompt, no legend      min  138  median  391  p99  423  max  433
+the legend costs 86 tokens at the median
+
+========================================================================
+6  TIMING
+========================================================================
+timing prompt: label row 57, seed 1, 477 tokens (file median 477)
+batch 1, 300 passes    median   43.78  p90   44.39  p99   50.76  max   51.95  ms
+beside it, the number the brief names: 100 ms.  No verdict is drawn here.
+
+--- batched passes ---
+pad token '<pad>' id 0, padding_side left
+batch rows: 64 prompts spread over the file, 224 to 511 tokens, shortest first
+batch  8    52.5 ms/batch    152.4 passes/s  padded width 504, mean real length 418, padding 17.2% of the tokens
+          candidate logits vs batch 1:  mixed (padded) 0.1250, softmax 0.0021   |   no-padding control 1.0625, softmax 0.0033
+           128000 passes at this rate: 14.0 min
+           256000 passes at this rate: 28.0 min
+batch 32   240.7 ms/batch    133.0 passes/s  padded width 509, mean real length 432, padding 15.1% of the tokens
+          candidate logits vs batch 1:  mixed (padded) 0.1875, softmax 0.0037   |   no-padding control 0.8750, softmax 0.0030
+           128000 passes at this rate: 16.0 min
+           256000 passes at this rate: 32.1 min
+batch 64   500.9 ms/batch    127.8 passes/s  padded width 511, mean real length 435, padding 15.0% of the tokens
+          candidate logits vs batch 1:  mixed (padded) 0.1250, softmax 0.0022   |   no-padding control 1.0000, softmax 0.0019
+           128000 passes at this rate: 16.7 min
+           256000 passes at this rate: 33.4 min
+
+tolerance: the padded batch may exceed the no-padding control by at most 0.25 of a
+logit.  The control is what batch shape alone costs, measured and not assumed.
+  batch  8  padded 0.1250, control 1.0625, excess -0.9375   (softmax: padded 0.0021, control 0.0033)
+  batch 32  padded 0.1875, control 0.8750, excess -0.6875   (softmax: padded 0.0037, control 0.0030)
+  batch 64  padded 0.1250, control 1.0000, excess -0.8750   (softmax: padded 0.0022, control 0.0019)
+OK: at every batch size the padded difference is at or below the control's, so the
+read position is each row's last real token and the rest is bf16 rounding.
+
+========================================================================
+7  VERSIONS AND PEAK MEMORY
+========================================================================
+torch           2.15.0+cu132 (cuda 13.2)
+transformers    5.24.0
+peft            0.22.0
+numpy           2.5.4
+python          3.13.5
+gpu             NVIDIA RTX PRO 5000 Blackwell
+peak allocated  13.07 GB
+peak reserved   15.87 GB
+at the end      allocated 9.59 GB, reserved 15.87 GB, card in use 16.40 GB of 47.27 GB
+
+OK: the read-out works on this card and repeats exactly.

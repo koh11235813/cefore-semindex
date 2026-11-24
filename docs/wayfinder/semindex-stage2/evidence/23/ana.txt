@@ -1,0 +1,226 @@
+
+========================================================================
+0  WHAT THIS IS, AND WHAT IT CANNOT BE
+========================================================================
+The two statistics of the comparison, on seeds 81 to 100 of the main cell.  The
+mean selecting score chooses between candidate a and candidate b and nothing
+else does; the frontier gain is reported beside it.
+
+This script reads one csv and nothing else: no card, no model, no run store, no
+label file.  It prints no clock time and no path of the machine it ran on, so the
+two hosts' output can be compared with cmp.
+
+========================================================================
+1  THE CSV, ITS DIGESTS AND ITS SEEDS
+========================================================================
+rows            5600
+columns         decider,seed,stream,n4,c4,lat_ms,censored_ms,polls,delay_ms,score_ms,score_dropped_ms,weight_ms_per_poll,reads,sends,ties,n_short,n_mid,n_long,ord_poll,ord_resched,k,script_sha,model_sha
+deciders        const3.695, const6.000, const10.043, F, untuned, a, b
+seed column     min 81 max 100, 20 distinct
+stream column   min 0 max 39, 40 distinct
+runs            800 per decider
+script digest   f3a34ad0ceff4a4e2fb746851f504ef13da9fd5700657987eb215dee04031cd8, one value over every row
+                It is a digest over the files eval.py's own output names one by one,
+                beside the list of what it does NOT cover.  This script cannot
+                widen it or name its parts: it reads the csv and nothing else, which
+                is what lets a reader re-run it on any machine.
+  const3.695    800 rows, model digest none
+  const6.000    800 rows, model digest none
+  const10.043   800 rows, model digest none
+  F             800 rows, model digest none
+  untuned       800 rows, model digest none
+  a             800 rows, model digest 922309eb7acd0ee669aeb120d17544fba521eccd42763d621be3eda40f54c48b
+  b             800 rows, model digest 6a39ca005019699bef789b6811abd006da7f9445708894ea444d9e8690441cc1
+weight          104.29595912307323 ms per poll, the value ../22/weight.json carries and every row
+                was scored at
+OK: delay + weight x polls recomputes the score column of all 5600 rows exactly
+grid            20 seeds x 40 streams = 800 runs per decider, which is the product
+                this mode DECLARES, not a count of what the csv happened to carry:
+                a csv that lost a whole seed or a whole stream from every decider
+                would agree with itself and is refused here
+OK: exactly one row per (decider, seed, stream), none twice and none missing
+K               4 worker process(es) read out every model decider's rows, one value
+                over the three of them; the four that make no forward pass are
+                scored in eval.py's parent and carry 1
+
+  tuning              70 seeds, 1 to 70
+  held out            10 seeds, 71 to 80
+  selection           20 seeds, 81 to 100
+  scored in this csv  20 seeds, 81 to 100
+  the union of the four meets range(121, 161) in 0 seeds
+  port.check_seeds (>100 refused) passed all four, and is shown refusing in part 5.
+  This script starts no simulation and reads no label row, so the first item of the
+  seeds-never-used proof is eval.py's and the fourth is read off the csv's own seed
+  column above.
+
+========================================================================
+2  THE SELECTING STATISTIC: THE MEAN SCORE OVER THE RUNS
+========================================================================
+`score.score_run(events, t0, 104.29595912307323)[0]` = delay + weight x polls, with every censored
+record entering the delay at its lower bound, meaned over the 800 runs of a decider.
+Lower is better.  THIS NUMBER, AND NOTHING ELSE, CHOOSES BETWEEN a AND b.
+
+  decider        mean score ms   mean polls/run   mean delay ms   ties / decisions
+  const3.695        40811.181          256.491       14060.180   --
+  const6.000        37035.920          159.536       20396.934   --
+  const10.043       39855.665           96.029       29840.255   --
+  F                 36150.829          179.731       17405.586   --
+  untuned           40823.648          256.274       14095.332   10 / 224179
+  a                 37828.390          103.825       26999.862   19429 / 95860
+  b                 37210.550          142.959       22300.530   7882 / 122076
+
+ranked, lower first: F 36150.8, const6.000 37035.9, b 37210.6, a 37828.4, const10.043 39855.7, const3.695 40811.2, untuned 40823.6
+The three fixed arms' own poll counts on these seeds, which the gain's "no gain"
+message quotes rather than ../22/weight.txt's 95.985 and 256.455 (those are step 4's
+means over seeds 1 to 100 and would name an interval this test did not use):
+  96.029 to 256.491 polls per run
+
+========================================================================
+3  THE REPORTED FRONTIER GAIN, WITH ITS 95 % INTERVAL
+========================================================================
+A DIFFERENT DELAY FROM THE ONE ABOVE: `predict.vals` is `lat / n4`, i.e. the censored
+records DROPPED, pooled over a seed's runs and then over the seeds.  The score above
+selects; this is reported beside it, and the two disagree about the censored records
+by construction.
+
+the three re-run arms are stored under ../20's own frontier keys, so that interp and
+gain stay single-sourced:
+  const3.695   -> s10b3p695
+  const6.000   -> s10b6p0
+  const10.043  -> s10b10p043
+
+OK: the per-seed row handed to predict.gain is [n4, c4, lat, polls], checked against
+the four sums read out of the csv by column name, and predict.vals reads the delay,
+the polls and the censored share back out of it.  The order is a silent defect and
+not an error: the order [lat, n, c, polls] gives a "delay" of n4 / lat, five orders
+of magnitude off, and prints a plausible gain.  Shown firing in part 5.
+
+the frontier, as interp reads it (pooled delay against a seed's poll count, which is
+40 times a run's; interp is piecewise linear in log-log, so a factor common to the
+frontier's x and the decider's x cancels and the gain is the same number -- checked
+below against the same rows divided by 40):
+  s10b3p695      delay  14060.180 ms   polls  10259.650 per seed ( 256.491 per run)   censored 0.0000
+  s10b6p0        delay  20396.934 ms   polls   6381.450 per seed ( 159.536 per run)   censored 0.0000
+  s10b10p043     delay  29813.457 ms   polls   3841.150 per seed (  96.029 per run)   censored 0.0008
+  monotone (more polls, less delay): True
+
+the resample loop is this script's own and adopts ../20's drop-and-count rule by
+reference: 2000 resamples of the 20 SEEDS from one integers(0, 20, size=(2000, 20))
+matrix drawn once with default_rng(20261122).  A resample whose arms are not monotone, or
+whose decider's polls leave the arms, YIELDS NO GAIN AND IS COUNTED AND DROPPED, not
+substituted, because substituting a value would hide how often the frontier is
+unreadable; the dropped count is printed beside every interval.
+
+  decider        gain      95 % interval            half width   dropped   word
+  F             0.0631      4.089 % to    8.574 %      2.243 %         0   seen
+  untuned      -0.0018     -0.534 % to    0.153 %      0.343 %         0   not-seen
+  a             0.0411      1.372 % to    6.492 %      2.560 %         0   seen
+  b            -0.0058     -3.135 % to    1.869 %      2.502 %         0   not-seen
+
+The real mode's 95 % interval, at 20 seeds, is expected to be wider than ../20's at
+40 by roughly sqrt(2); that is an INFERENCE and not a measurement, and the printed
+half width is what counts.  This csv carries 20 seeds.
+boot_gains is NOT called: its TESTED keys name ../20's two rules and not this step's
+four model-or-rule deciders.
+
+========================================================================
+4  HOW THE CHOICE BETWEEN a AND b IS MADE
+========================================================================
+mean score      a    37828.390 ms,  b    37210.550 ms
+gap             617.840 ms, the lower being b
+the band        1.685586 ms per poll x 176.220 polls = 297.0340 ms, and the RULE the frozen
+                plan states is 297.0 ms.  It is the jackknife standard error
+                ../22/weight.txt attaches to the fixed weight, times the midpoint of
+                the two outer arms' step-4 poll counts, i.e. the amount by which
+                re-solving the weight on another draw of seeds would move a typical
+                run's score.  IT IS NOT A CONFIDENCE INTERVAL ON THE DIFFERENCE and
+                it is not the seed-to-seed spread of a mean score, which the paired
+                bootstrap below carries.  The tighter of weight.txt's two readings
+                was taken (the per-stream weight range gives 3.676 x 176.220 = 647.8
+                ms), which makes "separated" the EASIER verdict and not the harder
+                one, so the separated branch is the weaker-evidence branch of the two.
+
+the part of the band that does NOT cancel: a weight error shifts both candidates in
+the same direction and cancels to the extent their poll counts agree, so
+  1.685586 x |polls(a) - polls(b)| = 1.685586 x |103.825 - 142.959| = 65.963 ms
+is the part of the wobble that survives the cancellation.  It is computable only
+after the scores exist, so it is reported and is not the rule.
+
+the paired bootstrap over the same 20 seeds and the same index matrix, whose per-seed
+value is the MEAN OF THAT SEED'S 40 RUN SCORES -- the only aggregate under which
+resampling 20 seed indices reproduces the 800-run mean the rule compares:
+  score(a) - score(b): point 617.840 ms, 95 % interval -58.424 to 1357.299 ms, contains 0: True
+  distinct resample values: 2000 of 2000
+
+VERDICT: SEPARATED, NOT RESOLVED.  The gap of 617.840 ms clears the 297.0 ms band,
+so the relabelling clause stays shut and the chosen candidate is the lower one,
+b; but the gap lies inside the paired bootstrap's 95 % interval (-58.424 to 1357.299
+ms, which contains 0), so this report does not call the two distinguished.
+
+THE CANDIDATE THIS ANALYSIS CARRIES FORWARD: b
+
+The selection bias of choosing one of two candidates on the same seeds is not
+corrected anywhere: lower is better and the rule picks the lower of two, so the
+winner's figure is the MINIMUM OF TWO DRAWS and is biased in the favourable
+direction.  It reaches the gain as well, which is a different delay on the same runs,
+and it reaches the L-against-F and L-against-arm readings, each of which is then a
+best-of-two against a single comparator.
+
+========================================================================
+5  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+  roles/measuring            FIRES: mutated: the seed set meets the measuring seeds 121-160: [121]
+  one script digest          FIRES: mutated: 2 different script_sha values: ['deadbeef', 'f3a34ad0ceff4a4e2fb746851f504ef13da9fd5700657987eb215dee04031cd8']
+  one model digest           FIRES: mutated: 2 different model_sha values: ['deadbeef', 'none']
+  weight                     FIRES: mutated: 1 row(s) at another weight, e.g. 100.0 against 104.29595912307323
+  score/one lat moved        FIRES: mutated: const3.695 seed 81 stream 0: delay 12787.9 and score 39591.96149462982 recompute to 12787.904166666667 and 39591.96566129649
+  score/one poll moved       FIRES: mutated: const3.695 seed 81 stream 0: delay 12787.9 and score 39591.96149462982 recompute to 12787.9 and 39696.25745375289
+  complete/one row missing   FIRES: mutated: 1 of 5600 missing (e.g. [('const3.695', 81, 0)]) and 0 unexpected (e.g. [])
+  complete/one decider twice FIRES: mutated: 1 row(s) appear twice, e.g. [('const3.695', 81, 0)]
+  grid/a whole stream gone   FIRES: mutated: the csv carries 780 of the 800 (seed, stream) pairs this mode declares; 20 missing (e.g. [(81, 0), (82, 0), (83, 0)]) and 0 unexpected (e.g. [])
+  grid/a whole seed gone     FIRES: mutated: the csv carries 760 of the 800 (seed, stream) pairs this mode declares; 40 missing (e.g. [(81, 0), (81, 1), (81, 2)]) and 0 unexpected (e.g. [])
+  K/two worker counts        FIRES: mutated: the model deciders' rows were produced at 2 different worker counts: [4, 5]
+  K/a no-pass decider at K > 1 FIRES: mutated: the deciders that make no forward pass carry the worker counts [1, 2], not [1]
+  per_seed/seeds of unequal length FIRES: per_seed: the seeds do not all carry the same number of runs
+  row order/[lat, n, c, polls] FIRES: mutated: the row is [135291960.0, 9600.0, 0.0, 10258.0], not [n4, c4, lat, polls] = [9600.0, 0.0, 135291960.0, 10258.0]
+  row order/n4 and c4 swapped FIRES: mutated: the row is [0.0, 9600.0, 135291960.0, 10258.0], not [n4, c4, lat, polls] = [9600.0, 0.0, 135291960.0, 10258.0]
+  boot/shape                 FIRES: mutated: the resample matrix is (2000, 20), not (2000, 21)
+  boot/index out of range    FIRES: mutated: an index is outside 0 to 19: min 20 max 39
+  gain/one stage scaled      FIRES: one stage scaled: the gain moved from 0.063123 to 0.113635, which is what makes the invariance a statement about a COMMON factor
+  gain/not monotone          FIRES: not monotone: gain returned None, so the line reads "no gain: the three arm points are not monotone"
+  gain/polls outside the arms FIRES: polls outside: gain returned None, so the line reads "no gain: polls X outside [MIN, MAX]"
+
+The two gain branches above are `predict.gain`'s own refusals and not checks of this
+script: they are shown because the report has to print a sentence where a number
+would go, and a reader needs to know that sentence was reached by a real refusal.
+
+WHAT HAS NO MUTATION, named and not counted: the closeness RULE itself, because a
+rule has no failing input.  Its two branches are reached by the data, and which one
+was reached is printed in part 4 with both numbers beside it.
+Nothing else of this script is in that list: per_seed's own refusal was in it by
+omission until 2026-11-24 and now carries the mutation above.
+
+all 22 mutations produced a failure
+
+========================================================================
+6  WHAT THIS DOES NOT SHOW
+========================================================================
+- Nothing about L on the testbed.  evidence/13's per-decision agreement is on record
+  as failing, and Mode B's band is a per-stage band and not a bound on one decision.
+- Nothing that corrects the selection bias of choosing one of two candidates on the
+  same seeds.  The only clean correction is a set of seeds nobody has looked at.
+- Nothing about the difference between a decider's score and an arm's being the
+  decider's difference alone.  F and L draw one extra tick lag whenever they change
+  their mind between a send and a resolution and the three fixed arms never do, so
+  the comparator family consumes the pair streams differently by construction.
+- Nothing about the weight being right.  Its jackknife standard error is 1.685586 ms
+  per poll and the band above is built from exactly that uncertainty; the selecting
+  statistic moves with it.
+- Nothing about the agreement with the labels, which agree.py reports and which
+  predicts no score in either direction.
+- No pass or fail on any decider.  The verdict in part 4 is a choice between two
+  candidates and not a judgement of L against F or against the arms.
+
+end of ana.py

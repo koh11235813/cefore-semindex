@@ -1,0 +1,98 @@
+
+========================================================================
+0  THE FILE
+========================================================================
+label file      /home/lab_shared/semindex-learn/ev22/labels_p0.2.jsonl.gz
+sha256          fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67  == evidence/22/labels.sha256
+rows            16071
+seeds in file   min 1 max 100, 100 distinct
+port.check_seeds passed them, so nothing above 100 is in this file
+
+========================================================================
+1  THE TUNING HALF, SEEDS 1 TO 80
+========================================================================
+rows            12868 of 16071, over 80 seeds (1 to 80)
+seeds 81-100 (selection) and 121-160 (measuring) appear nowhere below: the row list
+is cut at seed 80 before anything is counted
+ties (no label) 1430 of 12868 (0.1111)
+rows at or after ts_rel_ms 130000: 42, and every one of them is a tie, so a consumer
+that filters them out loses no labelled row
+
+========================================================================
+2  THE TWO CANDIDATES ON SEEDS 1 TO 80
+========================================================================
+  candidate a   11438 rows of 12868 (0.8889 of the seed range's rows)
+    3.695 s    2581  0.2257
+    6.000 s    2972  0.2598
+    10.043 s   5885  0.5145
+    always 10.043 s (the most frequent arm) agrees with 0.5145 of these rows
+
+  candidate b   4586 rows of 12868 (0.3564 of the seed range's rows)
+    3.695 s     714  0.1557
+    6.000 s     719  0.1568
+    10.043 s   3153  0.6875
+    always 10.043 s (the most frequent arm) agrees with 0.6875 of these rows
+    b keeps 0.4009 of candidate a's rows
+
+========================================================================
+3  WHAT THE TOLERANCE AT THE BAR DOES
+========================================================================
+rows with a t within 1e-06 of the bar 3: 31
+the largest |t - 3| among them: 9.99201e-14, which is 9.99e-08 of the tolerance
+the nearest |t - 3| outside the tolerance: 0.00077627, which is 776 times it
+so the clump is isolated and a tolerance a hundred times wider or narrower would
+catch the same rows
+candidate b with the tolerance (every row ON the bar kept): 4586 rows
+candidate b with a bare float `t >= 3`:                    4571 rows
+the tolerance keeps 15 row(s) the bare comparison drops
+
+========================================================================
+4  THE SPLIT THE TUNING USES: SEEDS 1-70 TUNE, 71-80 HELD OUT
+========================================================================
+The held-out slice is carved out of the TUNING half, so no number from seeds 81-100
+reaches the tuning.  It does not tune: the counts below are what each candidate
+actually optimises on, and they are smaller than part 2's for that reason.
+
+  candidate a   tune 10013 rows (seeds 1-70)   held out 1425 rows (seeds 71-80)
+    tune     3.695 s 2240 (0.2237)  6.000 s 2615 (0.2612)  10.043 s 5158 (0.5151)
+    held out 3.695 s 341 (0.2393)  6.000 s 357 (0.2505)  10.043 s 727 (0.5102)
+    always 10.043 s on the held-out rows: 0.5102
+
+  candidate b   tune 4018 rows (seeds 1-70)   held out 568 rows (seeds 71-80)
+    tune     3.695 s 625 (0.1556)  6.000 s 628 (0.1563)  10.043 s 2765 (0.6882)
+    held out 3.695 s 89 (0.1567)  6.000 s 91 (0.1602)  10.043 s 388 (0.6831)
+    always 10.043 s on the held-out rows: 0.6831
+
+========================================================================
+5  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+The mutation is of the INPUT, inside this process.  A per-check copy of the script
+would be six copies of a 60-second read of the same file, and a copy that silently
+matched nothing would read as a passing check.
+
+  digest                 FIRES: digest of labels_p0.2.jsonl.gz is fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67, committed deadbeef
+  seeds_tuning           FIRES: mutated: seeds above 80: [81]
+  port.check_seeds       FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  post_stop_ties         FIRES: mutated: 1 row(s) at or after ts_rel_ms 130000 carry a label, e.g. seed 1 k 0
+  subset                 FIRES: mutated: 1 row(s) of b are not in a, e.g. [(1, 21)]
+  counts_sum             FIRES: mutated: per-arm counts sum to 11438, not 11439
+  bar_isolated/inner     FIRES: mutated: the clump reaches 5e-07, within a hundredth of the tolerance 1e-06
+  bar_isolated/outside   FIRES: mutated: the nearest t off the clump is 2e-06, inside a hundred times the tolerance 1e-06
+
+8 of 8 mutations produced a failure
+
+========================================================================
+6  WHAT THIS SCRIPT DOES NOT SAY
+========================================================================
+- Nothing about which candidate is better.  It counts rows; the choice between a
+  and b is made on seeds 81-100 by the replay score, and not here and not by any
+  agreement with the labels.
+- Nothing about label QUALITY.  The retention of candidate b's filter is not an
+  agreement: the agreement of that selection was measured on seeds 1-10 against a
+  second labelling (evidence/22/stability.txt, 0.9777 there against 0.7623 overall),
+  and the file on disk is ONE labelling, so no agreement can be computed from it.
+- The most-frequent-arm shares above are a baseline, not a result.  A tuned model
+  that only matched them would have learnt the class prior and nothing else.
+
+no check fired on real input; the failures in part 5 are the mutations
+end of rows.py

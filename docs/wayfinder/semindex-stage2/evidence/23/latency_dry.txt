@@ -1,0 +1,186 @@
+
+========================================================================
+0  THE CARD IS FREE, AND WHAT THIS RUN IS
+========================================================================
+A DRY RUN.  The candidate timed here is 'a' because the command line said so, and
+NOT because any score chose it: the choice between a and b is the mean replay
+score's on seeds 81 to 100 and is ana.py's to make.  The pass time itself is a
+real measurement of a real adapter and does not depend on which candidate wins.
+
+nvidia-smi compute apps: (none)
+OK: no other compute process on the GPU, checked by this script and not by hand
+
+the code that produced every figure below, one sha256 per file:
+  latency.py         26d86b4642b02b6e41c14949ea61c4390ee51a74299a31a5323d3949e91d5c36
+  decider.py         a3a913e9e1c0422d9bae5afb1c9f2974c01c3ddbfbfdc1e616d02f312d7080b0
+  prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+  ../22/observe.py   9a5808bb40ddfd0f827fa04ff3aa7ad3c2c9c69243104b9651bb7e4da90056c2
+  ../22/port.py      5f74617a04b43d71f2a29153e26251e357cd44436925ecb9fa6b596fc53cca07
+  ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+  ../22/score.py     24743e3547ed877cec0a35c8925f12f20c2ed6941d4d805268701fbd0e0f3e49
+  ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+combined          e1abe65c69999cfd593015bd8afa83b6e6b60a6d71ce528acd0e4a6291109335
+WHAT THESE DIGESTS DO NOT COVER:
+  - the base weights (pinned by revision; the digest is RUN.txt section 2)
+  - the host's venv: torch, transformers, peft and numpy (versions printed instead)
+  - ../22/weight.json, whose weight every row carries and ana.py re-checks
+  - the label file (its own sha256 is checked against ../22/labels.sha256)
+  - ../20/predict.py and ../21/predict.py, which no row of the csv passes through
+
+started         2026-11-24T09:07:08+0900
+torch 2.15.0+cu132 (cuda 13.2), transformers 5.24.0, peft 0.22.0, numpy 2.5.4, python 3.13.5
+gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+candidate       a, adapter /home/yamakawa/Development/semindex-learn/adapters/a
+read-out        bf16 base, float32 adapter, batch 1, ONE PROCESS, attached and not
+                merged -- the arithmetic every score and every agreement of this step
+                is read out at, so this is the pass those numbers were made of
+passes          10 warm-up then 300 timed, each bracketed by torch.cuda.synchronize(),
+                the tuned and the untuned model alternating pass by pass
+
+========================================================================
+1  THE PROMPT THAT IS TIMED, AND THE SEEDS IT COMES FROM
+========================================================================
+label file      /home/yamakawa/Development/semindex-learn/ev22/labels_p0.2.jsonl.gz
+rows            16071, seed column min 1 max 100, 100 distinct
+labelled rows of seeds 1-80: 11438, over 80 seeds.  The selection half is NOT read: the
+row list is cut at seed 80 before anything is rendered.
+THE POPULATION THE MEDIAN IS TAKEN OVER: the 11438 LABELLED rows of seeds 1 to 80, not
+all 12868 rows of that half.  The 1430 rows left out are TIES that carry no label, which
+is the population tune.py rendered and took its own median over, so the comparison
+with tune.txt's median below is of one population and not two.  The plan's sentence
+says "the seeds 1 to 80 rows" and this is narrower than that sentence.
+
+  tuning       70 seeds, 1 to 70
+  held out     10 seeds, 71 to 80
+  selection    20 seeds, 81 to 100
+  read here    80 seeds, 1 to 80
+  the union of the four meets range(121, 161) in 0 seeds
+  check_seeds_tuning (>80 refused) passed the rows this script reads and
+  port.check_seeds (>100 refused) passed all four roles; both are shown refusing in
+  part 5.  This script starts no simulation and builds no port, so the first item of
+  the seeds-never-used proof is eval.py's and not this one's
+
+pad token '<pad>' id 0, padding_side left
+rendered 11438 observations in 0.3 s, each through decider.text_of, so the no-node-name
+assertion ran on every one
+prompt lengths  224 to 519 tokens, median 473.0 (tune.txt's own median over these rows is
+                473)
+timed prompt    seed 1 k 111, 473 tokens, the row closest to that median with the
+                earlier (seed, k) winning a tie.  precheck.txt part 1 timed a
+                478-token row of the same half at 43.02 ms median and 49.10 p99, so
+                the figures below are comparable with that one and differ from it in
+                the adapter, in 5 tokens of prompt, AND in one host-to-device copy:
+                decider.forward_three builds torch.tensor([ids], device=cuda:0)
+                INSIDE the timed call, which precheck.py's forward_last did NOT.
+                So the untuned median in part 3 is precheck's quantity plus that
+                copy, over 5 tokens fewer; the two are named side by side there.
+
+========================================================================
+2  THE TUNED AND THE UNTUNED MODEL, BOTH IN THIS PROCESS
+========================================================================
+loaded two copies of the base in 4.8 s and attached candidate a's kept adapter to
+one of them, unmerged, adapter dtype float32 over the bf16 base (both asserted).
+gpu memory      27.56 GB free with both models on the card, from 46.88 GB before
+candidate ids   [2822, 5453, 1440] for [' short', ' mid', ' long'], each one token at this position
+
+the repeat check, with the adapter attached (seed 71 k 72, the row tune.py read
+twice):
+    two passes over one row: [28.0, 28.25, 28.625]
+                        and: [28.0, 28.25, 28.625]
+    bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
+    one logit moved by 1 FIRES: the repeat check of candidate a, mutated: 1 of 3 logits differ, first at 0: 29.0 against 28.0
+  [28.0, 28.25, 28.625] against tune.txt's [28.0, 28.25, 28.625] (read off the archive, not typed here): equal True
+  so the adapter timed below is the file the tuning measured, read out the same way
+
+========================================================================
+3  THE PASS, ALTERNATING TUNED AND UNTUNED, 300 TIMED EACH
+========================================================================
+  model              median      p90      p99      max   |  beside the budget
+  candidate a         69.26    70.36    75.89    77.96   |  100 ms
+  untuned base        43.70    44.21    49.76    51.86   |  100 ms
+  difference         +25.56   +26.15   +26.14   +26.10   |  the adapter's cost, column by column
+
+NO VERDICT.  100 ms is the node's loop and is printed beside these numbers because
+the ticket asks for that; this card is an RTX PRO 5000 Blackwell and not a node's
+hardware, and the pass alone is not a decision.
+precheck.txt part 1 has the untuned pass at 43.02 ms median and 49.10 p99 on a 478-token
+row; the untuned row above is this run's own measurement of the same quantity on a
+473-token row, and RUN.txt section 8 recorded what the adapter costs as UNTESTED.
+THE TWO ARE NOT THE SAME CALL: 43.70 ms here against precheck's 43.02 ms differs by
++0.68 ms, and this timed call contains one host-to-device copy of the 473 ids that
+precheck's did not, over 5 tokens fewer of prompt.  Neither difference is
+separated out here: this run times what a decision costs, copy included, because
+that is what decider.forward_three does on every decision of this step.
+
+========================================================================
+4  THE RENDER AND THE TOKENIZER CALL, NAMED AS NOT PART OF THE PASS
+========================================================================
+A node builds the record, renders it and tokenizes it before any pass happens.  Both
+are timed here on the same host over the same row, 300 times each, and NEITHER is
+part of the pass above.  The render timed is observe.observation plus render, i.e.
+the node's own work, without this step's no-node-name assertion on the result.
+
+  part                       median      p90      p99      max
+  observation + render        0.042    0.048    0.058    0.066
+  chat template               0.212    0.229    0.457    1.590
+  tokenizer                   0.403    0.412    0.430    0.589
+
+one decision, as the sum of its parts: 69.26 + 0.042 + 0.212 + 0.403 = 69.92 ms at the
+median, against the 100 ms budget.  The sum is the sum and is not a measurement of a
+node's loop: a node also keeps a tracker, plans its fetches and runs a transport.
+THE TUNING'S OWN 72 ms PER HELD-OUT ROW IS ACCOUNTED FOR HERE: 69.26 ms of pass plus
+0.403 ms of tokenizer plus 0.212 ms of chat template, i.e. the adapter and not the
+tokenizer is most of what the 43.02 ms on record does not cover.
+One pass per decision and not two: the send-time convention answers a send with the
+interval the pair already holds, so a decider that called the model at a send would
+pay the figure above twice.
+
+========================================================================
+5  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  card_free                  FIRES: mutated: another compute process is on the GPU: 4321, python, 10240 MiB
+  seeds_tuning               FIRES: mutated: seeds above 80: [81]
+  port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+  roles/measuring            FIRES: mutated: the seed set meets the measuring seeds 121-160: [121]
+  median/a closer row exists FIRES: mutated: the timed prompt is 519 tokens, 46.0 from the median 473.0, and a row 0.0 away exists
+  timed/one pass short       FIRES: mutated: 299 timed pass(es), not 300
+  timed/a zero pass          FIRES: mutated: 1 pass time(s) are not finite and positive, first at 0: 0.0
+  cost order/one loop twice  FIRES: mutated: two of the three medians are the same number (69.26129967905581, 69.26129967905581, 0.40280818939208984), so one loop timed another loop's work
+  adapter_dtype              FIRES: mutated: adapter dtype ['torch.bfloat16'], not ['torch.float32']
+  unmerged                   FIRES: mutated: 1 of 2 adapter layers are merged into the base
+  prompt_len/lowered bound   FIRES: mutated: 9458 prompt(s) longer than 300 tokens, longest 519
+  triple                     FIRES: mutated: the read-out of a does not reproduce tune.txt's triple: [1.0, 2.0, 3.0] against [1.0, 2.0, 4.0]
+  digest_cover               FIRES: mutated: the digest covers ['decider.py', 'prefill.py', '../22/observe.py', '../22/port.py', '../22/label.py', '../22/score.py', '../13/replay.py'], not ['latency.py', 'decider.py', 'prefill.py', '../22/observe.py', '../22/port.py', '../22/label.py', '../22/score.py', '../13/replay.py']
+  no_node_name               FIRES: mutated: the rendered text contains the node name(s) ['h3']
+
+The repeat check's own mutation is in part 2: one of the two stored logit triples is
+moved by one unit inside decider.repeat_lines.
+
+WHAT HAS NO MUTATION, named and not counted: the card-free check is shown failing on
+a mutated nvidia-smi TEXT above and not by staging a second compute process on a
+shared card, which cannot be done without disturbing its owner.  The quantiles
+themselves are not a check.
+
+all 15 mutations of this script produced a failure
+
+========================================================================
+6  WHAT THIS RUN DOES NOT SHOW
+========================================================================
+- It is NOT a node's hardware.  An RTX PRO 5000 Blackwell is not what a node runs,
+  and nothing here says what the pass would cost on one.
+- It does not include a node's own loop: no tracker update, no fetch planning, no
+  transport.  The sum in part 4 is the three parts timed here and nothing else.
+- Nothing about a merged adapter.  `merge_and_unload` changes the arithmetic and
+  would need its own agreement check against the unmerged read-out.
+- Nothing about contention.  This card held these two models and nothing else; the
+  evaluation runs K workers on it and eval.py's own per-worker figures are where
+  that cost is.
+- Nothing about whether 100 ms is the right budget.  The loop question is the next
+  ticket's, and 100 ms is printed beside these numbers with no verdict attached.
+- Nothing about which candidate is better.  Candidate 'a' was named on the command
+  line, not chosen by a score.
+
+wall clock    52.9 s (0.9 min) from the first line to this one
+finished      2026-11-24T09:08:01+0900
+end of latency.py

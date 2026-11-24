@@ -1,0 +1,264 @@
+
+========================================================================
+0  THE CARD IS FREE, AND WHAT THIS RUN IS
+========================================================================
+A DRY RUN.  The rows are the HELD-OUT slice of the tuning half, seeds 71 to 80,
+in place of the selection half.  Those rows chose the kept epoch of each
+candidate, so an agreement on them is not a held-out number in the ordinary
+sense and says NOTHING about which candidate is better -- that is the replay
+score's on seeds 81 to 100.  What the slice does buy is a cross-check this run
+asserts: candidate a's agreement here must equal tune.txt's 757/1425 exactly.
+
+nvidia-smi compute apps: (none)
+OK: no other compute process on the GPU
+
+the code that produced every number below, one sha256 per file:
+  agree.py           96f666c970e5d46ec148a1f0ee05d878e85f7a4862dd65f545c101bbcbd64130
+  decider.py         a3a913e9e1c0422d9bae5afb1c9f2974c01c3ddbfbfdc1e616d02f312d7080b0
+  prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+  ../22/observe.py   9a5808bb40ddfd0f827fa04ff3aa7ad3c2c9c69243104b9651bb7e4da90056c2
+  ../22/port.py      5f74617a04b43d71f2a29153e26251e357cd44436925ecb9fa6b596fc53cca07
+  ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+  ../22/score.py     24743e3547ed877cec0a35c8925f12f20c2ed6941d4d805268701fbd0e0f3e49
+  ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+combined          f9b389857581280a707b658bf8af6554393eb6ae73616b784dcaa1bab72d9dc5
+WHAT THESE DIGESTS DO NOT COVER:
+  - the base weights (pinned by revision; the digest is RUN.txt section 2)
+  - the host's venv: torch, transformers, peft and numpy (versions printed instead)
+  - ../22/weight.json, whose weight every row carries and ana.py re-checks
+  - the label file (its own sha256 is checked against ../22/labels.sha256)
+  - ../20/predict.py and ../21/predict.py, which no row of the csv passes through
+
+started         2026-11-24T09:02:14+0900
+torch 2.15.0+cu132 (cuda 13.2), transformers 5.24.0, peft 0.22.0, numpy 2.5.4, python 3.13.5
+gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+rows            seeds 71 to 80
+read-out        bf16 base, float32 adapter, batch 1, the three candidate logits at
+                the last real position, first maximum of [' short', ' mid', ' long'] wins a tie
+                ONE PROCESS at batch 1, which is eval.py's reference arithmetic by
+                construction, so this script needs no gate on concurrent workers
+                and has none
+
+========================================================================
+1  THE ROWS, THE SEED ROLES, AND THE BASELINE EVERY AGREEMENT IS READ AGAINST
+========================================================================
+label file      /home/yamakawa/Development/semindex-learn/ev22/labels_p0.2.jsonl.gz
+rows            16071, seed column min 1 max 100, 100 distinct
+this slice      1589 rows of seeds 71 to 80 (10 distinct), of which 1425 carry a label
+                and 164 are TIES that carry none.  The ties are excluded from every
+                denominator below and counted here: a tie is not a weak preference,
+                it is two arms that scored the same.
+
+  tuning          70 seeds, 1 to 70
+  held out        10 seeds, 71 to 80
+  selection       20 seeds, 81 to 100
+  read out here   10 seeds, 71 to 80
+  the union of the four meets range(121, 161) in 0 seeds
+  check_seeds_tuning (>80 refused) passed the rows of this dry run and
+  port.check_seeds (>100 refused) passed all four roles; both are shown refusing
+  in part 4
+  this script starts no simulation and builds no port, so the first item of the
+  seeds-never-used proof is eval.py's and not this one's
+
+the label shares of these 1425 rows:
+  3.695     s    341  0.2393
+  6.000     s    357  0.2505
+  10.043    s    727  0.5102
+always 10.043 s (the most frequent arm) agrees with 727/1425 = 0.5102  <- THE BAR, and every
+agreement below is read against it and never against 1/3
+It is tune.txt's own held-out baseline for candidate a, 727/1425 = 0.5102.
+
+========================================================================
+2  THE THREE MODEL DECIDERS, READ OUT ON EVERY LABELLED ROW
+========================================================================
+pad token '<pad>' id 0, padding_side left
+rendered 1425 prompts in 0.4 s, each one through decider.text_of, so the no-node-name
+assertion ran on every row this run reads out
+candidate ids   [2822, 5453, 1440] for [' short', ' mid', ' long'], each one token at this position
+prompts         224 to 515 tokens, median 472, bound 1024, nothing truncated
+repeat row      seed 71 k 72, the row tune.py and eval.py both read twice; the
+                triples it is held against are READ OFF tune.txt, the tuning run's
+                own stdout, and not transcribed into this file
+
+-- untuned --
+loaded in 2.2 s
+    two passes over one row: [17.875, 15.5625, 14.5]
+                        and: [17.875, 15.5625, 14.5]
+    bit-identical, both chose ' short' (3.695 s), tie at the maximum: False
+    one logit moved by 1 FIRES: the repeat check of untuned, mutated: 1 of 3 logits differ, first at 0: 18.875 against 17.875
+  1425 rows in 62.5 s (43.8 ms per row, the render and the tokenizer call included)
+  agreement 472/1425 = 0.331228, against the baseline 0.5102
+  exact ties resolved by the first-maximum rule: 12 of 1425 decisions
+  answers that are not ' long': 1023, so the tie rule decided at most 0.012 of them
+  label \ answer      short      mid     long   |  per class
+  3.695     s          237       18       86   |    341  0.6950
+  6.000     s          240       18       99   |    357  0.0504
+  10.043    s          493       17      217   |    727  0.2985
+  answers                970       53      402   |   1425
+  answer shares       0.6807   0.0372   0.2821
+  label shares        0.2393   0.2505   0.5102
+  A DECIDER THAT COLLAPSED ONTO ONE WORD IS VISIBLE AS ONE COLUMN above.
+  three-way cross-entropy 4.181465 over those rows, standard error of the mean
+  0.102284.  This is the quantity the kept epoch was CHOSEN by, recomputed here from
+  the same logits the agreement above is counted from, at no extra pass.
+
+-- a --
+loaded in 2.6 s, adapter attached and unmerged, dtype float32
+    two passes over one row: [28.0, 28.25, 28.625]
+                        and: [28.0, 28.25, 28.625]
+    bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
+    one logit moved by 1 FIRES: the repeat check of a, mutated: 1 of 3 logits differ, first at 0: 29.0 against 28.0
+  [28.0, 28.25, 28.625] against tune.txt's [28.0, 28.25, 28.625]: equal True
+  1425 rows in 99.5 s (69.8 ms per row, the render and the tokenizer call included)
+  agreement 757/1425 = 0.531228, against the baseline 0.5102
+  exact ties resolved by the first-maximum rule: 298 of 1425 decisions
+  answers that are not ' long': 307, so the tie rule decided at most 0.971 of them
+  label \ answer      short      mid     long   |  per class
+  3.695     s           36       78      227   |    341  0.1056
+  6.000     s           27       80      250   |    357  0.2241
+  10.043    s           19       67      641   |    727  0.8817
+  answers                 82      225     1118   |   1425
+  answer shares       0.0575   0.1579   0.7846
+  label shares        0.2393   0.2505   0.5102
+  A DECIDER THAT COLLAPSED ONTO ONE WORD IS VISIBLE AS ONE COLUMN above.
+  three-way cross-entropy 0.888765 over those rows, standard error of the mean
+  0.013616.  This is the quantity the kept epoch was CHOSEN by, recomputed here from
+  the same logits the agreement above is counted from, at no extra pass.
+  CROSS-CHECK: 757/1425 and 0.888765 are tune.txt's own held-out agreement and
+  cross-entropy for a's kept epoch, to the row and to six decimals, over the
+  same rows with the same adapter at the same read-out.  The cross-entropy is
+  the stronger of the two: it is what chose the epoch, and the agreement is
+  printed beside it and chose nothing.
+
+-- b --
+loaded in 2.6 s, adapter attached and unmerged, dtype float32
+    two passes over one row: [18.5, 17.75, 19.25]
+                        and: [18.5, 17.75, 19.25]
+    bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
+    one logit moved by 1 FIRES: the repeat check of b, mutated: 1 of 3 logits differ, first at 0: 19.5 against 18.5
+  [18.5, 17.75, 19.25] against tune.txt's [18.5, 17.75, 19.25]: equal True
+  1425 rows in 99.2 s (69.6 ms per row, the render and the tokenizer call included)
+  agreement 750/1425 = 0.526316, against the baseline 0.5102
+  exact ties resolved by the first-maximum rule: 73 of 1425 decisions
+  answers that are not ' long': 540, so the tie rule decided at most 0.135 of them
+  label \ answer      short      mid     long   |  per class
+  3.695     s          202        0      139   |    341  0.5924
+  6.000     s          159        0      198   |    357  0.0000
+  10.043    s          179        0      548   |    727  0.7538
+  answers                540        0      885   |   1425
+  answer shares       0.3789   0.0000   0.6211
+  label shares        0.2393   0.2505   0.5102
+  A DECIDER THAT COLLAPSED ONTO ONE WORD IS VISIBLE AS ONE COLUMN above.
+  three-way cross-entropy 0.936098 over those rows, standard error of the mean
+  0.019466.  This is the quantity the kept epoch was CHOSEN by, recomputed here from
+  the same logits the agreement above is counted from, at no extra pass.
+
+========================================================================
+3  THE UNTUNED MODEL AND THE TWO CANDIDATES, SIDE BY SIDE
+========================================================================
+What the ticket's third acceptance item asks for, with no pass or fail attached.
+
+  decider   agreement        share    - baseline   ties   answers short/mid/long
+  untuned     472/1425    0.331228   -0.178947     12   970/53/402
+  a           757/1425    0.531228   +0.021053    298   82/225/1118
+  b           750/1425    0.526316   +0.016140     73   540/0/885
+
+
+  decider   held-out cross-entropy   standard error of the mean
+  untuned                 4.181465   0.102284
+  a                       0.888765   0.013616
+  b                       0.936098   0.019466
+
+WHAT CHOSE EACH KEPT EPOCH, AND BY HOW MUCH, from tune.txt's own three numbers:
+  candidate a kept epoch 2 at 0.888765; its runner-up is 0.890638, so the margin the
+  choice rests on is 0.001873, which is 0.211 % of the value, over 1425 rows
+  for scale, the standard error of this run's own mean per-row cross-entropy
+  over the SAME 1425 rows is 0.013616, i.e. 7.27 times that margin
+  candidate b kept epoch 3 at 0.638168; its runner-up is 0.667593, so the margin the
+  choice rests on is 0.029425, which is 4.611 % of the value, over 568 rows
+  NO RATIO IS PRINTED for this candidate: its margin is over its own 568
+  filtered rows and this run reads out 1425, so the standard error above
+  (0.019466) is over a different and differently shaped population.
+CANDIDATE a's EPOCH IS NOT DISTINGUISHED BY ANYTHING IN THIS STEP, and that is said
+here rather than left to a reader to divide two numbers.  A ratio is printed above
+only where this run reads out the very rows the margin was taken on, because a ratio
+of two numbers from two populations reads like evidence and is not; and where it is
+printed, the standard error is the LARGER of the two, so the margin is a fraction of
+the uncertainty on one epoch's own mean rather than a multiple of it.  The quantity
+that would settle it is the standard error of the PAIRED per-row cross-entropy
+differences between two epochs, which is smaller than the unpaired figure above and
+is NOT computable any more: the keep rule deleted the two epochs that were not kept,
+so no per-row cross-entropy of epoch 1 or epoch 2 exists on either machine.  So a's
+kept epoch is reported as arbitrary among its three, and the number above is its
+scale and not its test.
+
+the baseline of these rows is 0.5102 and the labels' own self-agreement across two
+independent 8-pass labellings is 0.7577 (../22/stability.txt), so an agreement above
+that is agreement with one labelling's noise and not with a better answer.  Neither
+edge is a pass line: no pass or fail is attached to any of these numbers.
+
+candidate b's own held-out slice is 568 of these 1425 rows and tune.txt's 408/568 is
+NOT the number above: b's filter is a paired-t rule over each row's own passes and
+restating it here would be a third definition of what candidate b is, so this
+cross-check is candidate a's alone.
+
+========================================================================
+4  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+decider.py's own eighteen are archived in tune.txt part 5 and are not repeated; what
+is below is this script's own, plus the two of decider.py's this script is a
+load-bearing caller of.
+
+  card_free                  FIRES: mutated: another compute process is on the GPU: 4321, python, 10240 MiB
+  seeds_tuning               FIRES: mutated: seeds above 80: [81]
+  port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+  roles/measuring            FIRES: mutated: the seed set meets the measuring seeds 121-160: [121]
+  slice/one row lost         FIRES: mutated: 1424 labelled row(s), not the 1425 the plan names
+  baseline/count             FIRES: mutated: the most frequent arm carries 728 of 1425 rows, not 727
+  baseline/share             FIRES: mutated: the baseline is 0.510175, not the pre-registered 0.5112
+  cross-check/agreement      FIRES: mutated: 758, against the 757 already on record
+  cross-check/cross-entropy  FIRES: mutated: 0.888766, against the 0.888765 already on record
+  table/one decision lost    FIRES: mutated: the table holds 1 decisions, not 1425
+  target_of                  FIRES: 7.0
+  pick/tie                   FIRES: mutated: picked 2, but position(s) [0] tie it and come first
+  prompt_len/lowered bound   FIRES: mutated: 1175 prompt(s) longer than 300 tokens, longest 515
+  triple                     FIRES: mutated: the read-out of a does not reproduce tune.txt's triple: [1.0, 2.0, 3.0] against [1.0, 2.0, 4.0]
+  digest_cover               FIRES: mutated: the digest covers ['decider.py', 'prefill.py', '../22/observe.py', '../22/port.py', '../22/label.py', '../22/score.py', '../13/replay.py'], not ['agree.py', 'decider.py', 'prefill.py', '../22/observe.py', '../22/port.py', '../22/label.py', '../22/score.py', '../13/replay.py']
+  no_node_name               FIRES: mutated: the rendered text contains the node name(s) ['h3']
+
+The repeat check's own mutation is in part 2, once per model decider, inside
+decider.repeat_lines: one of the two stored logit triples is moved by one unit.
+
+WHAT HAS NO MUTATION, named and not counted: nothing of this script.  The three
+read-outs themselves are not a check and carry no pass line.
+
+all 17 mutations of this script produced a failure
+
+========================================================================
+5  WHAT THIS RUN DOES NOT SHOW
+========================================================================
+- NOTHING about which candidate is better, and nothing the ticket asks for.  These
+  are seeds 71 to 80, the rows that chose each candidate's kept epoch, so they
+  are neither the selection half nor a held-out slice in the ordinary sense.
+- Nothing about a score.  The choice between the candidates is the mean replay
+  score's and never this number's, and an agreement near the labels and an agreement
+  far from them are equally uninformative about that score: the states these labels
+  sit on came from a uniformly random roll-in, the label is the best arm under an F
+  suffix L does not supply, and in the replay L drives the run and reads its own
+  choices back in the history column.
+- Nothing about accuracy against testbed truth.  The labels are the replay's own
+  hindsight and two independent 8-pass labellings of the same decisions agreed on
+  0.7577 of them, with the 0.90 bar fixed in advance never reached.
+- Nothing about the state being read rather than the clock.  The rendered text
+  carries the history length and the ages of the last exchanges, so the position in
+  the run is readable from the input, and the labels' own reliability moves with that
+  position (0.5101 in a run's first quarter against 0.9597 in its last).
+- Nothing about a class prior being learnt instead of the state.  The baseline above
+  is what always answering the most frequent arm already buys.
+- Nothing about the pass time.  The ms per row above includes the render and the
+  tokenizer call and is not a latency measurement; latency.py is.
+
+wall clock    276.0 s (4.6 min) from the first line to this one
+finished      2026-11-24T09:06:50+0900
+end of agree.py

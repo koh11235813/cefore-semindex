@@ -1,0 +1,220 @@
+
+========================================================================
+0  THE CARD IS FREE, AND WHAT THIS RUN IS
+========================================================================
+The prompt wording is STILL PROVISIONAL: the instruction sentence and the answer
+prefix are smoke.py's, shared through prefill.py.  Every token count and every
+timing below moves when a later step fixes the wording.
+
+Nothing tuned is scored here and no agreement with the labels is computed: this run
+measures what the tuning plan needs in order to be written, and the plan is frozen
+before anything is tuned for keeps.
+
+nvidia-smi compute apps: (none)
+OK: no other compute process on the GPU
+
+torch 2.15.0+cu132 (cuda 13.2), transformers 5.24.0, peft 0.22.0, numpy 2.5.4, python 3.13.5
+gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+pad token '<pad>' id 0, padding_side left
+
+========================================================================
+0b  THE ROWS, AND THE SEED GUARD
+========================================================================
+label rows      16071 from labels_p0.2.jsonl.gz
+seeds in file   min 1 max 100
+rows of seeds 1-80        12868, of which labelled 11438
+the plan's candidate a is 11438 labelled rows; this file gives 11438
+seed range used 1-80, 80 distinct seeds; port.check_seeds passed them
+seeds 81-100 (selection) and 121-160 (measuring) appear nowhere: the row list is cut
+at seed 80 before anything is rendered.
+part 1 rows     512, over 80 seeds, 3-7 rows per seed (evenly: shown, not asserted)
+rendered and tokenized the 512 in 0.4 s: 224 to 510 tokens, median 478
+candidate ids   [2822, 5453, 1440] for [' short', ' mid', ' long']
+timing row      seed 3 k 103, 478 tokens (median of the 512 is 478)
+
+========================================================================
+1  READ-OUT NOISE: bf16 / float32 x batch 1 / batch 8, on 512 rows
+========================================================================
+The decision is argmax over the three candidate logits.  What matters is not the
+size of the logit difference but whether it reaches the margin, so both are here.
+
+bf16 model loaded in 2.5 s, 37.32 GB free of 47.27 GB
+attention implementation: sdpa
+bf16 batch 1    512 passes in 22.9 s
+bf16 batch 8    64 mixed batches in 3.7 s, padding 14.3% of the tokens
+bf16 batch 1    single pass over 300 passes: median 43.02 ms, p99 49.10 ms, max 50.85 ms
+
+========================================================================
+3  THE LEGEND LINE
+========================================================================
+The rendered observation ends with a fixed legend sentence.  This is what it costs
+per pass.  No recommendation is drawn: the plan decides whether the reader needs it.
+
+with legend     478 tokens   median 43.06 ms  p99 49.66 ms  max 52.52 ms
+without legend  392 tokens   median 43.07 ms  p99 50.26 ms  max 52.11 ms
+the legend is 86 tokens of this row, 18.0 % of them
+DROPPING IT DID NOT SHORTEN THE PASS: the median was 43.06 ms with the legend and
+43.07 ms without it, so the shorter prompt came out 0.02 ms SLOWER.
+Either way the difference is to be read against this row's own spread, median to p99
+6.61 ms with the legend and 7.19 ms without: a pass of 478 tokens on this card is not
+paid for by the token at this length.  No recommendation is drawn; the plan decides.
+
+========================================================================
+1b  IS bf16 BATCH 1 BIT-IDENTICAL ACROSS TWO PROCESSES?
+========================================================================
+a second process repeated the 512 bf16 batch-1 passes in 29.4 s
+bit-identical across the two processes: all 512 x 3 values equal
+
+========================================================================
+1c  THE SAME 512 ROWS IN float32
+========================================================================
+matmul precision 'highest', allow_tf32 matmul False / cudnn False
+float32 model loaded in 3.8 s, parameter dtype torch.float32, 27.68 GB free of 47.27 GB
+fp32 batch 1    512 passes in 19.4 s
+fp32 batch 8    64 mixed batches in 12.2 s, padding 14.3% of the tokens
+fp32 batch 1    single pass over 300 passes: median 36.73 ms, p99 43.09 ms, max 43.40 ms
+beside bf16 batch 1: median 43.02 ms, p99 49.10 ms.  float32 is 0.85x the bf16 median.
+SURPRISE, and it is not a typo: float32 is the FASTER of the two here, by 6.30 ms
+at batch 1, with tf32 off.  A single pass of 478 tokens is latency-bound on this
+card, so the narrower dtype buys nothing and the bf16 path's own conversions cost
+something.  This is a measurement, not an explanation: nothing here identifies
+the kernel that is slower.  float32 needs 10 GB more of the card.
+
+========================================================================
+1d  WHAT THE FOUR SETTINGS DISAGREE ABOUT
+========================================================================
+bf16 b1  margin median  4.6875  p99 13.9844  max 15.5156  min  0.0000   arms chosen short 334 mid 20 long 158
+bf16 b8  margin median  4.6875  p99 13.9766  max 15.5469  min  0.0000   arms chosen short 341 mid 20 long 151
+fp32 b1  margin median  4.7036  p99 14.0711  max 15.7322  min  0.0125   arms chosen short 337 mid 21 long 154
+fp32 b8  margin median  4.7036  p99 14.0711  max 15.7322  min  0.0126   arms chosen short 337 mid 21 long 154
+
+The arm counts are the UNTUNED model's and are not evidence of anything: they say
+which word the base model happens to prefer after this provisional instruction.  They
+are here only so that the argmax differences below have a denominator a reader can
+see.  The margin is what the differences have to be read against.
+
+Each pair: how many of the 512 argmax decisions differ, the spread of the absolute
+logit difference over all 512 x 3 values, and how many rows have a margin smaller
+than the largest difference that pair showed.  The margin is taken from the MORE
+EXACT setting of the pair (float32 over bf16, batch 1 over batch 8), so the count is
+not inflated by the noise it is being compared against.
+
+bf16 b1  vs bf16 b8   argmax differs on  14 of 512   |diff| median 0.2500 p99 1.9219 max 3.3750   rows with margin < 3.3750: 162 (31.6 %, margin of bf16 b1)
+bf16 b1  vs fp32 b1   argmax differs on  13 of 512   |diff| median 0.2130 p99 1.6423 max 6.0445   rows with margin < 6.0445: 336 (65.6 %, margin of fp32 b1)
+bf16 b1  vs fp32 b8   argmax differs on  13 of 512   |diff| median 0.2131 p99 1.6421 max 6.0444   rows with margin < 6.0444: 336 (65.6 %, margin of fp32 b8)
+bf16 b8  vs fp32 b1   argmax differs on   6 of 512   |diff| median 0.2118 p99 1.5472 max 5.0445   rows with margin < 5.0445: 278 (54.3 %, margin of fp32 b1)
+bf16 b8  vs fp32 b8   argmax differs on   6 of 512   |diff| median 0.2119 p99 1.5472 max 5.0444   rows with margin < 5.0444: 278 (54.3 %, margin of fp32 b8)
+fp32 b1  vs fp32 b8   argmax differs on   0 of 512   |diff| median 0.0000 p99 0.0002 max 0.0013   rows with margin < 0.0013: 0 (0.0 %, margin of fp32 b1)
+
+largest difference seen anywhere among the pairs: 6.0445
+rows whose bf16 batch-1 margin is below it: 335 of 512 (65.4 %)
+
+========================================================================
+2  PARALLEL THROUGHPUT AT BATCH 1, K PROCESSES ON ONE CARD
+========================================================================
+Every process keeps the node's own read-out (batch 1) and loads its own copy of the
+weights.  The parent holds no model while these run.  The aggregate rate divides the
+total passes by the union of the workers' own timed windows, so a worker that was
+still loading cannot make the rate look better.
+
+card before part 2: 46.73 GB free of 47.27 GB
+one worker's footprint on the card: 1497559, 478 MiB | 1497748, 10362 MiB  -> 10.12 GB
+K = 1    23.1 passes/s total   per-worker median pass 42.86-42.86 ms   window 8.64 s
+        128000 passes at this rate: 92.2 min
+K = 2    45.7 passes/s total   per-worker median pass 42.98-43.43 ms   window 8.75 s
+        128000 passes at this rate: 46.7 min
+K = 4    75.9 passes/s total   per-worker median pass 52.47-52.51 ms   window 10.54 s
+        128000 passes at this rate: 28.1 min
+K = 8 NOT RUN: one worker measured 10.12 GB, 8 of them would need 80.95 GB and the card has 46.73 GB free.
+
+K = 1 is 1.00x the single-process rate
+K = 2 is 1.97x the single-process rate
+K = 4 is 3.28x the single-process rate
+Processes: at most 4 workers plus this parent, within the brief's cap of 8.
+
+========================================================================
+4  ONE TUNING STEP: LoRA r=16 alpha=32, 3-way loss on the candidate logits
+========================================================================
+text layers 35, vocab 262144, kv-shared layers 20 (from index 15)
+modules whose name ends in one of ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']: 353 in the whole model, 148 of them outside the
+language model (e.g. ['model.vision_tower.encoder.layers.0.self_attn.q_proj', 'model.vision_tower.encoder.layers.0.self_attn.k_proj']).  That is what exclude_modules 'model\\.(vision_tower|audio_tower)\\..*' is for.
+language-model projections by name: {'down_proj': 35, 'gate_proj': 35, 'k_proj': 15, 'o_proj': 35, 'q_proj': 35, 'up_proj': 35, 'v_proj': 15}
+so 205, not 7 x 35: the 20 kv-shared layers have no k_proj and no v_proj module.
+the checkpoint nevertheless ships k_proj and v_proj weights for all 35 layers, and
+the loader reported missing_keys 0 and unexpected_keys 0: 40 checkpoint tensors
+have no module in this model AND the loader did not say so.  Nothing here is random
+-- every module that exists got its weights -- but unexpected_keys cannot be read as
+a statement that every tensor of the file was used.
+matched modules 205, exactly the language model's own projections, nothing else
+e.g. model.language_model.layers.0.mlp.down_proj
+trainable params 24158208 of 5128455712 (0.4711 %), adapter dtype ['torch.float32'], base params with grad 0
+tuning rows     11438 labelled rows of seeds 1-80
+adapter tensors at the initial state: 410, of which lora_B exactly zero: 205
+
+batch  8  30 steps from the untuned adapter, loss first 4.2530 last 1.0725, min 0.7101 max 4.2530, all finite
+          seconds per step (steps 4-30): median 0.261  p99 0.269  max 0.269
+          peak allocated 17.41 GB, peak reserved 17.92 GB
+          adapter tensors moved: 410 of 410, largest move 0.00435
+          one epoch over 11438 rows = 1430 steps = 6.2 min
+          one epoch over 4600 rows = 575 steps = 2.5 min
+
+batch 16  30 steps from the untuned adapter, loss first 4.2027 last 0.7249, min 0.7249 max 4.2027, all finite
+          seconds per step (steps 4-30): median 0.447  p99 0.477  max 0.477
+          peak allocated 24.95 GB, peak reserved 30.84 GB
+          adapter tensors moved: 410 of 410, largest move 0.00453
+          one epoch over 11438 rows = 715 steps = 5.3 min
+          one epoch over 4600 rows = 288 steps = 2.1 min
+
+========================================================================
+5  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+The mutation is of the INPUT, inside this process, and not of a copy of the script:
+a per-check script copy would mean one 10-minute run of a shared card per check.
+prefill.batch_of has two checks and this script's batches go through both.  The first
+(left padding leaves a real token last) is mutated here.  The second (the last
+position is length-1) is an invariant of the builder's own arithmetic and no argument
+can break it, so it is shown by mutation k of RUN.txt section 7 instead.
+
+  seeds_tuning           FIRES: mutated: seeds above 80: [81]
+  port.check_seeds       FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  target_of              FIRES: KeyError 7.0
+  finite                 FIRES: mutated: 1 non-finite value(s), first at step 1: nan
+  changed                FIRES: mutated: 410 of 410 adapter tensors did not move, e.g. ['base_model.model.model.language_model.layers.0.mlp.down_proj.lora_A.default.weight', 'base_model.model.model.language_model.layers.0.mlp.down_proj.lora_B.default.weight', 'base_model.model.model.language_model.layers.0.mlp.gate_proj.lora_A.default.weight']
+  targets/tower          FIRES: mutated: 148 module(s) outside the language model, e.g. ['model.audio_tower.layers.0.self_attn.k_proj', 'model.audio_tower.layers.0.self_attn.q_proj', 'model.audio_tower.layers.0.self_attn.v_proj']
+  targets/arithmetic     FIRES: mutated: the language model has 205 projection modules, not 7 x 35 + 5 x 0 = 245
+  targets/set            FIRES: mutated: 0 module(s) targeted that are not projections ([]) and 1 projection(s) not targeted (['model.language_model.layers.9.self_attn.v_proj'])
+  all_zero (reset)       FIRES: mutated: 205 of 205 tensors are not zero, e.g. ['base_model.model.model.language_model.layers.0.mlp.down_proj.lora_B.default.weight', 'base_model.model.model.language_model.layers.0.mlp.gate_proj.lora_B.default.weight']
+  workers                FIRES: mutated: 1 of 2 workers reported
+  identical              FIRES: mutated: 1 of 1536 values differ, max 1
+  batch_of/left-pad      FIRES: FAIL: left padding did not leave a real token last
+  batch_of/position      not mutable from an argument; shown by RUN.txt section 7 k
+  changed (lr=0 step)    FIRES: mutated: lr=0: 410 of 410 adapter tensors did not move, e.g. ['base_model.model.model.language_model.layers.0.mlp.down_proj.lora_A.default.weight', 'base_model.model.model.language_model.layers.0.mlp.down_proj.lora_B.default.weight', 'base_model.model.model.language_model.layers.0.mlp.gate_proj.lora_A.default.weight']
+
+all 13 mutations produced a failure
+
+========================================================================
+6  THE ADAPTER IS GONE
+========================================================================
+save_pretrained was never called: the adapter existed in this process's memory for
+61 optimiser steps and nowhere else.
+ROOT before this run: ['.venv', 'ev22', 'fetch_weights.log', 'fetch_weights.sh', 'hf-home', 'hpc_setup.sh', 'models', 'mut', 'mutate.log', 'mutate.sh', 'mutate2.log', 'mutate2.sh', 'mutate3.log', 'mutate3.sh', 'precheck-dry.log', 'precheck-run2.err', 'precheck-run2.log', 'precheck-tmp', 'precheck.err', 'precheck.log', 'precheck.t0', 'precheck.t1', 'repo', 'smoke.err', 'smoke.log', 'smoke.t0', 'smoke.t1', 'store', 'verify-repro']
+ROOT after  this run: ['.venv', 'ev22', 'fetch_weights.log', 'fetch_weights.sh', 'hf-home', 'hpc_setup.sh', 'models', 'mut', 'mutate.log', 'mutate.sh', 'mutate2.log', 'mutate2.sh', 'mutate3.log', 'mutate3.sh', 'precheck-dry.log', 'precheck-run2.err', 'precheck-run2.log', 'precheck.err', 'precheck.log', 'precheck.t0', 'precheck.t1', 'repo', 'smoke.err', 'smoke.log', 'smoke.t0', 'smoke.t1', 'store', 'verify-repro']
+CHANGED under ROOT: added [], removed ['precheck-tmp']
+
+========================================================================
+7  WHAT THIS RUN DOES NOT SAY
+========================================================================
+- Nothing about which word a tuned model would answer: no tuned model was scored in
+  the replay and no agreement with the labels was computed.  That is the next step's
+  work, after the plan is frozen.
+- Nothing about the final wording: the instruction and the prefix are provisional.
+- The 30 steps per batch size say what a step COSTS, not that 30 steps or 2e-4 or
+  rank 16 are the right amount of tuning.  The loss falling over 30 steps is not
+  evidence of anything; it is a cost measurement that happens to print a loss.
+- Part 2's rate is for 478-token prompts of one shape.  A replay process also runs
+  the simulation between passes, so its real rate is lower than this ceiling.
+- Part 1 compares settings against each other.  None of them is a ground truth: the
+  float32 read-out is the more exact arithmetic, not the right answer.
+
+no check fired on real input; the 13 failures printed in part 5 are the mutations
+end of precheck.py
