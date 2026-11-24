@@ -1,0 +1,617 @@
+
+==============================================================================
+0  WHAT IS READ, AND WHAT THE VECTOR IS
+==============================================================================
+emulator logs    stage s11a, p 0.2 and p 0.4, seeds 1 to 20: the
+                 state_poll_reschedule rows of every node, through
+                 observe.from_logged_rows
+label rows       labels_p0.2.jsonl.gz, seeds 1 to 80 only
+                 2026-11-25, stated exactly: label_rows hashes the gzip bytes,
+                 decompresses them and parses each line, and drops the row if
+                 its seed is above 80 -- so a selection-half row is parsed and
+                 thrown away, and nothing is counted, rendered, fitted or
+                 summarised from one.  The cut is before anything is computed
+                 from a row, not before the line is parsed; the digest the file
+                 is held to covers the whole file and needs every byte of it.
+seed guards      an emulator seed outside 1 to 20 and a label seed outside 1 to
+                 80 are refused here, fractional ones included, and
+                 port.check_seeds refuses anything above 100; part 6 shows all
+                 three firing
+vector length    261 cells
+name list        sha256 16c2aa02c5738abcb819fa4503067eeaff3a82a3a0fa2020cca6ae29d79aafce
+                 of the 261 names joined by newlines
+fill value       0.0 in every cell of an absent slot, beside a presence flag of 0
+caps             8 origins, 4 advertisers per origin, 8 exchanges; more than
+                 a cap is refused, never truncated
+vocabularies     trigger ['answered', 'timed_out']
+                 last_poll_status [None, 'answered', 'timed_out', 'pending']
+                 empty [None, False, True]
+logged records   6423
+                 p 0.2: 3214
+                 p 0.4: 3209
+label records    12868, out of a file of sha256
+                 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67 == ../22/labels.sha256
+label seeds      80 distinct, 1 to 80
+
+==============================================================================
+1  THE THREE ROADS TO A RECORD, AND WHAT THEY CANNOT READ
+==============================================================================
+A logged row and a replay decision reach the vector through ONE function,
+observe.observation, and the replay side goes through the port's own observation
+dict -- the shape label.py's self-check and decider.py's L both build.  A send-
+time decision, where there is no resolution, goes through the same road.
+
+one logged row, rendered from its vector and back: 922 characters
+the same row with every node name replaced by one of reversed alphabetical
+order (h0->q9, h1->q8, h2->q7, h3->q6, h4->q5): the vector is unchanged
+the same rename with the polled neighbour's OLD name put back on the action
+alone, so the decision polls a peer the state no longer names -- a different
+decision and not a leak: the vector is different, which is what says the equality above is not vacuous
+one label row through the port shape, then with another node name and ordinal in
+`where`: the vector is unchanged
+the same label row with its own `node`, `k`, `rollin_arm` and `label` overwritten:
+the vector is unchanged
+the same row as a SEND decision (no resolution): it renders as 'state poll' and its
+res_present cell is 0, against 1 at the resolution
+
+What the vector cannot read, because `vector` takes the record and nothing else:
+the node name, the decider ordinal, and the emulator's own action fields.  Of
+those, `fetched` is worth naming: it is on no state_poll_reschedule row of these
+runs at all (it is written on `fetch_plan` rows, which this road never reads),
+and observe.from_logged_rows takes only the 3 resolution fields and the 6
+exchange fields it names.
+
+==============================================================================
+2  THE ROUND TRIP, OVER EVERY RECORD OF EVERY SOURCE
+==============================================================================
+For each record: render it, build its vector, invert the vector, render the
+inverse, and compare the two texts character for character.  Every quantity the
+text carries is therefore recoverable from the vector, at the rounding render
+itself uses.  Also checked per record: the layout equals NAMES, every absent
+slot is filled with 0.0, the record carries no node name, and the decoded record
+passes observe.py's own schema.
+
+  The record NAMES itself is read off -- a send-time decision of a pair that has
+  never polled, with no resolution, no origin and no exchange -- fails observe's
+  schema in 0 ways, and its round trip matches
+
+  logged    6423 records: 6423 round trips match, 6423 decoded records pass
+          observe.py's own schema
+  label    12868 records: 12868 round trips match, 12868 decoded records pass
+          observe.py's own schema
+
+==============================================================================
+3  COLLISIONS, COUNTED IN BOTH DIRECTIONS
+==============================================================================
+Over all 19291 records of both sources together: how many distinct texts share one
+vector, and how many distinct vectors share one text.  Both are counted, because
+the two failures are different: the first would mean the vector carries something
+the text does not, the second that it lost something the text carries.
+
+  distinct texts                           18032
+  distinct vectors                         18032
+  texts rendered by more than one vector       0
+  vectors rendering more than one text         0
+  the two counts of distinct are equal:   True
+  both checks run on all 19291 pairs above and neither refused
+
+==============================================================================
+4  EVERY FEATURE OVER THE EMULATOR RESCHEDULE ROWS
+==============================================================================
+Rows: the 6423 logged reschedule records of seeds 1 to 20, both cells pooled.
+A CONSTANT feature is a dead input on this data: it is kept in the vector, so
+that the length and the name list are the same everywhere, and named here rather
+than dropped, so a later fit that leans on one is readable as leaning on nothing.
+
+  matrix 6423 x 261
+
+  feature                               min          max distinct constant
+  res_present                         1.000        1.000        1 DEAD
+  res_poll_age_s                      0.000        2.100        3 
+  res_trigger_answered                0.000        1.000        2 
+  res_trigger_timed_out               0.000        1.000        2 
+  res_empty_none                      0.000        1.000        2 
+  res_empty_false                     0.000        1.000        2 
+  res_empty_true                      0.000        1.000        2 
+  in_flight                           0.000        8.000        2 
+  consecutive_poll_timeouts           0.000        9.000       10 
+  last_poll_status_none               0.000        0.000        1 DEAD
+  last_poll_status_answered           0.000        1.000        2 
+  last_poll_status_timed_out          0.000        1.000        2 
+  last_poll_status_pending            0.000        0.000        1 DEAD
+  fetch_timeout_present               0.000        1.000        2 
+  fetch_timeout_age_s                 0.000       34.700        8 
+  origins_shown                       0.000        2.000        3 
+  origins_omitted                     0.000        0.000        1 DEAD
+  peers_known                         0.000        2.000        3 
+  polled_peer_present                 0.000        1.000        2 
+  polled_peer                         0.000        2.000        3 
+  o1_present                          0.000        1.000        2 
+  o1_hi                               0.000      120.000       33 
+  o1_missing                          0.000      104.000       30 
+  o1_advertisers_omitted              0.000        0.000        1 DEAD
+  o1_p1_present                       0.000        1.000        2 
+  o1_p1_peer                          0.000        2.000        3 
+  o1_p1_hi                            0.000      120.000       33 
+  o1_p1_notified_max                  0.000      120.000       33 
+  o1_p2_present                       0.000        1.000        2 
+  o1_p2_peer                          0.000        2.000        2 
+  o1_p2_hi                            0.000      120.000       32 
+  o1_p2_notified_max                  0.000      120.000       32 
+  o1_p3_present                       0.000        0.000        1 DEAD
+  o1_p3_peer                          0.000        0.000        1 DEAD
+  o1_p3_hi                            0.000        0.000        1 DEAD
+  o1_p3_notified_max                  0.000        0.000        1 DEAD
+  o1_p4_present                       0.000        0.000        1 DEAD
+  o1_p4_peer                          0.000        0.000        1 DEAD
+  o1_p4_hi                            0.000        0.000        1 DEAD
+  o1_p4_notified_max                  0.000        0.000        1 DEAD
+  o2_present                          0.000        1.000        2 
+  o2_hi                               0.000      120.000       32 
+  o2_missing                          0.000       24.000        3 
+  o2_advertisers_omitted              0.000        0.000        1 DEAD
+  o2_p1_present                       0.000        1.000        2 
+  o2_p1_peer                          0.000        2.000        3 
+  o2_p1_hi                            0.000      120.000       35 
+  o2_p1_notified_max                  0.000      120.000       35 
+  o2_p2_present                       0.000        1.000        2 
+  o2_p2_peer                          0.000        2.000        2 
+  o2_p2_hi                            0.000      120.000       32 
+  o2_p2_notified_max                  0.000      120.000       32 
+  o2_p3_present                       0.000        0.000        1 DEAD
+  o2_p3_peer                          0.000        0.000        1 DEAD
+  o2_p3_hi                            0.000        0.000        1 DEAD
+  o2_p3_notified_max                  0.000        0.000        1 DEAD
+  o2_p4_present                       0.000        0.000        1 DEAD
+  o2_p4_peer                          0.000        0.000        1 DEAD
+  o2_p4_hi                            0.000        0.000        1 DEAD
+  o2_p4_notified_max                  0.000        0.000        1 DEAD
+  o3_present                          0.000        0.000        1 DEAD
+  o3_hi                               0.000        0.000        1 DEAD
+  o3_missing                          0.000        0.000        1 DEAD
+  o3_advertisers_omitted              0.000        0.000        1 DEAD
+  o3_p1_present                       0.000        0.000        1 DEAD
+  o3_p1_peer                          0.000        0.000        1 DEAD
+  o3_p1_hi                            0.000        0.000        1 DEAD
+  o3_p1_notified_max                  0.000        0.000        1 DEAD
+  o3_p2_present                       0.000        0.000        1 DEAD
+  o3_p2_peer                          0.000        0.000        1 DEAD
+  o3_p2_hi                            0.000        0.000        1 DEAD
+  o3_p2_notified_max                  0.000        0.000        1 DEAD
+  o3_p3_present                       0.000        0.000        1 DEAD
+  o3_p3_peer                          0.000        0.000        1 DEAD
+  o3_p3_hi                            0.000        0.000        1 DEAD
+  o3_p3_notified_max                  0.000        0.000        1 DEAD
+  o3_p4_present                       0.000        0.000        1 DEAD
+  o3_p4_peer                          0.000        0.000        1 DEAD
+  o3_p4_hi                            0.000        0.000        1 DEAD
+  o3_p4_notified_max                  0.000        0.000        1 DEAD
+  o4_present                          0.000        0.000        1 DEAD
+  o4_hi                               0.000        0.000        1 DEAD
+  o4_missing                          0.000        0.000        1 DEAD
+  o4_advertisers_omitted              0.000        0.000        1 DEAD
+  o4_p1_present                       0.000        0.000        1 DEAD
+  o4_p1_peer                          0.000        0.000        1 DEAD
+  o4_p1_hi                            0.000        0.000        1 DEAD
+  o4_p1_notified_max                  0.000        0.000        1 DEAD
+  o4_p2_present                       0.000        0.000        1 DEAD
+  o4_p2_peer                          0.000        0.000        1 DEAD
+  o4_p2_hi                            0.000        0.000        1 DEAD
+  o4_p2_notified_max                  0.000        0.000        1 DEAD
+  o4_p3_present                       0.000        0.000        1 DEAD
+  o4_p3_peer                          0.000        0.000        1 DEAD
+  o4_p3_hi                            0.000        0.000        1 DEAD
+  o4_p3_notified_max                  0.000        0.000        1 DEAD
+  o4_p4_present                       0.000        0.000        1 DEAD
+  o4_p4_peer                          0.000        0.000        1 DEAD
+  o4_p4_hi                            0.000        0.000        1 DEAD
+  o4_p4_notified_max                  0.000        0.000        1 DEAD
+  o5_present                          0.000        0.000        1 DEAD
+  o5_hi                               0.000        0.000        1 DEAD
+  o5_missing                          0.000        0.000        1 DEAD
+  o5_advertisers_omitted              0.000        0.000        1 DEAD
+  o5_p1_present                       0.000        0.000        1 DEAD
+  o5_p1_peer                          0.000        0.000        1 DEAD
+  o5_p1_hi                            0.000        0.000        1 DEAD
+  o5_p1_notified_max                  0.000        0.000        1 DEAD
+  o5_p2_present                       0.000        0.000        1 DEAD
+  o5_p2_peer                          0.000        0.000        1 DEAD
+  o5_p2_hi                            0.000        0.000        1 DEAD
+  o5_p2_notified_max                  0.000        0.000        1 DEAD
+  o5_p3_present                       0.000        0.000        1 DEAD
+  o5_p3_peer                          0.000        0.000        1 DEAD
+  o5_p3_hi                            0.000        0.000        1 DEAD
+  o5_p3_notified_max                  0.000        0.000        1 DEAD
+  o5_p4_present                       0.000        0.000        1 DEAD
+  o5_p4_peer                          0.000        0.000        1 DEAD
+  o5_p4_hi                            0.000        0.000        1 DEAD
+  o5_p4_notified_max                  0.000        0.000        1 DEAD
+  o6_present                          0.000        0.000        1 DEAD
+  o6_hi                               0.000        0.000        1 DEAD
+  o6_missing                          0.000        0.000        1 DEAD
+  o6_advertisers_omitted              0.000        0.000        1 DEAD
+  o6_p1_present                       0.000        0.000        1 DEAD
+  o6_p1_peer                          0.000        0.000        1 DEAD
+  o6_p1_hi                            0.000        0.000        1 DEAD
+  o6_p1_notified_max                  0.000        0.000        1 DEAD
+  o6_p2_present                       0.000        0.000        1 DEAD
+  o6_p2_peer                          0.000        0.000        1 DEAD
+  o6_p2_hi                            0.000        0.000        1 DEAD
+  o6_p2_notified_max                  0.000        0.000        1 DEAD
+  o6_p3_present                       0.000        0.000        1 DEAD
+  o6_p3_peer                          0.000        0.000        1 DEAD
+  o6_p3_hi                            0.000        0.000        1 DEAD
+  o6_p3_notified_max                  0.000        0.000        1 DEAD
+  o6_p4_present                       0.000        0.000        1 DEAD
+  o6_p4_peer                          0.000        0.000        1 DEAD
+  o6_p4_hi                            0.000        0.000        1 DEAD
+  o6_p4_notified_max                  0.000        0.000        1 DEAD
+  o7_present                          0.000        0.000        1 DEAD
+  o7_hi                               0.000        0.000        1 DEAD
+  o7_missing                          0.000        0.000        1 DEAD
+  o7_advertisers_omitted              0.000        0.000        1 DEAD
+  o7_p1_present                       0.000        0.000        1 DEAD
+  o7_p1_peer                          0.000        0.000        1 DEAD
+  o7_p1_hi                            0.000        0.000        1 DEAD
+  o7_p1_notified_max                  0.000        0.000        1 DEAD
+  o7_p2_present                       0.000        0.000        1 DEAD
+  o7_p2_peer                          0.000        0.000        1 DEAD
+  o7_p2_hi                            0.000        0.000        1 DEAD
+  o7_p2_notified_max                  0.000        0.000        1 DEAD
+  o7_p3_present                       0.000        0.000        1 DEAD
+  o7_p3_peer                          0.000        0.000        1 DEAD
+  o7_p3_hi                            0.000        0.000        1 DEAD
+  o7_p3_notified_max                  0.000        0.000        1 DEAD
+  o7_p4_present                       0.000        0.000        1 DEAD
+  o7_p4_peer                          0.000        0.000        1 DEAD
+  o7_p4_hi                            0.000        0.000        1 DEAD
+  o7_p4_notified_max                  0.000        0.000        1 DEAD
+  o8_present                          0.000        0.000        1 DEAD
+  o8_hi                               0.000        0.000        1 DEAD
+  o8_missing                          0.000        0.000        1 DEAD
+  o8_advertisers_omitted              0.000        0.000        1 DEAD
+  o8_p1_present                       0.000        0.000        1 DEAD
+  o8_p1_peer                          0.000        0.000        1 DEAD
+  o8_p1_hi                            0.000        0.000        1 DEAD
+  o8_p1_notified_max                  0.000        0.000        1 DEAD
+  o8_p2_present                       0.000        0.000        1 DEAD
+  o8_p2_peer                          0.000        0.000        1 DEAD
+  o8_p2_hi                            0.000        0.000        1 DEAD
+  o8_p2_notified_max                  0.000        0.000        1 DEAD
+  o8_p3_present                       0.000        0.000        1 DEAD
+  o8_p3_peer                          0.000        0.000        1 DEAD
+  o8_p3_hi                            0.000        0.000        1 DEAD
+  o8_p3_notified_max                  0.000        0.000        1 DEAD
+  o8_p4_present                       0.000        0.000        1 DEAD
+  o8_p4_peer                          0.000        0.000        1 DEAD
+  o8_p4_hi                            0.000        0.000        1 DEAD
+  o8_p4_notified_max                  0.000        0.000        1 DEAD
+  exchanges_count                     0.000        8.000        9 
+  x1_present                          0.000        1.000        2 
+  x1_age_s                            0.000       13.100      100 
+  x1_trigger_answered                 0.000        1.000        2 
+  x1_trigger_timed_out                0.000        1.000        2 
+  x1_empty_none                       0.000        1.000        2 
+  x1_empty_false                      0.000        1.000        2 
+  x1_empty_true                       0.000        1.000        2 
+  x1_interval_s                       0.000       10.043        4 
+  x1_waited_s                         0.000       11.045     2205 
+  x1_clamped                          0.000        0.000        1 DEAD
+  x2_present                          0.000        1.000        2 
+  x2_age_s                            0.000       24.000      187 
+  x2_trigger_answered                 0.000        1.000        2 
+  x2_trigger_timed_out                0.000        1.000        2 
+  x2_empty_none                       0.000        1.000        2 
+  x2_empty_false                      0.000        1.000        2 
+  x2_empty_true                       0.000        1.000        2 
+  x2_interval_s                       0.000       10.043        4 
+  x2_waited_s                         0.000       11.045     2136 
+  x2_clamped                          0.000        0.000        1 DEAD
+  x3_present                          0.000        1.000        2 
+  x3_age_s                            0.000       34.800      247 
+  x3_trigger_answered                 0.000        1.000        2 
+  x3_trigger_timed_out                0.000        1.000        2 
+  x3_empty_none                       0.000        1.000        2 
+  x3_empty_false                      0.000        1.000        2 
+  x3_empty_true                       0.000        1.000        2 
+  x3_interval_s                       0.000       10.043        4 
+  x3_waited_s                         0.000       11.045     2057 
+  x3_clamped                          0.000        0.000        1 DEAD
+  x4_present                          0.000        1.000        2 
+  x4_age_s                            0.000       44.000      286 
+  x4_trigger_answered                 0.000        1.000        2 
+  x4_trigger_timed_out                0.000        1.000        2 
+  x4_empty_none                       0.000        1.000        2 
+  x4_empty_false                      0.000        1.000        2 
+  x4_empty_true                       0.000        1.000        2 
+  x4_interval_s                       0.000       10.043        4 
+  x4_waited_s                         0.000       11.045     1976 
+  x4_clamped                          0.000        0.000        1 DEAD
+  x5_present                          0.000        1.000        2 
+  x5_age_s                            0.000       52.700      324 
+  x5_trigger_answered                 0.000        1.000        2 
+  x5_trigger_timed_out                0.000        1.000        2 
+  x5_empty_none                       0.000        1.000        2 
+  x5_empty_false                      0.000        1.000        2 
+  x5_empty_true                       0.000        1.000        2 
+  x5_interval_s                       0.000       10.043        4 
+  x5_waited_s                         0.000       11.045     1889 
+  x5_clamped                          0.000        0.000        1 DEAD
+  x6_present                          0.000        1.000        2 
+  x6_age_s                            0.000       61.700      354 
+  x6_trigger_answered                 0.000        1.000        2 
+  x6_trigger_timed_out                0.000        1.000        2 
+  x6_empty_none                       0.000        1.000        2 
+  x6_empty_false                      0.000        1.000        2 
+  x6_empty_true                       0.000        1.000        2 
+  x6_interval_s                       0.000       10.043        4 
+  x6_waited_s                         0.000       11.045     1810 
+  x6_clamped                          0.000        0.000        1 DEAD
+  x7_present                          0.000        1.000        2 
+  x7_age_s                            0.000       71.600      374 
+  x7_trigger_answered                 0.000        1.000        2 
+  x7_trigger_timed_out                0.000        1.000        2 
+  x7_empty_none                       0.000        1.000        2 
+  x7_empty_false                      0.000        1.000        2 
+  x7_empty_true                       0.000        1.000        2 
+  x7_interval_s                       0.000       10.043        4 
+  x7_waited_s                         0.000       11.045     1724 
+  x7_clamped                          0.000        0.000        1 DEAD
+  x8_present                          0.000        1.000        2 
+  x8_age_s                            0.000       80.000      389 
+  x8_trigger_answered                 0.000        1.000        2 
+  x8_trigger_timed_out                0.000        1.000        2 
+  x8_empty_none                       0.000        1.000        2 
+  x8_empty_false                      0.000        1.000        2 
+  x8_empty_true                       0.000        1.000        2 
+  x8_interval_s                       0.000       10.043        4 
+  x8_waited_s                         0.000       11.042     1635 
+  x8_clamped                          0.000        0.000        1 DEAD
+
+  constant, i.e. dead on this data: 150 of 261
+    res_present
+    last_poll_status_none
+    last_poll_status_pending
+    origins_omitted
+    o1_advertisers_omitted
+    o1_p3_present
+    o1_p3_peer
+    o1_p3_hi
+    o1_p3_notified_max
+    o1_p4_present
+    o1_p4_peer
+    o1_p4_hi
+    o1_p4_notified_max
+    o2_advertisers_omitted
+    o2_p3_present
+    o2_p3_peer
+    o2_p3_hi
+    o2_p3_notified_max
+    o2_p4_present
+    o2_p4_peer
+    o2_p4_hi
+    o2_p4_notified_max
+    o3_present
+    o3_hi
+    o3_missing
+    o3_advertisers_omitted
+    o3_p1_present
+    o3_p1_peer
+    o3_p1_hi
+    o3_p1_notified_max
+    o3_p2_present
+    o3_p2_peer
+    o3_p2_hi
+    o3_p2_notified_max
+    o3_p3_present
+    o3_p3_peer
+    o3_p3_hi
+    o3_p3_notified_max
+    o3_p4_present
+    o3_p4_peer
+    o3_p4_hi
+    o3_p4_notified_max
+    o4_present
+    o4_hi
+    o4_missing
+    o4_advertisers_omitted
+    o4_p1_present
+    o4_p1_peer
+    o4_p1_hi
+    o4_p1_notified_max
+    o4_p2_present
+    o4_p2_peer
+    o4_p2_hi
+    o4_p2_notified_max
+    o4_p3_present
+    o4_p3_peer
+    o4_p3_hi
+    o4_p3_notified_max
+    o4_p4_present
+    o4_p4_peer
+    o4_p4_hi
+    o4_p4_notified_max
+    o5_present
+    o5_hi
+    o5_missing
+    o5_advertisers_omitted
+    o5_p1_present
+    o5_p1_peer
+    o5_p1_hi
+    o5_p1_notified_max
+    o5_p2_present
+    o5_p2_peer
+    o5_p2_hi
+    o5_p2_notified_max
+    o5_p3_present
+    o5_p3_peer
+    o5_p3_hi
+    o5_p3_notified_max
+    o5_p4_present
+    o5_p4_peer
+    o5_p4_hi
+    o5_p4_notified_max
+    o6_present
+    o6_hi
+    o6_missing
+    o6_advertisers_omitted
+    o6_p1_present
+    o6_p1_peer
+    o6_p1_hi
+    o6_p1_notified_max
+    o6_p2_present
+    o6_p2_peer
+    o6_p2_hi
+    o6_p2_notified_max
+    o6_p3_present
+    o6_p3_peer
+    o6_p3_hi
+    o6_p3_notified_max
+    o6_p4_present
+    o6_p4_peer
+    o6_p4_hi
+    o6_p4_notified_max
+    o7_present
+    o7_hi
+    o7_missing
+    o7_advertisers_omitted
+    o7_p1_present
+    o7_p1_peer
+    o7_p1_hi
+    o7_p1_notified_max
+    o7_p2_present
+    o7_p2_peer
+    o7_p2_hi
+    o7_p2_notified_max
+    o7_p3_present
+    o7_p3_peer
+    o7_p3_hi
+    o7_p3_notified_max
+    o7_p4_present
+    o7_p4_peer
+    o7_p4_hi
+    o7_p4_notified_max
+    o8_present
+    o8_hi
+    o8_missing
+    o8_advertisers_omitted
+    o8_p1_present
+    o8_p1_peer
+    o8_p1_hi
+    o8_p1_notified_max
+    o8_p2_present
+    o8_p2_peer
+    o8_p2_hi
+    o8_p2_notified_max
+    o8_p3_present
+    o8_p3_peer
+    o8_p3_hi
+    o8_p3_notified_max
+    o8_p4_present
+    o8_p4_peer
+    o8_p4_hi
+    o8_p4_notified_max
+    x1_clamped
+    x2_clamped
+    x3_clamped
+    x4_clamped
+    x5_clamped
+    x6_clamped
+    x7_clamped
+    x8_clamped
+
+  NEARLY constant: a cell whose commonest value covers at least 99 % of the
+  rows, and how many rows depart from it.  These are the cells a fit can lean on
+  while resting on a handful of rows, and the three state fields earlier evidence
+  recorded as never moving are here rather than in the dead list above.
+  feature                         commonest   its rows   the rest
+  in_flight                           0.000       6421          2
+  fetch_timeout_present               0.000       6414          9
+  fetch_timeout_age_s                 0.000       6414          9
+  o2_missing                          0.000       6421          2
+
+==============================================================================
+5  WHAT THE VECTOR SEPARATES THAT THE FIVE-CELL STATE DOES NOT
+==============================================================================
+The five-cell scalar state is the information ADR 0004 line 5 permits a policy
+to read.  Counted over the same 6423 rows.
+
+  distinct five-cell states   5
+    ans_empty      3102
+    ans_content    1526
+    to1            1001
+    to2             531
+    to3             263
+  distinct feature vectors    5865
+  distinct rendered texts     5865
+  So a decider reading the vector can tell 5865 of these 6423 decisions apart, and
+  one reading the five cells can tell 5 apart.  That is a statement about how
+  much the vector DISTINGUISHES and not about how much of that distinction is
+  signal: nothing here says any of it predicts a cost.
+
+==============================================================================
+6  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+==============================================================================
+The mutation is of the INPUT, inside this process: a record or a vector made
+wrong on purpose.  A check that cannot be made to fail by any input is named as
+such below rather than left out.
+
+  layout/extra field       FIRES: the record's fields are not observation's: 1 extra (['node']), 0 missing ([]), order kept
+  layout/missing field     FIRES: the record's fields are not observation's: 0 extra ([]), 1 missing (['peers_known']), order kept
+  vocabulary/trigger       FIRES: the resolution's trigger: 'pending' is not one of ['answered', 'timed_out']
+  vocabulary/status        FIRES: last_poll_status: 'unknown' is not one of [None, 'answered', 'timed_out', 'pending']
+  vocabulary/empty         FIRES: the resolution's empty flag: 'yes' is not one of [None, False, True]
+  cap/origins              FIRES: the record shows 9 origins, more than the 8 slots here
+  cap/advertisers          FIRES: origin 1 names 5 advertisers, more than the 4 slots here
+  cap/exchanges            FIRES: the record shows 18 exchanges, more than the 8 slots here
+  fill/padding             FIRES: a value in an absent slot: 1 cell(s) of an absent slot are not the fill value 0.0, e.g. x8_age_s
+  fill/polled_peer         FIRES: a value behind polled_peer_present = 0: 1 cell(s) of an absent slot are not the fill value 0.0, e.g. polled_peer
+  fill/fetch_timeout_age_s FIRES: a value behind fetch_timeout_present = 0: 1 cell(s) of an absent slot are not the fill value 0.0, e.g. fetch_timeout_age_s
+  renders_as/moved cell    FIRES: a vector cell moved by 7: the text differs at character 247: '11 | p1 held 4 told 4\nlast 2 exchanges, ' against '4 | p1 held 4 told 4\nlast 2 exchanges, n'
+  one vector per text      FIRES: a record with an unrounded age beside its rounded self: one text has 2 vectors; its first line is 'state poll reschedule'
+  no name/in the record    FIRES: a name in the record: the record carries the node name(s) ['h3']
+  inverse/two columns hot  FIRES: the resolution's trigger: 2 of the 2 columns are set
+  inverse/wrong length     FIRES: a vector of 262 cells cannot be a record of 261
+  label seeds > 80         FIRES: mutated: a label seed read here is a whole number 1 to 80, the tuning half; refused [81.0]
+  a label seed of 0        FIRES: mutated: a label seed read here is a whole number 1 to 80, the tuning half; refused [0.0]
+  a fractional label seed  FIRES: mutated: a label seed read here is a whole number 1 to 80, the tuning half; refused [1.5]
+  log seeds > 20           FIRES: load_run: an emulator seed read by this workflow is a whole number 1 to 20; refused [21.0]
+  port.check_seeds > 100   FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  label file digest        FIRES: labels_p0.2.jsonl.gz has sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67, and labels.sha256 says deadbeef
+  the hash file names no cell FIRES: labels.sha256 names no labels_p0.2.jsonl.gz
+
+23 of 23 mutations produced a failure
+
+Two checks no input mutation can fail, named rather than left out:
+- one text per vector (part 3's second direction).  `unvector` reconstructs every
+  field `render` reads, so one vector determines one text by construction.  The
+  way it COULD fail is a long input truncated into a short one's vector, which
+  the three cap refusals above are what prevent, and a value hidden in the
+  padding, which `fill/padding` is what prevents.
+- that the vector reads no node name.  `vector`'s only argument is the record and
+  the record has no name in it, so no input can make it read one.  What can be
+  shown is part 1's equality under a full rename, part 1's difference when the
+  polled name alone is left behind, and the `no name/in the record` refusal.
+
+==============================================================================
+7  WHAT THIS MODULE DOES NOT SHOW
+==============================================================================
+- Nothing about whether these features predict anything.  The round trip says
+  the vector carries what the text carries; whether that is enough to choose an
+  interval is the next step's question and not this one's.
+- Nothing about the rendering being the right input.  It is the input the
+  text-reading decider gets, which is why the vector is held to it.
+- Nothing about a record this road cannot produce.  The vector is held to the
+  records of these two sources; a hand-built record with an unrounded age is the
+  one case shown in part 6 where a text has two vectors, and it is not a record
+  observe.observation ever returns.
+- The three constant-looking state fields are constant ON THIS DATA ONLY.  When
+  a poll is in flight, a fetch has timed out, or an origin is left out, nothing
+  measured here applies, and the cells for them are in the vector either way.
+- Nothing about seeds above 20 of the logs or above 80 of the labels, and
+  nothing about the p 0.4 label cell, which is not read here.
+- No timing.  The cost of one `vector` call is Acceptance 6's question and is
+  measured where the decider is, not here.
+
+no check fired on real input; the failures in part 6 are the mutations
+end of features.py

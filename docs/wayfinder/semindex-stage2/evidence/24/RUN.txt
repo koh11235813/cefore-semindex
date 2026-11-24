@@ -1,0 +1,497 @@
+evidence/24 -- what the s11a logs and ticket 09's labels can carry, before M is planned
+2026-11-25.  Four scripts so far, in the order the later ones depend on the earlier:
+features.py (the numeric form of a decision's input), charges.py (the cost of one
+decision), precheck.py (what the logs can carry) and labelsig.py (whether the labels carry
+learnable signal).  NOTHING HERE IS M, nothing here is a score, and no replay simulation
+and no emulator run happened at any point.
+
+WHAT THIS STEP ESTABLISHES
+  1. A fixed-length numeric form of the one shared writing of a decision's input, proved
+     to carry what the rendered text carries by inverting it and rendering the inverse.
+  2. A per-decision cost whose sum over every period of a run is exactly the scorer's own
+     cost, with the censored records' lower bound placed at a hop and nothing left over.
+  3. That the full input vector explains far more of what follows a decision than the five
+     scalar cells ADR 0004 line 5 permits, on seeds the fit never saw, and HOW MUCH of
+     that is backlog and clock position rather than a verdict on an interval.
+  4. That ticket 09's labels do carry learnable signal above their own class prior, that a
+     closed-form linear fit on the same input reaches it, and that the five scalar cells
+     carry label information whose own size is about a tenth of the full vector's and
+     which never moves a three-arm argmax off 10.043 s -- so an argmax read-out of the
+     cells equals the prior exactly, which is not the same statement as "no signal".
+     Their Brier gain is a twentieth (candidate a) to a tenth (candidate b) of the full
+     vector's.
+  5. That the closed-form fits reproduce bit for bit in a second process, which is the
+     check ticket 10's torch fit could not pass.
+
+WHAT IT DOES NOT ESTABLISH
+  Nothing about M as a decider.  No policy is fitted, no arm is recommended, no replay
+  score of anything is computed, and the per-decision agreement between the emulator and
+  the replay stays failed in evidence/13.  No seed above 20 of the emulator logs and no
+  label seed above 80 is read anywhere, so nothing here touches the selection half
+  (81 to 100) or the measuring half (121 to 160).  The time-fair comparison of the three
+  intervals is a property of the LOGGING POLICY's own continuation; the pooled rates do
+  not identify a best arm and charges.py says why.
+
+NAMES
+  E     = docs/wayfinder/semindex-stage2/evidence/24   (in the worktree)
+  S2    = docs/wayfinder/semindex-stage2
+  W     = /home/lab_shared/wt/semindex-ev24            (the only repository touched)
+  local = PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=W/src \
+            /home/lab_shared/cefore-semindex/.venv/bin/python3 -B
+  store = /home/lab_shared/semindex-eval/s11a/p{0.2,0.4}/{1..20}  (read only)
+  labels= /home/lab_shared/semindex-learn/ev22/labels_p0.2.jsonl.gz (read only)
+
+THE FILES, AS THEY STAND
+  file           lines  sha256 (first 16)   archived output  lines
+  features.py    1051  437e840b04d10d6e    features.txt      617
+  charges.py     1317  5db2778a4dc42a3f    charges.txt       404
+  precheck.py    1333  8c2e3070f184877c    precheck.txt      421
+  labelsig.py    1069  445762a24c96a71d    labelsig.txt      366
+  These are the files AFTER the fixes of section 6; the four scripts were re-run in
+  dependency order (charges, features, precheck, labelsig) and every archived output here
+  is that run's stdout.
+  Every `name.txt` IS `name.py`'s stdout, byte for byte.  Three of the four reproduce
+  byte for byte on a second run; precheck.txt's last part carries timings and is the one
+  exception, named in section 3.
+
+========================================================================
+1. features.py -- THE NUMERIC FORM OF ONE DECISION'S INPUT          11 s
+========================================================================
+  RULE: the vector carries every quantity the rendered text carries and nothing else.
+  The road is observe.from_logged_rows -> observe.observation -> vector, which is the
+  road the text-reading decider's own input takes, so the two see the same information
+  and a difference between the two deciders is a difference of learning and not of input.
+  Written by another agent in this workflow; re-run and checked here, not edited.
+
+  cd W/E && local -B features.py > features.txt
+                               exit 0, 10.5 s, nothing on stderr
+    last lines of the real output (features.txt:583, :616-617):
+      "23 of 23 mutations produced a failure"
+      "no check fired on real input; the failures in part 6 are the mutations"
+      "end of features.py"
+
+  WHAT IT MEANS, in the four numbers a later step leans on:
+    vector length 261, name list sha256 16c2aa02c5738abcb819fa4503067eeaff3a82a3a0fa2020
+    cca6ae29d79aafce (features.txt:20-21).
+    round trip render(unvector(vector(r))) == render(r) on 6423 of 6423 logged records and
+    12868 of 12868 label records, and every decoded record passes observe.py's own schema
+    (features.txt:78-80).
+    collisions both ways: 18032 distinct texts and 18032 distinct vectors over 19291
+    records, 0 texts with two vectors and 0 vectors with two texts (features.txt:91-92).
+    150 of the 261 cells are CONSTANT on this data and each one is named
+    (features.txt:371-521), so a later fit that leans on one is readable as leaning on
+    nothing.  5865 distinct vectors against 5 distinct five-cell states over the same 6423
+    rows (features.txt:539-545).
+
+  WHAT WAS NOT DONE
+    No fit, no target and no claim that these features predict anything: the round trip
+    says the vector carries what the text carries and nothing more.  No timing of `vector`
+    (that is section 3's part 9).  The p 0.4 label cell is not read.  The three state
+    fields earlier evidence recorded as never moving are NEARLY constant here -- in_flight
+    departs from 0 on 2 of 6423 rows and the fetch-timeout cells on 9 -- and are named in
+    features.txt:523-531 rather than dropped.
+
+========================================================================
+2. charges.py -- THE COST OF ONE DECISION                            2 s
+========================================================================
+  RULE: the unit is the DECISION PERIOD, from one state_poll_reschedule decision of a pair
+  to that pair's next one, and cost accrues FORWARD only.  The earlier scratch precheck
+  charged send-to-send, which hands a decision about 2 s that had already passed before it
+  was taken; both rules are computed here off one code path so the difference is a measured
+  number.  Written by another agent in this workflow; re-run and checked here, not edited.
+
+  cd W/E && local -B charges.py > charges.txt
+                               exit 0, 1.7 s, nothing on stderr
+    last lines of the real output (charges.txt:381, :403-404):
+      "15 of 15 mutations produced a failure"
+      "no check fired on real input; the failures in part 8 are the mutations"
+      "end of charges.py"
+
+  WHAT IT MEANS
+    THE IDENTITY CLOSES EXACTLY.  (lat + censored) + W x N x polls equals the sum over
+    every period, owned and head and tail, of waiting ms plus W x N per in-window send:
+    difference 0.0e+00 on 40 of 40 runs, asserted to 1e-6 ms per run before any table
+    (charges.txt:31-71).
+    THE CENSORING RESIDUAL IS GONE.  0.000000 ms over 0 records in both cells, with all
+    120 p 0.4 censored records placed at the hop they never crossed
+    (charges.txt:81-82, :91-92).  The earlier precheck had to leave 3.582 % of p 0.4's
+    cost unplaced.
+    COST NO DECISION OWNS: 0.184 % at p 0.2 and 0.228 % at p 0.4, largest in one run
+    0.809 % (charges.txt:77-80, :87-90).
+    THE SPLIT, which is the finding precheck.py builds on: poll cost per second FALLS with
+    the interval (27.4 / 17.2 / 10.4 score ms/s at p 0.2, in-window periods) and waiting
+    cost per second RISES with it (16.2 / 24.3 / 33.5), and the two nearly cancel, so the
+    three arms sit within 4.4 to 11.0 % of each other pooled (charges.txt:351-355, :223,
+    :238).
+    SO NO ARM'S NAME SURVIVES THE CONVENTIONS.  5 of the 10 (p, cell) combinations keep
+    their dearest and cheapest arm across the two units and 5 do not (charges.txt:300-306,
+    :340-342); the per-seed vote splits 7/6/7 at p 0.2 and 8/5/7 at p 0.4
+    (charges.txt:242-243).
+
+  WHAT WAS NOT DONE
+    No standard error, no bootstrap, no separation test: the per-seed counts count seeds.
+    No replay simulation, so nothing says a charge computed in the emulator transfers to
+    where a score is taken.  No discount anywhere.  A one-send-per-owned-period assertion
+    was in the module's first draft and FIRED on real data (15 owned periods hold none and
+    12 hold two, from the send-time provisional timer); it is a printed table
+    (charges.txt:123-149) and not an assertion.
+
+========================================================================
+3. precheck.py -- WHAT THE LOGS CAN CARRY                            9 s
+========================================================================
+  RULE: this measures and chooses nothing.  One row per owned decision period, the feature
+  vector at its left edge, and four questions about it: how much is there, what did a
+  second cost under the logging policy, how much of what FOLLOWED a decision do the inputs
+  explain on seeds the fit never saw, and does the ORDER of the three intervals read off
+  that.  Leave-seeds-out, five folds of four seeds assigned by seed number alone.
+
+  cd W/E && local -B precheck.py > precheck.txt
+                               exit 0, 8.8 s, nothing on stderr
+    last lines of the real output (precheck.txt:329, :395, :418-421):
+      "17 of 17 mutations produced a failure"
+      "no check fired on real input; the failures in part 6 are the mutations"
+      "  the argmin returned 3 distinct value(s) over the 1200 calls, every one of them"
+      "  inside [3.695, 6.0, 10.043]: True"
+      "end of precheck.py"
+
+  WHAT IT MEANS
+    THE TABLE.  3054 owned rows at p 0.2 and 3049 at p 0.4, of 3214 and 3209 decisions;
+    the 320 left out are the 8 pairs' last decisions of each run, which own no period
+    (precheck.txt:35-37).  Row counts per interval and per cell: precheck.txt:39-48.
+    RHO, the logging policy's own cost per second: 39.5698 score ms/s at p 0.2 and 49.5153
+    at p 0.4, per-run SE 0.8402 and 1.5872 over 20 runs (precheck.txt:83-85).  Within each
+    chosen interval 40.0586 / 38.4132 / 40.1021 and 49.0863 / 46.9753 / 51.2642, which
+    reproduces charges.txt part 6 and which the output states is NOT a causal effect of
+    the interval (precheck.txt:97-103).
+    THE FULL VECTOR EXPLAINS MORE THAN THE FIVE CELLS, AT EVERY HORIZON.  Held-out R
+    squared, paired inside each fold (precheck.txt:149-155), unchanged by the fixes:
+      p 0.2  K 1  0.5008 against 0.2117, paired diff 0.2891 +- 0.0117   > 2 SE
+      p 0.2  K 4  0.3835 against 0.0517, paired diff 0.3317 +- 0.0259   > 2 SE
+      p 0.2  K 8  0.3929 against 0.0138, paired diff 0.3791 +- 0.0277   > 2 SE
+      p 0.4  K 1  0.4717 against 0.1833, paired diff 0.2884 +- 0.0226   > 2 SE
+      p 0.4  K 4  0.3126 against 0.0264, paired diff 0.2862 +- 0.0218   > 2 SE
+      p 0.4  K 8  0.2428 against -0.0116, paired diff 0.2544 +- 0.0327  > 2 SE
+    The (cell, interval) mean predictor sits within 0.0004 of the cell-indicator ridge
+    everywhere, which is the five cells' own ceiling and is the quantity the earlier
+    scratch precheck reported as 0.003 to 0.092 under its own charge rule and horizons.
+    WHAT CARRIES IT, AND WHAT THAT COSTS THE READING.  The largest standardised
+    coefficients are the backlog and the exchange history -- o2_hi, o1_hi, x8_age_s,
+    o1_p1_present, consecutive_poll_timeouts (precheck.txt:208-213) -- and the first three
+    move through a run, so part of the R squared is WHERE IN THE RUN the decision sits.
+    Restricted to read-out rows whose whole K-period continuation exists, the full ridge
+    falls to 0.2388 (p 0.2, K 8) and 0.1261 (p 0.4, K 8) while the five cells go NEGATIVE,
+    -0.0761 and -0.0276 (precheck.txt:192-201).  So the gap is not the truncation.
+    THE PERMUTED-TARGET CONTROL.  With the fit folds' targets permuted among their own
+    rows the full ridge explains -0.0698 (p 0.2) and -0.0755 (p 0.4) of the held-out
+    variance (precheck.txt:298-302).  WHAT THAT DOES AND DOES NOT SAY, corrected after
+    a review of this log: it says the R squared above is not an artefact of the
+    ARITHMETIC, because the only thing the permutation removes is the link between a fit
+    row's inputs and its own target.  It does NOT rule out a leaked future value -- such a
+    cell would lose its link under the permutation too -- and it cannot detect a read-out
+    row left in the fit, which would carry a permuted target there.  What rules out a leak
+    is structural: observe.observation builds the record from the state, the resolution
+    and the history as they stand at the decision's own ts_ms and from nothing else, and
+    the coefficient table names what the fit leans on.  check_held_out is what detects a
+    row in both halves and precheck.txt:320 shows it firing.  The negative value's SIZE is
+    a second reading: how much a 261-column ridge over-fits four folds of these rows when
+    there is nothing to find (precheck.txt:281-296 says all of this in the output).
+    THE RANKING READS.  On held-out rows the logged interval equals the ridge's predicted
+    cheapest on 0.3425 of them (p 0.2), and those rows' realised y is -81.72 score ms
+    against 0.00 over all rows, per-run difference -82.45 +- 9.57; at p 0.4 -117.39 +- 9.71
+    (precheck.txt:237-239).  The control says the ORDER carries it and not the row: by the
+    rank the ridge gave the logged interval, y goes -81.72 / -6.17 / +88.47 at p 0.2 and
+    -118.56 / -10.99 / +126.46 at p 0.4, monotone in the rank (precheck.txt:254-260).
+    AND THAT CONTROL IS VALID BY THE STAGE'S OWN DESIGN, which the output now states
+    (precheck.txt:245-253): the logging policy drew the interval uniformly and
+    independently of the state, so a row falls into rank 0, 1 or 2 with probability one
+    third whatever its features are, and the three rank groups are three samples of the
+    SAME state distribution -- which their near-equal counts 1046/974/1034 and
+    1016/994/1039 show.  So the rank 0 against rank 2 gap is the interval and not the
+    row.
+    The output names this for what it is: a one-period, logged-policy-continuation
+    reading that says nothing about any policy's replay score.
+    THE FIT REPRODUCES BIT FOR BIT.  Two fresh interpreters each re-read the 40 runs and
+    re-solved: p 0.2 8ca3d05ca53f852adf6be081f18514f40e6af59c55da58ad1873c5dce65b8f0b and
+    p 0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283, 6288 bytes of
+    coefficients each, identical in both processes and in the parent (precheck.txt:359-366).
+    TIME, beside the 100 ms tick, no verdict (precheck.txt:413-416, the archived run):
+      observe.observation  median 0.0184 ms  p99 0.0260 ms  max 0.0752 ms
+      features.vector      median 0.0713 ms  p99 0.0819 ms  max 0.1089 ms
+      3 values + argmin    median 0.0064 ms  p99 0.0118 ms  max 0.0995 ms
+    Each over 1200 distinct logged decisions, timed one call at a time, nothing batched.
+    The decisions come from p 0.2 seeds 1 to 8: the loop ACCUMULATES decisions across
+    seeds until it holds 1200, and the output names the seeds it opened rather than the
+    range it would have read had those eight held fewer than 1200 decisions
+    (precheck.txt:411).
+
+  BYTE IDENTITY, AND THE ONE PART THAT DOES NOT REPRODUCE
+    cd W/E && local -B precheck.py > <scratch>/v_precheck.txt
+    head -400 precheck.txt | cmp - <(head -400 <scratch>/v_precheck.txt)
+                               no output: identical.  Line 400 is the marker
+                               ">>> TIMINGS BELOW THIS LINE DO NOT REPRODUCE BYTE FOR
+                               BYTE <<<", which part 9 opens with.
+    diff of the whole file against the second run names lines 414, 415 and 416 and no
+    others -- the three timing rows.  So a second run differs only in the timings, which
+    is what the marker promises.
+
+  WHAT WAS NOT DONE
+    No policy and no score: nothing here is a decider and no replay simulation is run.
+    The penalty is fixed at 10.0 and is NOT tuned; a penalty chosen against these folds
+    would make them part of the fit.  rho is estimated on all 20 seeds of its cell and
+    used in the read-out rows' target too, so one scalar of out-of-fold information is in
+    those targets; refitting with rho taken from each fold's FIT rows alone moves no
+    held-out R squared by more than 0.0022, which is that bound as a measurement
+    (precheck.txt:163-175).  No model is
+    chosen, no horizon is chosen, no discount is used.  The cost a decision causes at the
+    DOWNSTREAM pair is charged to that pair and appears in no target here.
+
+========================================================================
+4. labelsig.py -- DO TICKET 09'S LABELS CARRY LEARNABLE SIGNAL       20 s
+========================================================================
+  RULE: THIS IS NOT M, and the output says so in its first line.  M learns from the
+  emulator logs; this fits a classifier to the LABEL rows and reads its agreement with
+  those labels.  It exists to separate one question from another: when the language
+  model's agreement stopped at its rows' own class prior, was that the text it had to
+  read, or is there no learnable signal in the labels to find?  No emulator log is read
+  here at all.
+
+  cd W/E && local -B labelsig.py > labelsig.txt
+                               exit 0, 20.2 s, nothing on stderr.  It was 4.7 s before
+                               the two bootstraps and the four permutations of section 6
+    last lines of the real output (labelsig.txt:316, :365-366):
+      "18 of 18 mutations produced a failure"
+      "no check fired on real input; the failures in part 6 are the mutations"
+      "end of labelsig.py"
+
+  WHAT IT MEANS
+    THE ROW SETS REPRODUCE ../23/rows.py's COUNTS AND ARE ASSERTED AGAINST THEM.
+    candidate a 10013 fit rows and 1425 read-out rows, candidate b 4018 and 568, each
+    compared with the number parsed out of ../23/rows.txt and refused if it differs
+    (labelsig.txt:50-52).  rows.py is NOT imported: it makes 61 top-level calls, 49 of
+    which print, so `import rows` would write its own output into this one's -- counted
+    off its source with `ast`, running none of it (labelsig.txt:33-36).  What IS imported
+    is label.paired_t, the statistic candidate b is selected by, and stability.T_BINS,
+    where the bar 3.0 comes from.
+    THE ANSWER: YES, ABOVE THE PRIOR, AND AN ARGMAX READ-OUT OF THE FIVE CELLS IS THE
+    PRIOR EXACTLY (labelsig.txt:102-141):
+      set  predictor      agreement   baseline   diff     SE
+      a    full vector    0.5396      0.5102     0.0298   0.0101    (+0.0295 = 2.9 SE
+                                                                     of 10 seed clusters;
+                                                                     per seed +0.0294,
+                                                                     SE 0.0104, t 2.82 on
+                                                                     9 df, 8/10 positive)
+      a    five cells     0.5102      0.5102     0.0000   0.0000
+      a    the model      0.5312      0.5102     0.0210   --        (../23/tune.txt)
+      b    full vector    0.7254      0.6831     0.0421   0.0107    (+0.0423 = 3.9 SE;
+                                                                     per seed +0.0428,
+                                                                     SE 0.0109, t 3.94 on
+                                                                     9 df, 9/10 positive)
+      b    five cells     0.6831      0.6831     0.0000   0.0000
+      b    the model      0.7148      0.6831     0.0317   --        (../23/tune.txt)
+    The five-cell classifier and the trivial majority answer give the SAME number as the
+    baseline to four decimals, and their 3 x 3 tables fill one column exactly
+    (labelsig.txt:226-274).
+    WHAT THAT DOES AND DOES NOT SAY ABOUT THE ADR 0004 SCALARS, corrected after a review
+    of this log.  Agreement is an argmax, and 10.043 s is the MAJORITY label inside every
+    one of the five cells on both row sets, so a three-arm argmax read-out of the cells
+    answers 10.043 on every row and equals the prior BY CONSTRUCTION.  That is not the
+    same statement as "the cells carry no label signal", and two tables added to the
+    output now say they do carry some (labelsig.txt:148-223):
+      Brier score, lower better, against the prior (the fit rows' class shares):
+        a   full vector 0.5375   five cells 0.6158   prior 0.6201
+            diffs -0.0826 (SE 0.0070) and -0.0042 (SE 0.0016), seed-clustered
+        b   full vector 0.3647   five cells 0.4696   prior 0.4832
+            diffs -0.1185 (SE 0.0127) and -0.0136 (SE 0.0029)
+      label against cell on the read-out rows: chi-square 23.5 (a) and 33.2 (b) on 8
+      degrees of freedom, permutation p 0.0020 and 0.0005 over 2000 shuffles; on the fit
+      rows 139.0 and 155.8, p < 0.0005.
+    So the cells' calibrated gain is real and is a twentieth (a) to a tenth (b) of the
+    full vector's.
+    How much of the full vector's gain lies OUTSIDE the cells is not decomposed anywhere
+    in this directory, and the earlier wording of this log ("carries no label signal",
+    "what the full vector adds is what lies outside it") is withdrawn.
+    THE CLOSED-FORM LINEAR FIT LANDS WITHIN A DOZEN ROWS OF THE LANGUAGE MODEL on these
+    row sets, and the two are not compared.  757/1425 and 406/568 against 769/1425 and
+    412/568, i.e. 12 and 6 rows apart.  A paired per-seed comparison is impossible from
+    the archive: ../23/tune.txt holds one read-out of one adapter with no SE and no
+    per-row answers (only per-epoch answer COUNTS), so there is nothing to pair against
+    and the difference is tested nowhere (labelsig.txt:112-114).
+    NO OVER-FITTING TO SPEAK OF.  Fit-side minus read-out agreement: 0.0002 (a, full
+    vector) and 0.0083 (b, full vector), against 0.0050 and 0.0051 for the baseline
+    itself (labelsig.txt:283-289).
+    AND AGREEMENT IS NOT A SCORE.  Two independent 8-pass labellings of the same decisions
+    agreed on 0.7577 of the 1366 they both labelled, read off ../22/stability.txt, so
+    0.2423 got a DIFFERENT label (labelsig.txt:334-341).  A classifier that matched these
+    labels perfectly would match a teacher that disagrees with itself about a quarter of
+    the time.
+
+  BYTE IDENTITY
+    cd W/E && local -B labelsig.py > <scratch>/lab2.txt && cmp labelsig.txt <scratch>/lab2.txt
+                               no output: identical.  The bootstrap draws from
+                               numpy.random.default_rng(20261125) and the fit is
+                               closed-form, so there is nothing in this output that a
+                               second run can move.
+
+  WHAT WAS NOT DONE
+    No replay simulation and no score: a label is the arm that is best IF the formula rule
+    takes over afterwards, measured inside the replay over 8 passes, and agreement with it
+    is a measure of no policy.  No row-level join between these labels and M's training
+    rows exists and none is attempted: the labels were attached to decisions inside a
+    replay roll-in, so the s11a logged rows carry no label at all.  The p 0.4 label cell is
+    not read.  Seeds 81 to 100 are not read.  The penalty is fixed at 10.0 and not tuned.
+    ../23/decider.py's `pick` is restated and not imported, because that module reads a
+    command-line root at import; the restated rule's answer on a hand-made tie is printed
+    (labelsig.txt:322).
+
+========================================================================
+5. HYGIENE, AND WHAT THE TREE LOOKS LIKE                             5 s
+========================================================================
+  Run after every command above, and again at the end.
+    cd W && uvx ruff@0.17.2 check --no-cache S2/evidence/24
+                               "All checks passed!"
+    find W -name '__pycache__' -o -name '*.pyc' -o -name '.ruff_cache'
+                               no output
+    find /home/lab_shared/semindex-eval/s11a /home/lab_shared/semindex-learn \
+         -newermt '-4 hours'  no output: nothing was written in either store
+    grep -P '[\x{2014}\x{2015}\x{2013}\x{2500}]' S2/evidence/24/*
+                               no output: no em dash and no horizontal bar in any script
+                               or archive of this directory
+    cd W && git status --short
+                               "?? docs/wayfinder/semindex-stage2/evidence/24/" and
+                               nothing else.  No commit, no add, no stash, no branch or
+                               worktree change was made at any point.
+
+  THE SEED DISCIPLINE, AS THE SCRIPTS ENFORCE IT RATHER THAN AS A PROMISE
+    NO SEED-LIMIT LEAK WAS FOUND BY EITHER REVIEW.  Both read every open the four scripts
+    make, under an audit hook in one case, and found only p0.2 and p0.4 seeds 1 to 20 of
+    the emulator store and labels_p0.2.jsonl.gz on the learning side, with no key file,
+    meta.json, results.json or *.experiment.json opened anywhere.
+    emulator logs  charges.load_run refuses any seed that is not a whole number 1 to 20
+                   and calls port.check_seeds, which refuses one above 100; both are
+                   inside the only function of charges.py that opens a file.  Shown
+                   firing in charges.txt:376-379, features.txt:578-579 and
+                   precheck.txt:326-327.
+                   2026-11-25 fix: the bound used to be `> 20` alone, so load_run(0.2,
+                   20.9) passed the guard and then read seed 20, and a seed of 0 or -1
+                   was accepted.  It is two-sided and whole-number now.
+    label rows     features.label_rows parses each line and drops the row if its seed is
+                   above 80, before anything is computed from a row, and calls both
+                   features.check_label_seeds and port.check_seeds.  Shown firing in
+                   features.txt:575-577 and :579, and labelsig.txt:298-299.
+                   2026-11-25 wording fix: this log and the two outputs used to say the
+                   cut happens WHILE the file is read, which overstated it.  The whole
+                   file is hashed (the committed digest covers all of it) and every line
+                   is parsed; a selection-half row is parsed and thrown away, and nothing
+                   is counted, rendered, fitted or summarised from one.  The label-seed
+                   guard is two-sided and whole-number now as well.
+    So seeds 81 to 100 (selection) and 121 to 160 (measuring) are opened, counted,
+    rendered, fitted and summarised nowhere in this directory, and no replay simulation of
+    any seed is run by anything in it.
+
+  WHAT IS STILL MISSING FROM THIS DIRECTORY
+    M itself.  No policy, no candidate, no replay score, no ticket 11 Acceptance line is
+    answered here except the input half of Acceptance 6 (section 3's timings), and that
+    without a verdict.  The plan for M is not frozen by anything above; what is now known
+    is what a fit could stand on.
+
+========================================================================
+6. TWO REVIEWS OF THIS DIRECTORY, AND WHAT EACH FINDING LED TO
+========================================================================
+  Two independent reviewers re-ran all four scripts, recomputed the headline numbers with
+  their own code, fired every refusal arm themselves and audited every file the scripts
+  open.  NEITHER FOUND A SEED-LIMIT LEAK AND NEITHER FOUND A WRONG HEADLINE NUMBER: the
+  identity, the row counts, the held-out R squared, the coefficient digests, the agreement
+  table and the 3 x 3 tables all reproduced digit for digit against two independent
+  implementations.  Thirteen findings came back.  Each was reproduced here before anything
+  was changed; all four scripts were re-run after the fixes, in dependency order, and
+  every number above was re-read off the new archives.
+
+  REPRODUCED AND FIXED IN THE CODE
+  1. labelsig part 3 read "the five cells agree with the prior exactly" as "they add
+     NOTHING" and "carry no label signal".  Reproduced: 10.043 s is the majority label
+     inside all five cells, so the argmax can only answer 10.043, and the label is NOT
+     independent of the cell (chi-square 23.5 and 33.2 on 8 df on the read-out rows).
+     Fixed by adding a calibrated read-out (Brier against the fit rows' class shares) and
+     the label-by-cell cross-tab with a permutation p, and by rewriting the verdict, part
+     4's heading and section 4 of this log.  The five cells beat the prior on Brier by
+     -0.0042 (SE 0.0016) and -0.0136 (SE 0.0029); the full vector by -0.0826 and -0.1185.
+  2. features.check_fill did not cover the two one-cell optional slots, `polled_peer` and
+     `fetch_timeout_age_s`.  Reproduced: 7.0 written into either cell behind a presence
+     flag of 0 passed check_fill and rendered the identical text -- one text, two vectors.
+     Fixed by adding both slots to SLOTS, by asserting at import that every `*_present`
+     name in the layout is a SLOTS key, and by two new mutation rows.  No archived number
+     moved: `cells` always writes FILL there, so no real record was ever affected.
+  3. The two seed guards bounded only from above and truncated a fractional seed, so
+     load_run(0.2, 20.9) read seed 20 and a seed of 0 was accepted.  Fixed in both guards,
+     with three new mutation rows (21, 0, 20.9 / 81, 0, 1.5).
+  4. check_chain's ordering test accepted two decisions of one pair at one ts_ms, which
+     the (pair, ts_ms) key downstream would have merged into one.  Reproduced as absent
+     from this data (0 duplicate stamps over 6423 rows, smallest gap 1364 ms) and fixed by
+     making the test strict, with a hand-built pair shown firing on it.
+  5. Fourteen reachable refusal arms were in no mutation table while each output's heading
+     claimed every check.  All fourteen were fired here and all fourteen are now mutation
+     rows.  22 rows are new in all -- 8 of charges' 15, 5 of features' 23, 3 of
+     precheck's 17, 6 of labelsig's 18 -- because the two tightened seed guards took two
+     extra rows each and the chi-square took one.
+     Every mutation is of an input inside the process -- a hand-built chain, a copied row
+     list, a run dict, a record dict, an archived output's TEXT -- so no copy of a log or
+     of an archive is written and no machine path reaches an output.
+  6. precheck named the five-cell agreement check as one "no input can fail".  Reproduced:
+     a mutated record source makes it fire.  The sentence now says no LOG can fail it and
+     `records/cell crossed` shows it firing.
+  7. Found while fixing 5, not reported by either reviewer: the label-file refusal
+     printed the absolute path of labels.sha256.  Fixed to the
+     basename, because that message is now inside an output that must carry no machine
+     path.
+
+  REPRODUCED AND ANSWERED WITH A NUMBER RATHER THAN A CODE CHANGE
+  8. rho enters the read-out rows' targets from all 20 seeds (the task's own definition of
+     the target).  Refitting with rho from each fold's fit rows alone moves no held-out R
+     squared by more than 0.0022 (precheck.txt:163-175).  The declaration now carries that
+     measurement instead of part 2's spread standing in for it.
+  9. "2.9 SE" / "3.9 SE" carried no degrees of freedom for a ten-cluster bootstrap.  The
+     cluster count is now beside the ratio and the per-seed paired differences, their SE,
+     a t on 9 df and the count of positive seeds are printed.  The verdict survives:
+     t 2.82 (8 of 10 seeds positive) and t 3.94 (9 of 10).
+ 10. "THE LANGUAGE MODEL IS NOT AHEAD OF A CLOSED-FORM LINEAR FIT" rested on 12 rows and
+     6 rows with no test.  ../23/tune.txt archives no per-row answers, only per-epoch
+     answer counts, so a paired comparison is IMPOSSIBLE from the archive; the heading is
+     reworded to what the numbers carry.
+ 11. Two counted mutations (`digest lines differ`, `permuted control`) exercise only a
+     comparator and a bar.  Both are honest tests of those two functions and both stay;
+     the output now says so and points at the real-input line that carries each part.
+ 12. features.label_rows parses the whole label file before the seed cut.  Nothing is
+     computed from a selection-half row and the committed digest needs every byte, so the
+     code is unchanged; the three sentences that said the cut happens WHILE the file is
+     read are now exact (section 5 above, features.txt:9-15, labelsig.txt:19-24).
+
+  NOT A DEFECT IN ANYTHING ARCHIVED HERE
+ 13. Two findings, one per reviewer: both found stale or wrong details in the two REPORT
+     bodies the authors
+     wrote for the main session (features.py and charges.py line counts, which field moves
+     on 9 rows, the omission of o2_missing, the +0.03 s / +0.13 s period-length split, the
+     timing loop accumulating across eight seeds rather than stopping at the first, the
+     two-decimal match against res_1.md, three line pointers off by one or two, and the
+     p 0.4 period ranges).  Every one of those facts is right in the archives and in this
+     log; nothing in E changed for them.
+
+  AFTER THE FIXES
+    byte identity      charges.txt, features.txt and labelsig.txt are byte identical on a
+                       second run (cmp, no output).  precheck.txt is identical through
+                       line 400, the timing marker, and differs at lines 414, 415 and 416
+                       and nowhere else.
+    mutation counts    15 of 15 (charges), 23 of 23 (features), 17 of 17 (precheck) and
+                       18 of 18 (labelsig) mutations produce a failure, and no check fired
+                       on real input in any of the four.
+    the headline table precheck.txt:149-155 is unchanged to the printed digit, and so are
+                       the identity, the row counts, the agreement table, the coefficient
+                       digests and every count in sections 1 to 4 except the mutation
+                       counts and the timings.
+    lint and tree      "All checks passed!"; no __pycache__, *.pyc or .ruff_cache in the
+                       worktree; git status --short still shows only the untracked
+                       evidence/24 directory; nothing written in either store.
+
+log written 2026-11-25 01:37 JST (read from `date`); the four scripts were written
+between 00:12 and 00:51 and their archives were rewritten by the post-fix run at 01:28
+and 01:29 the same night (the files' own mtimes), on the local machine, with no card and
+no network.

@@ -1,0 +1,421 @@
+
+==============================================================================
+0  WHAT IS READ, AND WHAT ONE ROW IS
+==============================================================================
+stage            s11a, cells p 0.2 and p 0.4
+seeds            1 to 20, 40 runs; this workflow reads no other emulator seed
+seed guards      charges.load_run refuses an emulator seed above 20 and
+                 port.check_seeds refuses one above 100; part 6 shows both firing
+files per run    debug/node_dirs/h*/semindex/events.jsonl, and nothing else
+not read here    no label row, no run meta.json or results.json, and no replay
+                 simulation of any kind
+
+one row          = one OWNED decision period of charges.py
+  vec             the feature vector of the decision's own record, 261 cells,
+                  name list sha256 16c2aa02c5738abcb819fa4503067eeaff3a82a3a0fa2020cca6ae29d79aafce
+  arm             action.interval_s, one of [3.695, 6.0, 10.043]
+  tau             the period length in seconds
+  c               the period cost in ms of SCORE, charges.py's cost_ms / N
+  cell            the five-cell scalar state, charges.cell: ['ans_empty', 'ans_content', 'to1', 'to2', 'to3']
+  next            the next decision of the same pair, as its position in that
+                  pair's chain of owned periods; the pair's last owned period
+                  has none, because the decision after it is the pair's last and
+                  owns no period itself
+
+every run's identity and placement asserted by charges.py before the table was
+built, and the table's own cost re-closed against the scorer afterwards
+
+==============================================================================
+1  THE DATA AS A SEMI-MARKOV DECISION TABLE
+==============================================================================
+Every owned period of every run, with the decision's input at its left edge.  The
+decisions NOT in the table are the 8 pairs' last decisions of each run, one per
+pair per run: they own no period, so there is no tau and no c to put on them.
+
+  p     decisions  owned rows  not a row  seconds   cost score ms
+  0.2         3214        3054        160    20051         793425
+  0.4         3209        3049        160    20125         996493
+
+  rows per interval and per cell
+  p     interval     ans_empty ans_content     to1     to2     to3      all
+  0.2          3.695       572         302     112      57      11     1054
+  0.2          6.000       513         308     120      65      19     1025
+  0.2         10.043       508         267     115      62      23      975
+  0.2   all               1593         877     347     184      53     3054
+  0.4          3.695       453         209     210     112      63     1047
+  0.4          6.000       422         221     200     108      71     1022
+  0.4         10.043       412         215     187     104      62      980
+  0.4   all               1287         645     597     324     196     3049
+
+  the next decision of the pair, by the cell the decision itself was taken in.
+  A row whose next decision is the pair's LAST is counted under `last`: it has a
+  next decision, but that decision owns no period, so a multi-period target
+  stops there.
+  p     own cell     ans_empty ans_content     to1     to2     to3     last
+  0.2   ans_empty          973         293     195       0       0      132
+  0.2   ans_content        360         364     152       0       0        1
+  0.2   to1                 59          90       0     184       0       14
+  0.2   to2                 33          98       0       0      43       10
+  0.2   to3                  8          32       0       0      10        3
+  0.4   ans_empty          696         129     373       0       0       89
+  0.4   ans_content        234         181     224       0       0        6
+  0.4   to1                104         136       0     324       0       33
+  0.4   to2                 68         121       0       0     116       19
+  0.4   to3                 25          78       0       0      80       13
+
+  how many of the K periods a target would sum really exist, per K
+  p       K       rows       full  truncated
+  0.2     1       3054       3054          0
+  0.2     4       3054       2574        480
+  0.2     8       3054       1934       1120
+  0.4     1       3049       3049          0
+  0.4     4       3049       2569        480
+  0.4     8       3049       1929       1120
+
+==============================================================================
+2  THE LOGGING POLICY'S OWN COST PER SECOND
+==============================================================================
+rho = sum(c) / sum(tau) over the owned periods, in score ms per second: what one
+second of this stage cost under the policy that drew the three intervals
+uniformly.  The pooled ratio is the quantity; the mean of the 20 per-run ratios
+and its standard error are beside it, so the spread between runs is visible.
+
+  p     pooled rho   mean of per-run rho   SE over 20 runs      min      max
+  0.2       39.5698               39.5721           0.8402  35.3424  47.7660
+  0.4       49.5153               49.5360           1.5872  37.3751  62.4602
+
+  the one-period target sums to 0 over each cell's own rows, asserted to 1e-6 of
+  the summed absolute cost, which is what says the target is centred on rho
+
+Within each chosen interval.  THIS IS NOT A CAUSAL EFFECT OF THE INTERVAL.  The
+logging policy drew the interval before anything about the period was known, so
+the three row sets are three different mixtures of the five cells and of clock
+position, and the difference between their rates mixes the cost of a cell with
+the cost of an interval.  charges.py part 6 carries the same three pooled numbers
+and says the same thing; they are recomputed here, not copied.
+
+  p     interval   rows   pooled rho   mean per-run rho   SE over runs
+  0.2      3.695   1054      40.0586            40.2772         1.2547
+  0.2      6.000   1025      38.4132            38.8230         1.5505
+  0.2     10.043    975      40.1021            40.2137         1.6402
+  0.4      3.695   1047      49.0863            49.4528         1.6880
+  0.4      6.000   1022      46.9753            47.2516         1.7925
+  0.4     10.043    980      51.2642            51.5483         2.6221
+
+==============================================================================
+3  HOW MUCH OF WHAT FOLLOWS A DECISION THE INPUTS EXPLAIN
+==============================================================================
+Leave-seeds-out: 5 folds of 4 seeds, fold f holding seeds 4f+1 to 4f+4, so no
+decision of a run is ever in the fit and the read-out at once.  Targets, all in
+score ms: y(K) = the sum of c - rho * tau over this period and the next K-1 of
+the same pair, truncated at the end of the pair's chain.  K = 1 is the one-period
+target.  rho is the cell's pooled rho from part 2.
+
+Three predictors, each fitted on the four fit folds and read out on the fifth:
+  cell mean    the mean of y over the fit rows of the same (cell, interval): 15
+               numbers, the most the ADR 0004 scalars plus the interval can say
+  ridge full   closed-form ridge, penalty 10.0 on standardised features, a
+               separate coefficient set per interval, on all 261 cells
+  ridge cells  the same arithmetic on the five cell indicators alone
+Held-out R squared is 1 - SSres/SStot against the read-out rows' own mean, and
+the SE is over the 5 folds.  `fallbacks` counts read-out rows whose (cell,
+interval) no fit fold carried, which take the fit rows' grand mean instead.
+
+  p      K predictor       R2 mean         SE  folds  fallbacks
+  0.2    1 cell mean        0.2113     0.0130      5          0
+  0.2    1 ridge full       0.5008     0.0148      5           
+  0.2    1 ridge cells      0.2117     0.0126      5           
+  0.2    4 cell mean        0.0515     0.0091      5          0
+  0.2    4 ridge full       0.3835     0.0265      5           
+  0.2    4 ridge cells      0.0517     0.0090      5           
+  0.2    8 cell mean        0.0137     0.0070      5          0
+  0.2    8 ridge full       0.3929     0.0302      5           
+  0.2    8 ridge cells      0.0138     0.0069      5           
+  0.4    1 cell mean        0.1831     0.0357      5          0
+  0.4    1 ridge full       0.4717     0.0173      5           
+  0.4    1 ridge cells      0.1833     0.0352      5           
+  0.4    4 cell mean        0.0263     0.0204      5          0
+  0.4    4 ridge full       0.3126     0.0195      5           
+  0.4    4 ridge cells      0.0264     0.0202      5           
+  0.4    8 cell mean       -0.0117     0.0308      5          0
+  0.4    8 ridge full       0.2428     0.0570      5           
+  0.4    8 ridge cells     -0.0116     0.0307      5           
+
+The comparison a plan rests on, stated plainly: the full vector against the five
+cells, as the PAIRED difference of the two held-out R squared values inside each
+fold, so the fold-to-fold level cancels.  A positive difference means the full
+vector explains more.
+
+  p      K      R2 full  R2 five cells   paired diff        SE diff > 2 SE
+  0.2    1       0.5008         0.2117        0.2891    0.0117 yes
+  0.2    4       0.3835         0.0517        0.3317    0.0259 yes
+  0.2    8       0.3929         0.0138        0.3791    0.0277 yes
+  0.4    1       0.4717         0.1833        0.2884    0.0226 yes
+  0.4    4       0.3126         0.0264        0.2862    0.0218 yes
+  0.4    8       0.2428        -0.0116        0.2544    0.0327 yes
+
+THE ONE SCALAR OF OUT-OF-FOLD INFORMATION IN THE TARGET, AS A NUMBER.  rho is the
+cell's pooled rate over all 20 seeds, which is the target's own definition, so a
+read-out row's target carries a rate estimated partly on its own seed.  The two
+ridges below are refitted with rho recomputed on each fold's FIT rows alone, which
+is what that reading costs rather than part 2's spread standing in for it.
+
+  p      K predictor       pooled rho    fit-fold rho      move
+  0.2    1 ridge full          0.5008          0.5008    0.0000
+  0.2    1 ridge cells         0.2117          0.2118    0.0001
+  0.2    4 ridge full          0.3835          0.3834   -0.0001
+  0.2    4 ridge cells         0.0517          0.0518    0.0000
+  0.2    8 ridge full          0.3929          0.3927   -0.0002
+  0.2    8 ridge cells         0.0138          0.0138    0.0000
+  0.4    1 ridge full          0.4717          0.4723    0.0006
+  0.4    1 ridge cells         0.1833          0.1842    0.0009
+  0.4    4 ridge full          0.3126          0.3121   -0.0005
+  0.4    4 ridge cells         0.0264          0.0267    0.0003
+  0.4    8 ridge full          0.2428          0.2406   -0.0022
+  0.4    8 ridge cells        -0.0116         -0.0116    0.0000
+
+WHAT THAT DIFFERENCE IS NOT.  Three things it mixes in, named because the size of
+the jump invites the opposite reading:
+- The vector carries the backlog (`o*_hi`, `o*_missing`), the age of the oldest
+  exchange it remembers and the pair's own exchange count, all of which move
+  through a run, so part of what it explains is WHERE IN THE RUN the decision
+  sits and how much work is outstanding, not what to do.  The coefficient table
+  below says which cells it really leans on.  The table before it repeats the two
+  ridges over the read-out rows whose whole
+  K-period continuation exists, which removes the share that comes from
+  predicting the truncation.
+- Explaining what followed is not the effect of the interval.  Every continuation
+  in these rows is the logging policy's.
+- The cost a decision causes at the DOWNSTREAM pair is charged to that pair and is
+  in no target here (charges.py part 9).
+
+  R squared over the read-out rows whose whole K-period continuation exists
+  p      K predictor        rows         R2         SE
+  0.2    4 ridge full       2574     0.3624     0.0289
+  0.2    4 ridge cells      2574     0.0536     0.0068
+  0.2    8 ridge full       1934     0.2388     0.0349
+  0.2    8 ridge cells      1934    -0.0761     0.0091
+  0.4    4 ridge full       2569     0.3016     0.0192
+  0.4    4 ridge cells      2569     0.0425     0.0169
+  0.4    8 ridge full       1929     0.1261     0.0685
+  0.4    8 ridge cells      1929    -0.0276     0.0345
+
+The cells the full fit leans on: the six largest standardised coefficients of the
+one-period fit of the fold that holds out seeds 1 to 4, per interval.  A
+standardised coefficient is the score ms the prediction moves per one fit-fold
+standard deviation of that cell, so the names say WHICH inputs carry the
+difference above and a reader can judge whether they are state or clock.
+  p 0.2    3.695 s  o2_hi -73.7, o1_present -38.0, x8_age_s -34.7, o2_p1_present +24.6, o1_p1_peer +22.8, o2_p1_hi -21.8
+  p 0.2    6.000 s  o2_hi -141.7, o1_hi +70.4, x8_age_s -65.2, x7_age_s -60.5, o1_p1_present +58.6, consecutive_poll_timeouts +54.7
+  p 0.2   10.043 s  o2_hi -205.3, o1_hi +174.5, x8_age_s -141.5, o2_p1_hi -92.5, o2_p1_notified_max -92.5, x2_waited_s +87.1
+  p 0.4    3.695 s  o2_hi -69.0, o1_present -50.8, peers_known +40.5, o1_p1_present +39.2, x7_waited_s +31.1, x8_present +31.1
+  p 0.4    6.000 s  o2_hi -140.8, consecutive_poll_timeouts +103.4, o1_p1_present +92.2, polled_peer_present -90.0, peers_known +73.6, x2_age_s +62.8
+  p 0.4   10.043 s  o2_hi -578.8, o1_p1_peer +193.8, x8_present +189.6, polled_peer_present -163.4, o1_present -151.1, x4_interval_s +146.9
+
+==============================================================================
+4  THE SAME QUESTION AS A RANKING, WHICH IS ALL A DECIDER NEEDS
+==============================================================================
+A decider does not need the cost of an interval, only the ORDER of the three.  So:
+on the read-out rows, give the ridge all three intervals' predictions of the
+one-period target and take its argmin.  The logged interval happens to equal that
+argmin on some rows; compare the realised y of THOSE rows with the realised y of
+all read-out rows.  y is a cost, so a negative difference is the direction a
+decider would want.
+
+WHAT THIS IS.  A one-period, logged-policy-continuation reading.  It says what
+followed the subset of logged decisions the predictor would have agreed with,
+while every decision after them was still drawn uniformly.  It says NOTHING about
+the replay score of a policy that took the argmin at every decision: that
+policy's own continuation is itself, and no replay is run here.  The standard
+error is clustered on runs -- the 20 per-run differences, SE = sd / sqrt(20) --
+because two decisions of one run share a record stream and are not independent.
+
+The mean of y over ALL read-out rows of a cell is 0 to rounding, because rho is
+that cell's own rate and y is centred on it (part 2), so the `all` column below
+is a computed 0 and not a typed one.
+
+  p     matched rows   share   mean y matched   mean y all   difference      SE
+  0.2            1046  0.3425           -81.72         0.00       -82.45    9.57
+  0.4            1016  0.3332          -118.56         0.00      -117.39    9.71
+
+The control that says whether the ORDER carries anything: the same realised y by
+the RANK the ridge gave the interval the log happened to draw.  Rank 0 is the
+subset above.
+
+WHY THIS SEPARATES THE INTERVAL FROM THE ROW.  The logging policy drew the
+interval uniformly and independently of the state, so a row falls into rank 0,
+1 or 2 with probability one third whatever its features are: the three rank
+groups are three samples of the SAME state distribution, which is why their
+counts come out near equal below.  A difference in realised y between rank 0 and
+rank 2 is therefore the interval and not the row.  Had the predictor only been
+finding cheap ROWS, all three ranks would hold the same mixture of cheap and dear
+rows and the three means would agree.
+
+  p     rank of the logged interval   rows   mean y   per-run diff vs all    SE
+  0.2   0 (the predicted cheapest)      1046   -81.72                -82.45  9.57
+  0.2   1 (the middle)                   974    -6.17                 -4.35 11.22
+  0.2   2 (the predicted dearest)       1034    88.47                 91.57 12.61
+  0.4   0 (the predicted cheapest)      1016  -118.56               -117.39  9.71
+  0.4   1 (the middle)                   994   -10.99                -10.34 12.94
+  0.4   2 (the predicted dearest)       1039   126.46                127.92 14.61
+
+  which interval the ridge calls cheapest, and which the log drew
+  p     interval     predicted     logged    matched
+  0.2        3.695         899       1054        309
+  0.2        6.000         616       1025        229
+  0.2       10.043        1539        975        508
+  0.4        3.695         925       1047        303
+  0.4        6.000         589       1022        208
+  0.4       10.043        1535        980        505
+
+  The argmin returns one of the three intervals on every row above and nothing
+  else, which the `predicted` column adding to the row count is what shows.
+
+==============================================================================
+5  THE PERMUTED-TARGET CONTROL
+==============================================================================
+The same leave-seeds-out fit with the FIT folds' targets permuted among their own
+rows, so every input keeps its value and loses its target.  The permutation uses
+numpy.random.default_rng(20261125), a fixed seed, so this part reproduces.
+
+WHAT IT SHOWS: that part 3's R squared is not an artefact of the arithmetic.  The
+only thing the permutation removes is the link between a fit row's inputs and its
+own target, and the prediction then explains nothing held out, so no part of part
+3's number came from the read-out targets reaching the fit through the code.  The
+negative value is also a reading of how much a 261-feature ridge over-fits four
+folds of these rows when there is nothing to find.
+
+WHAT IT DOES NOT SHOW: that no cell of the vector carries a leaked future value.
+Such a cell would lose its link under the permutation too, so a legitimate input
+and a leaked one collapse alike here.  What rules a leak out is structural:
+observe.observation builds the record from the state, the resolution and the
+history as they stand at the decision's own ts_ms and from nothing else, and part
+3's coefficient table names the cells the fit leans on.  Nor does it detect a
+read-out row left in the fit: that row would carry a PERMUTED target there and
+could not be memorised.  check_held_out is what detects that, and part 6 shows it
+firing.
+
+  p     predictor       R2 mean         SE          bar
+  0.2   ridge full      -0.0698     0.0100         0.05
+  0.2   ridge cells     -0.0141     0.0059         0.05
+  0.4   ridge full      -0.0755     0.0173         0.05
+  0.4   ridge cells     -0.0088     0.0073         0.05
+
+==============================================================================
+6  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+==============================================================================
+The mutation is of the INPUT, inside this process: a run, a record source, a
+table, a fold list or an R squared made wrong on purpose.  A check that cannot be
+made to fail by any input is named as such at the end.
+
+  records/source too short   FIRES: h0: 17 reschedule rows against 16 records from the record source
+  records/name crossed       FIRES: h1: a record of pair h0 was zipped onto a row of pair h2
+  records/no row at the start FIRES: a mutated record source: the period of h0->h1 starting 0.573 s into the run has no reschedule row at its own start instant
+  records/interval crossed   FIRES: a mutated record source: h0->h1 chose 1.234 s and its period says 10.043 s
+  records/cell crossed       FIRES: a mutated record source: h0->h1 is in cell to2 by the row and ans_empty by the period
+  owned count                FIRES: one row short: the table has 6102 rows and the runs hold 6103 owned periods
+  cost closes                FIRES: one period's cost moved: the table holds 1793660.399251 score ms and the scorer charges 1793659.399251 (difference 1.000000)
+  y sums to zero             FIRES: a rho 0.1 % off: the one-period targets sum to -793.424979 score ms, not 0
+  folds partition            FIRES: two folds sharing a seed: 2 fold(s) covering 3 seed(s) of 20, 17 missing ([4, 5, 6, 7]), 0 not a seed ([]), 1 duplicated
+  held out                   FIRES: the fit read out on itself: 20 seed(s) are in the fit and in the read-out, e.g. [1, 2, 3, 4]
+  permuted control           FIRES: the real R squared handed to the permuted control: a fit on permuted targets explains 0.5008 of the held-out variance, over the bar 0.05, so part 3's R squared is partly an artefact of the arithmetic and not of the inputs
+  rho over no seconds        FIRES: rho over 3 row(s) whose seconds sum to 0.000000
+  R2 of a constant target    FIRES: the 5 read-out targets have no variance
+  per-arm fit, no fit row    FIRES: no fit row chose 6.000 s, so its coefficients cannot exist
+  digest lines differ        FIRES: two fits that disagree: 1 of 1 lines differ, first 'p0.2 aaa 1' against 'p0.2 bbb 1'
+  log seeds > 20             FIRES: load_run: an emulator seed read by this workflow is a whole number 1 to 20; refused [21.0]
+  port.check_seeds > 100     FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+
+17 of 17 mutations produced a failure
+
+What two of those rows do and do not cover, said rather than left to the count:
+- `digest lines differ` hands check_same_digests two literal strings.  It tests
+  the comparator, not that part 7's fit reproduces; what says that is part 7's
+  own line, where two child processes fit the real data.
+- `permuted control` hands check_permuted the REAL R squared against the bar.  It
+  tests the bar, not that a permuted fit collapses; what says that is part 5's
+  own line, where the permuted target is fitted.
+
+One check no LOG can fail, named rather than left out:
+- that the record source yields one record per reschedule row and the row's own
+  neighbour.  Both filters read the same two fields of the same rows, so no log
+  can separate them; what they guard against is a change to
+  observe.from_logged_rows, which is why the source is an argument and the two
+  mutations above are sources and not logs.
+  The same holds for the five-cell agreement between a row and its period: both
+  sides call `charges.cell`, so no LOG can make them differ.  2026-11-25: that
+  was first written as `no input can make them differ`, which is wrong -- a
+  mutated RECORD SOURCE can, and `records/cell crossed` above is it firing.
+
+==============================================================================
+7  REPRODUCIBILITY OF THE CLOSED-FORM FIT, IN TWO PROCESSES
+==============================================================================
+The fit is the one-period ridge on the full vector, one coefficient set per
+interval, over every owned period of the cell and with no folds, so one command
+reproduces it.  The bytes hashed are the three coefficient arrays' own, in the
+order [3.695, 6.0, 10.043].  Two fresh interpreters are started, each reads the
+40 runs again and solves again, and their lines are compared line by line.
+
+  process 1    p0.2 8ca3d05ca53f852adf6be081f18514f40e6af59c55da58ad1873c5dce65b8f0b 6288
+  process 1    p0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283 6288
+  process 2    p0.2 8ca3d05ca53f852adf6be081f18514f40e6af59c55da58ad1873c5dce65b8f0b 6288
+  process 2    p0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283 6288
+  2 of 2 lines identical
+  this process p0.2 8ca3d05ca53f852adf6be081f18514f40e6af59c55da58ad1873c5dce65b8f0b 6288
+  this process p0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283 6288
+  all three processes agree: True
+  (a difference here would say the solver is not deterministic on this machine,
+  and every number in this file would then be one draw of it)
+
+==============================================================================
+8  WHAT THIS DOES NOT SHOW
+==============================================================================
+- No policy and no score.  Nothing here is a decider, no replay simulation is
+  run, and the per-decision agreement between the emulator and the replay is
+  recorded as failed in evidence/13.  Every number is a property of the logs.
+- Part 3's R squared is explanation, not effect.  The continuation after every
+  row is the logging policy's, and a decision's cost at the downstream pair is
+  charged to that pair and appears in no target here.
+- rho is estimated on all 20 seeds of its cell and then used in the target of the
+  read-out rows too, so one scalar of out-of-fold information is in those
+  targets.  Part 3's fit-fold-rho table is that bound as a measurement: refitting
+  with rho taken from each fold's fit rows alone moves no held-out R squared in
+  the table by more than 0.0022.
+- The penalty 10.0 is fixed and not tuned.  A penalty chosen against these folds
+  would make them part of the fit; nothing here says it is the best penalty.
+- Part 4 is one period deep and reads the logged policy's own continuation.  It
+  is not a replay score and it is not any policy's value.
+- Nothing about an interval finer than the three, which the logs do not carry,
+  and nothing about any seed above 20 or about the label rows.
+- The 320 decisions that own no period (one per pair per run) are in no table
+  above; their cost is inside part 1's closing identity and nowhere else.
+- No standard error on any pooled rate: part 2's SE is over runs and part 4's is
+  clustered on runs, and neither is a confidence statement about a policy.
+
+no check fired on real input; the failures in part 6 are the mutations
+
+==============================================================================
+9  TIME ON THIS MACHINE
+==============================================================================
+>>> TIMINGS BELOW THIS LINE DO NOT REPRODUCE BYTE FOR BYTE <<<
+Acceptance 6's input path, in three parts timed separately, each over 1200 DISTINCT
+decisions of the logs, named below.  Medians and p99 in ms, printed beside the
+100 ms tick the node's synchronous round runs on.  NO VERDICT: this is
+an input to the step that puts a decider in the emulator, and the three parts are
+timed apart because a sum quoted as one of them is not comparable with anything
+on record.
+
+This part does not reproduce byte for byte, and every line of it is below the
+marker above, so a second run of this script differs from the first only here.
+
+  the 1200 decisions come from p 0.2, seed(s) [1, 2, 3, 4, 5, 6, 7, 8], in the order the logs hold them
+
+  part                     calls  median ms     p99 ms     max ms   the tick
+  observe.observation       1200     0.0184     0.0260     0.0752      100.0
+  features.vector           1200     0.0713     0.0819     0.1089      100.0
+  3 values + argmin         1200     0.0064     0.0118     0.0995      100.0
+
+  the argmin returned 3 distinct value(s) over the 1200 calls, every one of them
+  inside [3.695, 6.0, 10.043]: True
+
+end of precheck.py
