@@ -2144,3 +2144,623 @@ THE CHECKS, AS THEY PRINTED
     ROOT/eval_dry3.log are section 18's resume demonstrations, rewritten by this
     section's own.  Nothing under ROOT that this step did not create was deleted or
     altered, no other account's process was touched, and the card is free.
+
+========================================================================
+20. THE SECOND TUNING RUN, AND EVERY DRY NUMBER RE-MEASURED ON IT  2245 s
+========================================================================
+  CHANGED FILES: tune.py (amendment A3's four places), eval.py (amendment A1), the
+  seven archives below, and this log.  NOT CHANGED: spec.md (frozen; A1 and A3 are
+  its own amendments and this section carries them out), decider.py, ana.py,
+  agree.py, latency.py.
+  RENAMED AND KEPT: E/tune.txt -> E/tune_run1.txt, ROOT/adapters ->
+  ROOT/adapters-run1, ROOT/tune.{log,err,t0} -> ROOT/tune_run1.{log,err,t0}.
+  Nothing of the first run was deleted.
+  RE-RUN AND RE-ARCHIVED: tune.py once, and all four dry runs, because the adapters
+  they were measured on were rewritten.
+  STILL NOT RUN: the real evaluation.  No seed above 80 was simulated, no model was
+  read out on a label row of seeds 81 to 100, and eval.csv, eval.txt, ana.txt,
+  agree.txt and latency.txt exist under neither machine's tree.
+
+  WHY THE SECOND RUN, in two sentences, both of them spec.md's amendment A3: the
+  first run's tune.txt names the digest of no code file and decider.py was edited
+  after it, so the two adapters ticket 12 would take were tied to no code state at
+  all.  A re-run under the final code is the only repair of that, and this was the
+  last moment it could be made with no score on seeds 81 to 100 in hand.
+  THE SECOND RUN'S ADAPTERS ARE THE CANDIDATES, whatever its numbers are.  That was
+  fixed before the run started (A3 and the workflow's brief), and NOTHING BELOW
+  CHOSE ANYTHING: the two runs are compared here only to say whether the recipe
+  reproduces on this host, and it does not.
+
+  ------------------------------------------------------------------
+  20.1  WHAT CHANGED IN THE TWO SCRIPTS
+  ------------------------------------------------------------------
+  tune.py, +156 -38 lines in 16 hunks, sha256 e01f84d1... -> 8b160f37...  The four
+  places amendment A3 names, and nothing that reaches a weight: the order and the
+  values of every operation that touches the model, the optimiser, the data order
+  and the random streams are the first run's, which the first training loss below
+  confirms to four decimals.
+    a) part 0 prints the sha256 of tune.py and of the seven modules of
+       decider.CODE_FILES, the combined digest and the list of what the digests do
+       not cover, through decider.code_digests and decider.check_digest_cover --
+       the same block and the same helper the other four scripts already print, so
+       there is no second digest helper.
+    b) tune.py's own check_roles is GONE and decider.check_roles is called with
+       tune.py's own roles and a new ROLE_RANGE literal.  WHAT THAT DOES AND DOES
+       NOT DO: the third copy of the check BODY is gone, which is what 19.2 a names;
+       the ranges themselves stay in tune.py as ROLE_RANGE, exactly as eval.py,
+       agree.py and latency.py keep their own `WANT`, because
+       decider.check_roles takes `want` from the caller by design (a script's roles
+       are not the same set in its dry mode as in its real one) and only the
+       measuring range 121 to 160 is written once, inside the shared function.
+       ana.py's own copy keeps its own stated reason.  Both messages and both
+       mutations are unchanged, so the archive's part 5 lines for roles/range and
+       roles/measuring read as before.
+    c) the weight decay is READ off the built optimiser -- OPT.defaults plus every
+       OPT.param_groups entry -- printed, and checked against the recipe's new
+       WEIGHT_DECAY constant by check_weight_decay, which stops the run unless it
+       is 1e-2.  It is read before the first step, so a refusal reaches no weight.
+       part 0's typed "(weight decay 1e-2)" is replaced by a pointer to that
+       reading.  Mutation: weight_decay, on [1e-2, 0.0].
+    d) held_out now returns the per-row held-out cross-entropy beside the mean, and
+       after the kept epoch is chosen the paired difference between each other
+       epoch and the kept one is printed with its standard error and their ratio,
+       plus the unpaired standard error of the kept epoch's own mean.  The
+       arithmetic is one function, paired_se, with two refusals of its own
+       (mutations paired/rows lost and paired/one row) and a hand-checkable
+       demonstration.  THE MEAN IS STILL TAKEN BY THE SAME SINGLE CALL: the per-row
+       vector is a second reduction over the same two tensors and the mean is not
+       re-derived from it, because a sum over 1425 float32 values in another order
+       need not give the same last bits and that mean is what the keep rule, the
+       reload check and agree.py's cross-check all compare.  No extra forward pass:
+       both reductions read logits the function had already collected.
+    THE KEEP RULE IS UNTOUCHED and the new numbers are read by nothing.  The output
+    says so where it prints them.
+    NO PARSER CHANGE WAS NEEDED.  decider.kept_from keys on the "KEPT ", the
+    "cross-entropy ... agreement", the repeat-check and the candidate-heading lines;
+    the new block opens none of those, so every line format it parses is intact and
+    the three tune.txt mutations of decider.self_check still fire unchanged.
+    tune.py's own mutation count is therefore 13 -> 16.
+
+  eval.py, +15 -1 lines in 2 hunks, sha256 077690db... -> 629c4f09...  Amendment A1
+  and nothing else: `_SEAM_SEED = SEEDS[0]` became `_SEAM_SEED = DRY_SEEDS[0]`, so
+  the seam check reads seed 1 in BOTH modes, with a dated comment giving the reason
+  (in a real run SEEDS[0] is 81, and the check would have rendered one label row of
+  the selection half, and re-run that seed's roll-in, before the run's first score,
+  which is what spec.md's sentence about the one early read of the selection half is
+  measured against).  Five printed lines were added that name the seed used and that
+  reason.  In the dry mode SEEDS[0] is already 1, so no number of eval_dry.txt moved
+  because of this change.
+  WHAT A1 DOES NOT MOVE, AND A READER OF THOSE FIVE LINES MUST NOT CONCLUDE
+  OTHERWISE (added 2026-11-24, section 21 finding 2): eval.py's part 7 still takes
+  SEEDS[0] -- 81 in a real run -- at its lines 1241 and 1249-1252, where
+  LBL.run_dict(MAIN_P, SEEDS[0]) builds that seed's outage timeline and record
+  schedule and PORT.sim starts one engine on it that the port refuses at its first
+  decision.  So in a real run eval.py DOES re-run seed 81's run_dict and one refused
+  simulation -- not once but after EVERY score of parts 4 and 5 is already written,
+  which is why it is outside the scope A1 and spec.md A2 are about ("before any
+  score") and why A2's list stays two items long as written.  It is left alone on
+  purpose: moving part 7 to a tuning seed would change which input the mutation
+  demonstrates, and part 7 reaches no score of any kind.
+
+  ------------------------------------------------------------------
+  20.2  THE COMMANDS, IN THE ORDER THEY RAN
+  ------------------------------------------------------------------
+  Lint and the card-free self-check first, then the preservation, then the run.
+    uvx ruff@0.17.2 check --no-cache S2/evidence/23
+                               "All checks passed!"; no __pycache__, no *.pyc and
+                               no .ruff_cache left in the worktree
+    local -I <scratch>/probe_local.py        the two new functions lifted out of
+          tune.py with `ast` (tune.py does its work at import, so it cannot be
+          imported on a machine with no card and no weights) and run on inputs a
+          reader can finish by hand.  THE HARNESS IS NOT IN THE REPOSITORY.
+                               paired_se([1,3] against [0,1]) mean 1.500000 se
+                               0.500000 ratio 3.000000; the unpaired branch on
+                               [1,2,3,4] mean 2.500000 se 0.645497; a constant
+                               difference gives se 0.000000 and ratio inf and does
+                               not divide by zero; paired/rows lost, paired/one row
+                               and weight_decay all FIRED; code_digests over tune.py
+                               printed eight lines and a combined digest; "PROBE OK"
+    ssh hpc-debian ... -I <scratch>/wd.py    three lines under a scratch directory
+          of this session's own making, because the local machine has no torch:
+          build torch.optim.AdamW([Parameter], lr=2e-4) and read the decay back.
+                               "torch 2.15.0+cu132 defaults weight_decay 0.01
+                               param groups [0.01]".  The scratch directory was
+                               REMOVED immediately afterwards
+    local -I <scratch>/selfcheck_local.py    decider.py's card-free self-check, the
+          harness of 19.5 unchanged
+                               exit 0, "all 24 mutations produced a failure",
+                               "SELF CHECK OK: True".  decider.py is unchanged by
+                               this section, so its 24 lines are 19.5's own
+    mv S2/evidence/23/tune.txt S2/evidence/23/tune_run1.txt       plain mv, no
+                               git mv, nothing staged; sha256 15fef38f... before and
+                               after, i.e. byte for byte the first run's archive
+    ssh hpc-debian 'nvidia-smi --query-compute-apps=... --format=csv,noheader'
+                               printed nothing, i.e. the card was free; 61 MiB of
+                               48 935 MiB in use by the desktop
+    ssh hpc-debian 'cd ROOT && mv adapters adapters-run1 && mv tune.log \
+        tune_run1.log && mv tune.err tune_run1.err && mv tune.t0 tune_run1.t0 \
+        && sha256sum adapters-run1/*/*'
+                               the six files of the first run, and all six equal the
+                               digests tune_run1.txt printed at its lines 151-153 and
+                               206-208: a 98f671bf..., b 64fb4984..., both configs
+                               fcc74377..., both READMEs adb9b9b0...
+    bash S2/evidence/23/push_inputs.sh                       (local, 3 s; 2 label
+                               files, 160 run inputs, 215 code files, "digests: all
+                               N files agree on both sides" for each payload)
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > tune.t0 && nohup env \
+        PYTHONDONTWRITEBYTECODE=1 STORE=ROOT/store PYTHONPATH=ROOT/repo/src \
+        HF_HUB_OFFLINE=1 ./.venv/bin/python -B \
+        repo/docs/wayfinder/semindex-stage2/evidence/23/tune.py ROOT \
+        > tune.log 2> tune.err < /dev/null & echo $!'
+                               pid 1520559, tune.t0 2026-11-23T23:27:35Z.  Waited
+                               with `while kill -0 1520559; do sleep 20; done` inside
+                               ssh, never with pgrep.  The script's own last lines
+                               "wall clock 1808.6 s (30.1 min)" and "finished
+                               2026-11-24T08:57:43+0900"; tune.err holds the four
+                               weight-loading progress bars and nothing else
+    ssh hpc-debian 'cat ROOT/tune.log' > S2/evidence/23/tune.txt
+    ssh hpc-debian 'cat ROOT/tune.log' | diff - S2/evidence/23/tune.txt
+                               diff EMPTY; sha256 of both
+                               fe7469bba120044142f88daeded2965f850b4e5e8473486df79d7bf3843ce25e
+                               377 lines
+    ssh hpc-debian 'cd ROOT && rm -rf eval-dry-parts eval-dry-tmp && \
+        date -u +%FT%TZ > evaldry.t0 && nohup env ... eval.py ROOT --dry \
+        > eval_dry.log 2> eval_dry.err < /dev/null & echo $!'
+                               pid 1521155, EXIT 1, NOTHING SCORED, stderr ending
+                               "decider.Fail: the reference read-out of seed 71 k 72:
+                               the read-out of a does not reproduce tune.txt's
+                               triple: [28.0, 28.25, 28.625] against [18.75, 18.875,
+                               19.25]".  THIS IS THE CHECK WORKING AND IT IS NOT A
+                               DEFECT OF THE SCRIPT: the host's repo copy still held
+                               the FIRST run's tune.txt, because push_inputs.sh had
+                               run before the new archive existed, so eval.py held
+                               the new adapter against the old archive's triple and
+                               refused.  See 20.5 for the sequencing this forces
+    bash S2/evidence/23/push_inputs.sh                       (local, 3 s; 216 code
+                               files now, "digests: all 216 files agree on both
+                               sides"), then `rm -rf eval-dry-parts eval-dry-tmp`
+                               again so no part file of the refused run survived
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > evaldry.t0 && nohup env \
+        PYTHONDONTWRITEBYTECODE=1 STORE=ROOT/store PYTHONPATH=ROOT/repo/src \
+        HF_HUB_OFFLINE=1 ./.venv/bin/python -B repo/.../23/eval.py ROOT --dry \
+        > eval_dry.log 2> eval_dry.err < /dev/null & echo $!'
+                               pid 1521449, exit 0, "wall clock 105.4 s (1.8 min)",
+                               "finished 2026-11-24T09:01:43+0900"; eval_dry.err
+                               EMPTY (the parent loads no weights)
+    ssh hpc-debian 'cd ROOT && env PYTHONDONTWRITEBYTECODE=1 \
+        PYTHONPATH=ROOT/repo/src ./.venv/bin/python -B repo/.../23/ana.py \
+        eval_dry.csv --dry > ana_dry.log 2> ana_dry.err'
+                               exit 0, 235 lines, no card, no model, no store
+    local  docs/.../23/ana.py docs/.../23/eval_dry.csv --dry
+                               exit 0, and `diff` against the host's output is EMPTY,
+                               sha256 574ee8b9... on both machines although the
+                               interpreters are python 3.12.13 and 3.13.5
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > agreedry.t0 && nohup env ... \
+        agree.py ROOT --dry > agree_dry.log 2> agree_dry.err < /dev/null & echo $!'
+                               pid 1521765, exit 0, "wall clock 276.0 s (4.6 min)",
+                               "finished 2026-11-24T09:06:50+0900"
+    ssh hpc-debian 'cd ROOT && date -u +%FT%TZ > latdry.t0 && env ... \
+        latency.py ROOT a --dry > latency_dry.log 2> latency_dry.err'
+                               exit 0, "wall clock 52.9 s (0.9 min)", "finished
+                               2026-11-24T09:08:01+0900"
+    ssh hpc-debian 'cat ROOT/<name>.log' > S2/evidence/23/<name>.txt, then
+    ssh hpc-debian 'cat ROOT/<name>.log' | diff - S2/evidence/23/<name>.txt
+                               diff EMPTY for all five; eval_dry.csv copied and
+                               diffed the same way.  The card was checked free by
+                               nvidia-smi immediately before each of the four
+                               launches, and by each script itself
+      tune.txt         377 lines  sha256 fe7469bba120044142f88daeded2965f850b4e5e8473486df79d7bf3843ce25e
+      eval_dry.txt     371 lines  sha256 6c539097c7f21ae76b5ee1c82f41a4dc33a65db65594fa12d740a1ef782830ed
+      eval_dry.csv      29 lines  sha256 f38fff0296a23c5fe13f8bfa72b20993eaa8d9ceac26cef31e8a33c6f6e8c923
+      ana_dry.txt      235 lines  sha256 574ee8b9ebfe61bd5a6b995441e9d3b92c3d6f89c2c672807cc19743f9d7d1b0
+      agree_dry.txt    264 lines  sha256 361663059496c8e53b376992b2a1c83d7ccd5619a207f58facccf402ea2302c0
+      latency_dry.txt  186 lines  sha256 f75108f7e7e687790420721b7eb8eb79a612e5d20fef2c6ab16636e902b5830d
+      tune_run1.txt    323 lines  sha256 15fef38f3fa625d2596ba631309bcb2f652c09307e05998fdf8dac367dea0928
+    bash S2/evidence/23/push_inputs.sh, then a full-directory sha256 comparison
+                               "digests: all 216 files agree on both sides", and
+                               `sha256sum *` over E on both machines, sorted and
+                               diffed: EQUAL FOR ALL 28 FILES.  This log was appended
+                               after that comparison, so the last push of the
+                               workflow is the one recorded in the hand-over report
+
+  ------------------------------------------------------------------
+  20.3  THE TWO RUNS SIDE BY SIDE, AND THE COMPARISON CHOSE NOTHING
+  ------------------------------------------------------------------
+  THE WEIGHT FILES ARE NOT BYTE-IDENTICAL, so by amendment A3's own wording the
+  recipe is NOT shown reproducible on this host and the differences below are the
+  run-to-run spread of the recipe at n = 2.
+    adapter_model.safetensors, 96 693 360 bytes in all four cases
+      a  run 1  98f671bf49e25ff21236f503c57a1dc0d4d8c4f23b9565b6df5a05c842c94adf
+         run 2  66c41692e534c27aa547ca7e68ce9363201e323cbcb18a2a17693cbab9c4eeb8   DIFFER
+      b  run 1  64fb49840b79a2d16ac32225c8e5e4274bce18f96799e1725d110b4b9edb8172
+         run 2  268a3dd4db8b6e8fc5452ba3aa1ce174a7990979026f82fe0e0ce896ecc32514   DIFFER
+    adapter_config.json, 1398 bytes
+      both candidates, run 1  fcc7437735d098187b778ccecf0c4c4e7b71f37f03d08aecb9778a70e1f52552
+      both candidates, run 2  4d76d6c63d6a9a20ba4018f64e11b76743645617211a8aa7f019126f305cd760  DIFFER
+      and the difference is ONLY the order of the seven names in `target_modules`:
+      peft stores that field as a set and serialises it in iteration order, which a
+      python process randomises.  Same seven names, same r, same lora_alpha, same
+      exclude_modules.  It is recorded because eval.py's model digest covers the
+      config as well as the weights, so this alone would have moved that digest.
+    README.md, 5250 bytes
+      all four files  adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0  IDENTICAL
+
+  WHERE THE TWO LOGS FIRST DIFFER IN A MEASURED NUMBER, which is what says where the
+  divergence enters: candidate b's epoch 1 training loss, FIRST step 3.9074 in both
+  runs and LAST step 0.4163 against 0.5242.  Everything printed before that is equal
+  -- the label file's sha256, all 29 row counts, the 205 matched modules, the
+  24 158 208 trainable parameters, the 410 adapter tensors, the 205 zero lora_B, the
+  11 438 rendered prompts, the 224-to-519 token range with median 473, the repeat
+  row (seed 71 k 72), and the first optimiser step's loss to four decimals.
+  WHAT THAT EQUAL FIRST LOSS DOES AND DOES NOT SHOW, because it is the one number
+  that pins where the divergence is not: it is taken before any update, when every
+  lora_B is exactly zero, so the adapter's contribution is B times A times x = 0 and
+  the value cannot depend on lora_A's draw at all.  It therefore shows the base
+  weights, the row permutation and the first forward equal between the two runs, and
+  it says NOTHING about whether the seeded lora_A draw reproduced -- no printed
+  number of either run covers that, because no digest of the untuned adapter is
+  printed and the in-memory copy the change check uses is never hashed.  The first
+  losses of epochs 2 and 3 do differ (b 0.8273 against 0.8202 and 0.6487 against
+  0.4898), which is what divergence inside epoch 1 looks like at the next epoch's
+  first step.
+  So what moved is the accumulation over 252 and 626 training steps, and the likely
+  source is kernel-level nondeterminism in the training step.  THIS RUN DID NOT
+  ISOLATE IT.  What was checked rather than assumed: `grep -n
+  "deterministic|CUBLAS|cudnn|benchmark" tune.py prefill.py decider.py` returns
+  nothing and CUBLAS_WORKSPACE_CONFIG is empty in the host's environment, so neither
+  run asked torch for a deterministic kernel or pinned a cublas workspace.  That is
+  the recipe as frozen and not a defect introduced here.
+
+  THE PER-EPOCH TABLES, run 1 above run 2 for each epoch (training loss
+  first/last/mean, held-out cross-entropy, held-out agreement, ties, answers
+  short/mid/long):
+    candidate b, 568 held-out rows, baseline always 10.043 s = 0.6831
+      1  r1  3.9074 0.4163 0.7903   0.643996  412/568 0.7254   6  75/6/487
+         r2  3.9074 0.5242 0.7935   0.667593  409/568 0.7201  13  86/7/475
+      2  r1  0.8273 0.3560 0.6680   0.789407  389/568 0.6849   0   1/0/567
+         r2  0.8202 0.4356 0.6736   0.801217  395/568 0.6954  12  18/0/550
+      3  r1  0.6487 0.3991 0.6400   0.622174  408/568 0.7183  18  148/0/420   <- kept
+         r2  0.4898 0.4258 0.6504   0.638168  406/568 0.7148  18  115/0/453   <- kept
+    candidate a, 1425 held-out rows, baseline always 10.043 s = 0.5102
+      1  r1  5.9417 0.9632 0.9970   0.898804  725/1425 0.5088  108   28/84/1313
+         r2  5.9417 0.8958 0.9686   0.905865  740/1425 0.5193   43   63/0/1362
+      2  r1  0.8058 1.0112 0.9200   0.895778  747/1425 0.5242   45  802/0/623
+         r2  0.7947 0.9955 0.9097   0.888765  757/1425 0.5312  298   82/225/1118  <- kept
+      3  r1  1.0554 0.6599 0.9072   0.893928  777/1425 0.5453  197  206/145/1074 <- kept
+         r2  1.0568 0.6954 0.9010   0.890638  743/1425 0.5214  130   50/80/1295
+    THE KEPT EPOCHS: b epoch 3 in both runs; a epoch 3 in run 1 and EPOCH 2 in run 2.
+    The rule is the same rule and it is untouched; the three cross-entropies it was
+    handed are 0.898804 / 0.895778 / 0.893928 in run 1 and 0.905865 / 0.888765 /
+    0.890638 in run 2, and the ordering of the three moved.  That is the clearest
+    single fact of this section: the quantity the epoch is chosen by moves between
+    two runs of one recipe by more than the margin between its own epochs.
+    Peak allocated 25.02 and 25.03 GB in both runs.  Largest adapter move b 0.04863
+    -> 0.07398, a 0.07574 -> 0.08365.  All 410 tensors moved in both runs.
+
+  THE NEW PAIRED DIFFERENCES, printed by run 2 and READ BY NOTHING:
+    candidate b, kept epoch 3, its own mean 0.638168 over 568 rows, UNPAIRED
+    standard error of that mean 0.032201
+      epoch   mean(this epoch - kept) per row   paired standard error    ratio
+          1                         0.029425                 0.010900    2.699
+          2                         0.163049                 0.024540    6.644
+    candidate a, kept epoch 2, its own mean 0.888765 over 1425 rows, UNPAIRED
+    standard error of that mean 0.013616
+      epoch   mean(this epoch - kept) per row   paired standard error    ratio
+          1                         0.017100                 0.006684    2.558
+          3                         0.001873                 0.005268    0.356
+    WHAT THEY SAY, and it is the thing amendment A5 asked for: pairing shrinks the
+    standard error by about a factor of two (a's 0.013616 unpaired against 0.005268
+    and 0.006684 paired), and even so candidate a's kept epoch is NOT separated from
+    its runner-up -- 0.001873 with a paired standard error of 0.005268 is a ratio of
+    0.356, i.e. the two epochs are indistinguishable on the quantity the rule uses.
+    Epoch 1 is separated from it (2.558) and both of b's unkept epochs are (2.699 and
+    6.644).  A5 computed the unpaired ratio 8.34 from run 1's numbers; the paired
+    form on run 2 says the same thing in the right denominator.
+    FREE CORROBORATION: agree.py, which implements that standard error separately,
+    printed 0.013616 for candidate a over the same 1425 rows, equal to tune.py's own
+    unpaired figure, and reproduced the mean 0.888765 to six decimals.
+    NOTHING HERE CHOSE AN EPOCH OR A CANDIDATE.  The keep rule ran on the
+    cross-entropies alone, as frozen, and the paired numbers were computed after it.
+
+  ------------------------------------------------------------------
+  20.4  THE FOUR DRY RUNS, AND WHICH NUMBERS MOVED
+  ------------------------------------------------------------------
+  Clocks, pids and per-pass timings always move.  Digests move because eval.py
+  changed and because both adapters changed.  EVERYTHING ELSE THAT MOVED MOVED
+  BECAUSE THE ADAPTERS ARE NOT BYTE-IDENTICAL TO THE FIRST RUN'S, and that is the
+  whole reason amendment A3 requires the four dry runs to be repeated.
+
+  eval_dry.csv.  Column by column against the previous archive: the 20 rows of the
+  four constant arms, of F and of the untuned model are IDENTICAL IN EVERY COLUMN
+  but script_sha -- those deciders make no adapter pass, so a new adapter cannot
+  reach them, and that is a free control on this whole comparison.  WHICH COLUMNS
+  THE 8 ROWS OF a AND b MOVED IN, enumerated rather than characterised, because the
+  control above is worth exactly as much as the set of columns that are CAPABLE of
+  moving (corrected 2026-11-24, section 21 finding 1; this line first read "moved in
+  every measured column", which is more than the archives show).  Candidate a moved
+  in 15 columns: delay_ms, lat_ms, model_sha, n_long, n_mid, n_short, ord_poll,
+  ord_resched, polls, reads, score_dropped_ms, score_ms, script_sha, sends, ties.
+  Candidate b moved in the same 15 MINUS n_mid, which is 0 in all four of its rows in
+  both archives -- the csv's form of what the agree_dry.txt paragraph below says, that
+  b "still answers ' mid' ZERO times on all 1425 rows".  The
+  remaining five columns MOVED FOR NO DECIDER AND CANNOT: n4 240, c4 0, censored_ms
+  0.0 and weight_ms_per_poll 104.29595912307323 are the same single value in all 28
+  rows of both archives (the record schedule and the weight, which no decider
+  touches), and k is 4 for the three model deciders and 1 for the four that make no
+  pass, in both archives (the worker count this run chose).
+  script_sha 1071e451... -> f3a34ad0...
+  (eval.py's own bytes are in it); model_sha a bbd339c1... -> 922309eb..., b
+  a4e5c901... -> 6a39ca00...
+  eval_dry.txt.  The gate PASSED AGAIN: 4 workers x 3 model deciders x 64 rows x 3
+  logits = 2304 values, every one bit-identical to the single-process reference
+  under torch.equal, and shown failing on one value moved by one unit and on a wrong
+  shape.  Both adapters reproduce the NEW tune.txt's triples: a [28.0, 28.25,
+  28.625], b [18.5, 17.75, 19.25] (run 1 read [18.75, 18.875, 19.25] and [19.375,
+  18.75, 19.5]).  Mutations: all 23 fired, as before.  The five new seam lines of
+  A1 appear and no number of the dry mode moved because of them, since DRY_SEEDS[0]
+  and SEEDS[0] are both 1 here.
+  ONE COSMETIC DEFECT IN THIS ARCHIVE, said here because the file is the run's own
+  stdout and is not edited: in the DRY mode the new seam lines read "this mode's own
+  first simulated seed is 1, and in the real mode that is a selection-half seed",
+  where both seeds happen to be 1 and a reader can misparse the sentence as calling
+  seed 1 a selection-half seed.  Every number in it is right and the real mode's
+  rendering (first simulated seed 81) reads as intended.  Not re-run for it: that
+  would cost another dry pass of a shared card for a word order.
+  THE RESOLUTION-TIME DECISIONS PER RUN, which is what the real run's cost rests on,
+  moved with the adapters.  min / mean / max over the four dry runs, run 1 then run 2:
+    untuned   279 / 280.0 / 282   and   279 / 280.0 / 282   unchanged, bit for bit
+    a         122 / 125.8 / 132   and   117 / 118.5 / 121
+    b         151 / 159.2 / 165   and   140 / 147.8 / 151
+  So the re-estimate of the real evaluation falls from 452 000 to 437 000 forward
+  passes and from 127.2 to 120.5 min at K = 4 (measured 59.2 then 60.4 passes/s),
+  and the K = 1 inference from 478.0 to 456.4 min.  The plan's own figures were
+  385 704 passes, 84.7 min and 278.3 min.  Candidate b is no longer the one near the
+  plan's 160.7 anchor; neither candidate is now.
+  ana_dry.txt.  Still byte-identical between the host's python 3.13.5 and the local
+  3.12.13 (sha256 574ee8b9... on both).  The four no-pass deciders' mean scores are
+  unchanged to the last digit (F 34572.7, const6.000 39997.1, const10.043 40300.8,
+  const3.695 40313.2) and the untuned 41139.7 likewise; a moved 38018.044 ->
+  37743.165 and b 37605.828 -> 38405.658.  THE DRY VERDICT THEREFORE FLIPPED, from
+  "SEPARATED, NOT RESOLVED ... the lower being b" to the same verdict with the lower
+  being a, and the paired bootstrap's interval still contains 0 (-3490.055 to
+  2165.068 ms against the gap of -662.493 ms).  THAT FLIP IS NOT A RESULT AND NOT A
+  CHOICE: these are four runs on seeds 1 and 2, which both candidates were fitted
+  on, the interval contains 0, and ana_dry.txt's own first lines say what a dry score
+  is worth.  The candidate is not chosen here and is not chosen by any number of this
+  section.  Mutations: all 22 fired.
+  agree_dry.txt.  THE FREE CROSS-CHECK HELD AGAIN AND IT IS NOW A CHECK ON THIS
+  SECTION'S OWN RUN: candidate a's agreement over the 1425 labelled rows of seeds 71
+  to 80 came out 757/1425 with 298 ties and a three-way cross-entropy of 0.888765,
+  which is the new tune.txt's held-out agreement, tie count and choosing
+  cross-entropy for a's kept epoch, to the row and to six decimals, asserted and not
+  merely printed.  Candidate b moved 756/1425 -> 750/1425, its ties 83 -> 73, its
+  answer columns 659/0/766 -> 540/0/885, and it still answers " mid" ZERO times on
+  all 1425 rows.  The untuned decider's 472/1425 and its 970/53/402 are unchanged.
+  Mutations: all 17 fired.
+  latency_dry.txt.  Only timings and the repeat triple moved; this archive carries no
+  digest that the two changed files reach.  Section 19 / this run, median ms:
+  candidate a 70.07 / 69.26, untuned base 44.03 / 43.70, the adapter's cost +26.03 /
+  +25.56.  The cpu parts: render 0.043 / 0.042, chat template 0.214 / 0.212,
+  tokenizer 0.410 / 0.403 ms.  So the 29 ms of section 17 is the ADAPTER and not the
+  tokenizer, now measured on three runs over two sets of adapters.  Mutations: all 15
+  fired.
+
+  ------------------------------------------------------------------
+  20.5  THE ONE SEQUENCING THIS FORCED, NAMED RATHER THAN HIDDEN
+  ------------------------------------------------------------------
+  The step as written puts the final push_inputs.sh AFTER the four dry runs.  That
+  cannot be the only push: eval.py, agree.py and latency.py all read tune.txt off
+  the host's repo copy and hold their read-out against its triples, so the new
+  archive has to reach the host BEFORE the first dry run.  The first eval.py --dry
+  attempt is the proof, and it is left in 20.2 rather than tidied away: it exited 1
+  with nothing scored because the host still held run 1's archive.  push_inputs.sh
+  therefore ran three times in this section -- before the tuning, after tune.txt was
+  archived, and once more at the end so the host's copy carries the final files --
+  and the full-directory comparison after the last one is in 20.2.
+
+  ------------------------------------------------------------------
+  20.6  WHAT IS LEFT, AND WHAT WAS NOT DONE
+  ------------------------------------------------------------------
+  WHAT THIS SECTION LEFT UNDER ROOT:
+  - adapters/{a,b}, three files each, the SECOND run's and the candidates.
+  - adapters-run1/{a,b}, three files each, the FIRST run's, renamed and not deleted,
+    with tune_run1.log, tune_run1.err and tune_run1.t0 beside them.  They are kept
+    until ticket 10 closes, because tune_run1.txt is in the repository and a reader
+    of it can then still hold the files it describes; nothing of this step reads
+    them, and no script of this step can load an adapter from there by accident
+    (every one of them takes ROOT/adapters/<name>).
+  - tune.log, tune.err, tune.t0 of the second run, and the dry runs' own
+    eval_dry.csv, the four *_dry.log / *_dry.err pairs, the three t0 stamps,
+    eval-dry-parts (seven per-decider csv files) and eval-dry-tmp (the reference and
+    worker logit tensors and the worker logs), all rewritten by this section.
+    ROOT/eval_dry2.log and eval_dry3.log are section 18's resume demonstrations and
+    were NOT re-run here.
+  - Nothing under ROOT that this step did not create was deleted or altered, no other
+    account's process was touched, and the card is free (61 MiB, the desktop).  The
+    one scratch directory this section made on the host was removed.
+
+  WHAT WAS NOT DONE
+  - THE REAL EVALUATION, and with it everything the ticket asks for.  No seed above
+    80 was simulated, no model was read out on a label row of seeds 81 to 100, and
+    eval.csv, eval.txt, ana.txt, agree.txt and latency.txt exist on neither machine.
+  - NO CANDIDATE WAS CHOSEN, and the dry verdict's flip from b to a changes nothing:
+    the second run's adapters are the candidates whatever their numbers are, and
+    which of the two is better is the replay score's to say on seeds 81 to 100.
+  - NO EPOCH WAS RE-CHOSEN.  The keep rule is the frozen rule and the new paired
+    numbers were computed after it ran and are read by nothing.
+  - tune.py WAS RUN TO COMPLETION ONCE in this section, as the brief requires.  The
+    one run that died is the eval.py --dry attempt of 20.2, which wrote no score and
+    whose numbers are used for nothing.
+  - NOTHING EXPLAINS THE NONDETERMINISM BEYOND NAMING IT.  No run here isolated
+    which kernel's reduction order moves, and nothing was measured about whether a
+    third run would land nearer run 1 or run 2.  At n = 2 the spread above is two
+    points and not a distribution.
+  - decider.py's 24 card-free mutations were re-run but NOT re-archived into
+    tune.txt: tune.py prints that self-check inside its own part 5, so the new
+    tune.txt now carries them, and 19.5's archive of the same output stands.
+  - THE ADAPTERS OF RUN 1 ARE STILL TIED TO NO CODE STATE, which is the finding this
+    section closes for run 2 only.  tune_run1.txt names no digest and the decider.py
+    that produced it is unrecoverable (19.1 finding 2); that is now a statement about
+    files nothing will score.
+  - spec.md was not edited, nothing was staged or committed, and no file outside
+    S2/evidence/23 was touched.
+
+========================================================================
+21. THE REVIEW OF SECTION 20 ANSWERED: THREE FINDINGS, ALL IN THE RECORD
+========================================================================
+  2026-11-24 09:41 JST.  A reviewer read section 20, the two script diffs and all
+  five dry archives against f1b5e7a and returned three findings: one minor and two
+  nits.  None is a defect in a line that reaches a weight, a score or an archive.
+  CHANGED FILES: this log only (20.4's csv sentence rewritten, one paragraph added
+  to 20.1, this section appended).
+  NOT CHANGED, and this is the point of the step: tune.py, decider.py and prefill.py
+  (an edit to any of the three would break the eight code digests tune.txt printed,
+  and no finding is a blocker or a major), eval.py, ana.py, agree.py, latency.py
+  (an edit to any of those four would require its dry run to be repeated on a shared
+  card and re-archived, which no nit is worth), spec.md (frozen; A2 is one of its own
+  amendments, so finding 2's clarification lives here and not there), and all seven
+  archives (each is a run's own stdout and is never edited).
+  NOT RUN: tune.py (the fixer of this step never starts it, and no finding needed
+  another tuning run), eval.py, ana.py, agree.py, latency.py in either mode.  No
+  seed above 80 was looked at, and eval.csv, eval.txt, ana.txt, agree.txt and
+  latency.txt exist on neither machine.
+
+  ------------------------------------------------------------------
+  21.1  FINDING 1 (minor): 20.4 OVERSTATED WHICH CSV COLUMNS MOVED
+  ------------------------------------------------------------------
+  The claim: 20.4's sentence "The 8 rows of a and b moved in every measured column"
+  is more than eval_dry.csv shows, and the "free control" argument beside it rests on
+  which columns are CAPABLE of moving, so the overstatement weakens the argument it
+  is part of.
+  REPRODUCED, by a column-by-column comparison keyed on (decider, seed, stream) of
+  E/eval_dry.csv against `git show f1b5e7a:S2/evidence/23/eval_dry.csv`, in a
+  throwaway script in the session scratchpad (not in the repository):
+    F              rows=4 changed=['script_sha']
+    a              rows=4 changed=['delay_ms', 'lat_ms', 'model_sha', 'n_long',
+                   'n_mid', 'n_short', 'ord_poll', 'ord_resched', 'polls', 'reads',
+                   'score_dropped_ms', 'score_ms', 'script_sha', 'sends', 'ties']
+    b              rows=4 changed= the same 15 without n_mid (ABBREVIATED HERE; the
+                   script printed the list in full and `a minus b` was ['n_mid'])
+    const10.043    rows=4 changed=['script_sha']
+    const3.695     rows=4 changed=['script_sha']
+    const6.000     rows=4 changed=['script_sha']
+    untuned        rows=4 changed=['script_sha']
+    a UNCHANGED: n4, c4, censored_ms, weight_ms_per_poll, k
+    b UNCHANGED: n4, c4, censored_ms, weight_ms_per_poll, n_mid, k
+    b n_mid: new=['0'] old=['0']
+  And over all 28 rows of each archive, `cut -d, -f4,5,7,12,21 | sort -u` prints the
+  same two VALUE lines on both sides (plus the header line
+  `n4,c4,censored_ms,weight_ms_per_poll,k`, which sort -u keeps):
+  `240,0,0.0,104.29595912307323,1` and
+  `240,0,0.0,104.29595912307323,4`.  So four of those five columns hold one value
+  everywhere and the fifth, k, is the worker count (4 for the three deciders that
+  make a model pass, 1 for the four that do not) and is the same in both archives.
+  FIXED IN PLACE in 20.4.  The sentence is replaced by the enumeration above plus the
+  reason the five fixed columns cannot move, and the replaced wording is quoted there
+  so the edit is traceable.  RUN.txt is this directory's hand-written log and is the
+  one file of E that is edited after the fact; 20.4's own "the file is the run's own
+  stdout and is not edited" is about the archives.
+
+  ------------------------------------------------------------------
+  21.2  FINDING 2 (nit): PART 7 OF eval.py STILL BUILDS SEED 81
+  ------------------------------------------------------------------
+  The claim: A1's five new printed lines say of the real run's first simulated seed
+  that its "label row and whose roll-in would then be read before this run's first
+  score", and a reader can take that to mean eval.py never re-runs seed 81's roll-in
+  at all -- while part 7 does, in a real run, after the scores.
+  REPRODUCED from the source, which is the only evidence that exists (no real-mode
+  run of eval.py has ever been made):
+    grep -n "SEEDS\b" eval.py   ->  82, 84, 649, 651, 697, 720, 731, 823, 1241,
+                                    1251, 1252
+    grep -n '^head(' eval.py    ->  660 part 0, 718 part 1, 841 part 2, 909 part 3,
+                                    982 part 4, 1138 part 5, 1158 part 6, 1207
+                                    part 7, 1367 part 8
+    line 1241  _RUN1 = LBL.run_dict(MAIN_P, SEEDS[0])
+    line 1249  FIRED.append(shows("port/interval not in choices", lambda: PORT.sim(
+    line 1250      dict(_RUN1, decider=PORT.const_decider(5.0)), None,
+    line 1251      R.rep_seed(LAG_PREFIX, MAIN_P, SEEDS[0], 0),
+    line 1252      R.rep_seed(LAG_PREFIX, MAIN_P, SEEDS[0], 0))))
+  Part 7 begins at 1207, the first score is written in part 4 at 982 and the csv in
+  part 5 at 1138, so both uses are after every score of the run.  They are present at
+  f1b5e7a unchanged: this step did not introduce them and did not make them worse.
+  NOT A DEFECT, AND NO CODE CHANGE.  It is a documentation gap, so it is answered in
+  the record: the paragraph "WHAT A1 DOES NOT MOVE" added to 20.1 says that part 7
+  takes the run's first simulated seed (81 in a real run) for its run_dict and for
+  one refused PORT.sim, and that this happens after every score, which is why spec.md
+  A2's list of what reads the selection half "before any score" stays two items long.
+  WHY NOT MOVED TO A TUNING SEED: the mutation part 7 demonstrates is the port's
+  refusal of an interval outside the choice set on a REAL simulation of the run the
+  script is actually making, and pinning it to another seed would change the input
+  being demonstrated.  It reaches no score, no csv row and no adapter.
+
+  ------------------------------------------------------------------
+  21.3  FINDING 3 (nit): A CLAIM IN THE HAND-OVER REPORT, NOT IN A FILE
+  ------------------------------------------------------------------
+  The claim: the author's hand-over report said the new archive's parsing is "proven"
+  partly by decider.self_check's three tune.txt mutations, and those mutations build
+  their input in-process from literals.
+  REPRODUCED, decider.py lines 950-966: _block() returns a hand-written candidate
+  block carrying RUN 1's numbers ("(0.643996, 0.789407, 0.622174), the rule" and
+  "[19.375, 18.75, 19.5]"), and line 966 asserts kept_from(_both)["a"]["triple"] !=
+  [19.375, 18.75, 19.5].  No open() of tune.txt anywhere in that function, so it
+  proves the parser against a fixture and says nothing about the new archive.
+  NOTHING IN THE REPOSITORY IS WRONG.  20.1's own wording is "the three tune.txt
+  mutations of decider.self_check still fire unchanged", which is the true statement;
+  only the report overreached.  WHAT DOES PROVE THE NEW ARCHIVE PARSES, and it is
+  independent of the fixture, is that three scripts read the triples off the archive
+  and assert them:
+    eval_dry.txt:168    a  [28.0, 28.25, 28.625] against tune.txt's
+                           [28.0, 28.25, 28.625]: equal True
+    agree_dry.txt:111      [28.0, 28.25, 28.625] against tune.txt's
+                           [28.0, 28.25, 28.625]: equal True
+    agree_dry.txt:10    asserts: candidate a's agreement here must equal tune.txt's
+                           757/1425 exactly.
+    agree_dry.txt:127      CROSS-CHECK: 757/1425 and 0.888765 are tune.txt's own
+                           held-out agreement and
+    latency_dry.txt:92     [28.0, 28.25, 28.625] against tune.txt's
+                           [28.0, 28.25, 28.625] (read off the archive, not typed
+                           here): equal True
+  The fixer's own hand-over report attributes it to these three and drops the
+  self_check mutations from the sentence.
+
+  ------------------------------------------------------------------
+  21.4  THE COMMANDS OF THIS SECTION
+  ------------------------------------------------------------------
+  No GPU was used and no script of E was run.  The card was not touched.
+    git show f1b5e7a:S2/evidence/23/eval_dry.csv > <scratch>/fix_csv_old.csv
+    local python3 -I <scratch>/cmp.py       the column comparison of 21.1, run from
+          the scratchpad.  WHAT -I DOES NOT DO is suppress bytecode writing, so that
+          is not why the worktree stayed clean: cmp.py imports csv, collections and
+          sys and nothing of this directory, so there was no module of the worktree
+          for the interpreter to compile, and the __pycache__ check below found
+          none.  THE SCRIPT IS NOT IN THE REPOSITORY.
+    cut -d, -f4,5,7,12,21 <each archive> | sort -u    the two lines quoted in 21.1
+    grep -n "SEEDS\b" eval.py ; grep -n '^head(' eval.py      the line numbers of
+                               21.2
+    bash push_inputs.sh        run after the LAST edit of this log, because
+                               push_inputs.sh sends every file of E and this log is
+                               one of them, so without it ROOT/repo's copy of RUN.txt
+                               would no longer be the worktree's.  It reaches no run:
+                               no script of E opens RUN.txt (precheck.py names it in
+                               one printed string and nothing more).
+    sha256sum * over E on both machines, sorted and diffed     the 28-file equality
+
+  ------------------------------------------------------------------
+  21.5  WHAT IS STILL OPEN AFTER THIS SECTION
+  ------------------------------------------------------------------
+  - THE REAL EVALUATION, unchanged: no seed above 80 has been simulated or read out,
+    and the five real-mode filenames exist on neither machine.
+  - The real mode's rendering of A1's five seam lines, and part 7's behaviour on seed
+    81, are read from the source and from no archive, because eval.py has never been
+    run in its real mode.  The main session should expect part 7 of the real run to
+    spend one run_dict and one refused simulation on seed 81 after the csv is
+    written; that is 21.2 and it is intended.
+  - The cosmetic word order of eval_dry.txt's new seam lines (20.4) stands.  It would
+    cost a dry pass of a shared card to fix a sentence whose every number is right.
+  - spec.md A2 is frozen, so finding 2's clarification is in this log only.  If the
+    main session wants A2's two-item list to carry the "before any score" scope
+    explicitly, that is an edit to spec.md and it is the main session's to make.
+  - The three things section 20 left open are untouched by this section: the recipe
+    does not reproduce on this host, the nondeterminism is named and not isolated,
+    and run 1's adapters remain tied to no code state.
+  - Nothing staged, nothing committed, no branch or worktree change.

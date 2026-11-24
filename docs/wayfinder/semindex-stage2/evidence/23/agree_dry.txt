@@ -7,7 +7,7 @@ in place of the selection half.  Those rows chose the kept epoch of each
 candidate, so an agreement on them is not a held-out number in the ordinary
 sense and says NOTHING about which candidate is better -- that is the replay
 score's on seeds 81 to 100.  What the slice does buy is a cross-check this run
-asserts: candidate a's agreement here must equal tune.txt's 777/1425 exactly.
+asserts: candidate a's agreement here must equal tune.txt's 757/1425 exactly.
 
 nvidia-smi compute apps: (none)
 OK: no other compute process on the GPU
@@ -29,7 +29,7 @@ WHAT THESE DIGESTS DO NOT COVER:
   - the label file (its own sha256 is checked against ../22/labels.sha256)
   - ../20/predict.py and ../21/predict.py, which no row of the csv passes through
 
-started         2026-11-24T07:57:11+0900
+started         2026-11-24T09:02:14+0900
 torch 2.15.0+cu132 (cuda 13.2), transformers 5.24.0, peft 0.22.0, numpy 2.5.4, python 3.13.5
 gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
 rows            seeds 71 to 80
@@ -86,7 +86,7 @@ loaded in 2.2 s
                         and: [17.875, 15.5625, 14.5]
     bit-identical, both chose ' short' (3.695 s), tie at the maximum: False
     one logit moved by 1 FIRES: the repeat check of untuned, mutated: 1 of 3 logits differ, first at 0: 18.875 against 17.875
-  1425 rows in 63.1 s (44.3 ms per row, the render and the tokenizer call included)
+  1425 rows in 62.5 s (43.8 ms per row, the render and the tokenizer call included)
   agreement 472/1425 = 0.331228, against the baseline 0.5102
   exact ties resolved by the first-maximum rule: 12 of 1425 decisions
   answers that are not ' long': 1023, so the tie rule decided at most 0.012 of them
@@ -104,27 +104,27 @@ loaded in 2.2 s
 
 -- a --
 loaded in 2.6 s, adapter attached and unmerged, dtype float32
-    two passes over one row: [18.75, 18.875, 19.25]
-                        and: [18.75, 18.875, 19.25]
+    two passes over one row: [28.0, 28.25, 28.625]
+                        and: [28.0, 28.25, 28.625]
     bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
-    one logit moved by 1 FIRES: the repeat check of a, mutated: 1 of 3 logits differ, first at 0: 19.75 against 18.75
-  [18.75, 18.875, 19.25] against tune.txt's [18.75, 18.875, 19.25]: equal True
-  1425 rows in 99.9 s (70.1 ms per row, the render and the tokenizer call included)
-  agreement 777/1425 = 0.545263, against the baseline 0.5102
-  exact ties resolved by the first-maximum rule: 197 of 1425 decisions
-  answers that are not ' long': 351, so the tie rule decided at most 0.561 of them
+    one logit moved by 1 FIRES: the repeat check of a, mutated: 1 of 3 logits differ, first at 0: 29.0 against 28.0
+  [28.0, 28.25, 28.625] against tune.txt's [28.0, 28.25, 28.625]: equal True
+  1425 rows in 99.5 s (69.8 ms per row, the render and the tokenizer call included)
+  agreement 757/1425 = 0.531228, against the baseline 0.5102
+  exact ties resolved by the first-maximum rule: 298 of 1425 decisions
+  answers that are not ' long': 307, so the tie rule decided at most 0.971 of them
   label \ answer      short      mid     long   |  per class
-  3.695     s           93       43      205   |    341  0.2727
-  6.000     s           60       56      241   |    357  0.1569
-  10.043    s           53       46      628   |    727  0.8638
-  answers                206      145     1074   |   1425
-  answer shares       0.1446   0.1018   0.7537
+  3.695     s           36       78      227   |    341  0.1056
+  6.000     s           27       80      250   |    357  0.2241
+  10.043    s           19       67      641   |    727  0.8817
+  answers                 82      225     1118   |   1425
+  answer shares       0.0575   0.1579   0.7846
   label shares        0.2393   0.2505   0.5102
   A DECIDER THAT COLLAPSED ONTO ONE WORD IS VISIBLE AS ONE COLUMN above.
-  three-way cross-entropy 0.893928 over those rows, standard error of the mean
-  0.015423.  This is the quantity the kept epoch was CHOSEN by, recomputed here from
+  three-way cross-entropy 0.888765 over those rows, standard error of the mean
+  0.013616.  This is the quantity the kept epoch was CHOSEN by, recomputed here from
   the same logits the agreement above is counted from, at no extra pass.
-  CROSS-CHECK: 777/1425 and 0.893928 are tune.txt's own held-out agreement and
+  CROSS-CHECK: 757/1425 and 0.888765 are tune.txt's own held-out agreement and
   cross-entropy for a's kept epoch, to the row and to six decimals, over the
   same rows with the same adapter at the same read-out.  The cross-entropy is
   the stronger of the two: it is what chose the epoch, and the agreement is
@@ -132,25 +132,25 @@ loaded in 2.6 s, adapter attached and unmerged, dtype float32
 
 -- b --
 loaded in 2.6 s, adapter attached and unmerged, dtype float32
-    two passes over one row: [19.375, 18.75, 19.5]
-                        and: [19.375, 18.75, 19.5]
+    two passes over one row: [18.5, 17.75, 19.25]
+                        and: [18.5, 17.75, 19.25]
     bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
-    one logit moved by 1 FIRES: the repeat check of b, mutated: 1 of 3 logits differ, first at 0: 20.375 against 19.375
-  [19.375, 18.75, 19.5] against tune.txt's [19.375, 18.75, 19.5]: equal True
-  1425 rows in 100.3 s (70.4 ms per row, the render and the tokenizer call included)
-  agreement 756/1425 = 0.530526, against the baseline 0.5102
-  exact ties resolved by the first-maximum rule: 83 of 1425 decisions
-  answers that are not ' long': 659, so the tie rule decided at most 0.126 of them
+    one logit moved by 1 FIRES: the repeat check of b, mutated: 1 of 3 logits differ, first at 0: 19.5 against 18.5
+  [18.5, 17.75, 19.25] against tune.txt's [18.5, 17.75, 19.25]: equal True
+  1425 rows in 99.2 s (69.6 ms per row, the render and the tokenizer call included)
+  agreement 750/1425 = 0.526316, against the baseline 0.5102
+  exact ties resolved by the first-maximum rule: 73 of 1425 decisions
+  answers that are not ' long': 540, so the tie rule decided at most 0.135 of them
   label \ answer      short      mid     long   |  per class
-  3.695     s          242        0       99   |    341  0.7097
-  6.000     s          204        0      153   |    357  0.0000
-  10.043    s          213        0      514   |    727  0.7070
-  answers                659        0      766   |   1425
-  answer shares       0.4625   0.0000   0.5375
+  3.695     s          202        0      139   |    341  0.5924
+  6.000     s          159        0      198   |    357  0.0000
+  10.043    s          179        0      548   |    727  0.7538
+  answers                540        0      885   |   1425
+  answer shares       0.3789   0.0000   0.6211
   label shares        0.2393   0.2505   0.5102
   A DECIDER THAT COLLAPSED ONTO ONE WORD IS VISIBLE AS ONE COLUMN above.
-  three-way cross-entropy 0.919212 over those rows, standard error of the mean
-  0.018138.  This is the quantity the kept epoch was CHOSEN by, recomputed here from
+  three-way cross-entropy 0.936098 over those rows, standard error of the mean
+  0.019466.  This is the quantity the kept epoch was CHOSEN by, recomputed here from
   the same logits the agreement above is counted from, at no extra pass.
 
 ========================================================================
@@ -160,25 +160,25 @@ What the ticket's third acceptance item asks for, with no pass or fail attached.
 
   decider   agreement        share    - baseline   ties   answers short/mid/long
   untuned     472/1425    0.331228   -0.178947     12   970/53/402
-  a           777/1425    0.545263   +0.035088    197   206/145/1074
-  b           756/1425    0.530526   +0.020351     83   659/0/766
+  a           757/1425    0.531228   +0.021053    298   82/225/1118
+  b           750/1425    0.526316   +0.016140     73   540/0/885
 
 
   decider   held-out cross-entropy   standard error of the mean
   untuned                 4.181465   0.102284
-  a                       0.893928   0.015423
-  b                       0.919212   0.018138
+  a                       0.888765   0.013616
+  b                       0.936098   0.019466
 
 WHAT CHOSE EACH KEPT EPOCH, AND BY HOW MUCH, from tune.txt's own three numbers:
-  candidate a kept epoch 3 at 0.893928; its runner-up is 0.895778, so the margin the
-  choice rests on is 0.001850, which is 0.207 % of the value, over 1425 rows
+  candidate a kept epoch 2 at 0.888765; its runner-up is 0.890638, so the margin the
+  choice rests on is 0.001873, which is 0.211 % of the value, over 1425 rows
   for scale, the standard error of this run's own mean per-row cross-entropy
-  over the SAME 1425 rows is 0.015423, i.e. 8.34 times that margin
-  candidate b kept epoch 3 at 0.622174; its runner-up is 0.643996, so the margin the
-  choice rests on is 0.021822, which is 3.507 % of the value, over 568 rows
+  over the SAME 1425 rows is 0.013616, i.e. 7.27 times that margin
+  candidate b kept epoch 3 at 0.638168; its runner-up is 0.667593, so the margin the
+  choice rests on is 0.029425, which is 4.611 % of the value, over 568 rows
   NO RATIO IS PRINTED for this candidate: its margin is over its own 568
   filtered rows and this run reads out 1425, so the standard error above
-  (0.018138) is over a different and differently shaped population.
+  (0.019466) is over a different and differently shaped population.
 CANDIDATE a's EPOCH IS NOT DISTINGUISHED BY ANYTHING IN THIS STEP, and that is said
 here rather than left to a reader to divide two numbers.  A ratio is printed above
 only where this run reads out the very rows the margin was taken on, because a ratio
@@ -217,8 +217,8 @@ load-bearing caller of.
   slice/one row lost         FIRES: mutated: 1424 labelled row(s), not the 1425 the plan names
   baseline/count             FIRES: mutated: the most frequent arm carries 728 of 1425 rows, not 727
   baseline/share             FIRES: mutated: the baseline is 0.510175, not the pre-registered 0.5112
-  cross-check/agreement      FIRES: mutated: 778, against the 777 already on record
-  cross-check/cross-entropy  FIRES: mutated: 0.893929, against the 0.893928 already on record
+  cross-check/agreement      FIRES: mutated: 758, against the 757 already on record
+  cross-check/cross-entropy  FIRES: mutated: 0.888766, against the 0.888765 already on record
   table/one decision lost    FIRES: mutated: the table holds 1 decisions, not 1425
   target_of                  FIRES: 7.0
   pick/tie                   FIRES: mutated: picked 2, but position(s) [0] tie it and come first
@@ -259,6 +259,6 @@ all 17 mutations of this script produced a failure
 - Nothing about the pass time.  The ms per row above includes the render and the
   tokenizer call and is not a latency measurement; latency.py is.
 
-wall clock    278.0 s (4.6 min) from the first line to this one
-finished      2026-11-24T08:01:49+0900
+wall clock    276.0 s (4.6 min) from the first line to this one
+finished      2026-11-24T09:06:50+0900
 end of agree.py

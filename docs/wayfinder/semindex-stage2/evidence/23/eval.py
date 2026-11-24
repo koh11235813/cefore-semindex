@@ -791,7 +791,14 @@ say("of it and therefore unexamined.  So the comparison is made here, against th
 say("object: one labelling roll-in of a tuning seed is re-run (no model, no card), its")
 say("own captured observation of one decision is rendered, and that is held against the")
 say("rendering of the gzip row of the same (seed, k).")
-_SEAM_SEED = SEEDS[0]
+# 2026-11-24: DRY_SEEDS[0] and not SEEDS[0], so the seam check reads the same tuning seed
+# in BOTH modes.  In a real run SEEDS[0] is 81, and taking it here would render one label
+# row of the selection half, and re-run that seed's labelling roll-in, before the run's
+# first score -- which is what spec.md's sentence that the one early read of the selection
+# half is the class-share baseline is measured against.  Without this line that sentence
+# becomes false in the real mode.  The seam is a gzip-JSON row against a live engine
+# object and is not a question about which seed, so a tuning seed loses nothing here.
+_SEAM_SEED = DRY_SEEDS[0]
 _seam_run = LBL.run_dict(MAIN_P, _SEAM_SEED)
 _seam_label = LBL.stream_label_of(MAIN_P, _SEAM_SEED)
 _t0 = time.time()
@@ -810,6 +817,13 @@ _row_text = D.text_of(_SEAM_ROW["state"], _SEAM_ROW["resolved"], _SEAM_ROW["hist
                       _SEAM_ROW["ts_ms"], _SEAM_ROW["neighbor"], "the gzip row")
 D.check_render_roundtrip(_live_text, _row_text, "the seam of seed %d k %d"
                          % (_SEAM_SEED, _SEAM_K))
+say("  the seed read here is %d, a TUNING seed, in both modes, and the reason is which"
+    % _SEAM_SEED)
+say("  seed it is NOT: this mode's own first simulated seed is %d, and in the real mode"
+    % SEEDS[0])
+say("  that is a selection-half seed, whose label row and whose roll-in would then be")
+say("  read before this run's first score.  The seam is a JSON row against a live object")
+say("  and not a question about which seed, so it is pinned to the tuning half.")
 say("  the roll-in of seed %d re-run in %.1f s, %d captured decisions, no model"
     % (_SEAM_SEED, time.time() - _t0, len(_roll.capture)))
 say("  decision k %d: the roll-in arm the live run drew is %.3f s and the row's is %.3f s"

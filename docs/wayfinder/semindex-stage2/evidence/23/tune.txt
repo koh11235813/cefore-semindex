@@ -9,13 +9,31 @@ made here, and every held-out number below is a tuning-half number.
 nvidia-smi compute apps: (none)
 OK: no other compute process on the GPU
 
-started         2026-11-24T05:22:56+0900
+the code that produced every number below, one sha256 per file:
+  tune.py            8b160f378aa6f58c507724264351c223ba0ea8594448d09e96e10671af3e956f
+  decider.py         a3a913e9e1c0422d9bae5afb1c9f2974c01c3ddbfbfdc1e616d02f312d7080b0
+  prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+  ../22/observe.py   9a5808bb40ddfd0f827fa04ff3aa7ad3c2c9c69243104b9651bb7e4da90056c2
+  ../22/port.py      5f74617a04b43d71f2a29153e26251e357cd44436925ecb9fa6b596fc53cca07
+  ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+  ../22/score.py     24743e3547ed877cec0a35c8925f12f20c2ed6941d4d805268701fbd0e0f3e49
+  ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+combined          1cf4ce11342fbab6d56be8687a7f240c93dbfe22b9faa135b12ce089a3c5be38
+WHAT THESE DIGESTS DO NOT COVER:
+  - the base weights (pinned by revision; the digest is RUN.txt section 2)
+  - the host's venv: torch, transformers, peft and numpy (versions printed instead)
+  - ../22/weight.json, whose weight every row carries and ana.py re-checks
+  - the label file (its own sha256 is checked against ../22/labels.sha256)
+  - ../20/predict.py and ../21/predict.py, which no row of the csv passes through
+
+started         2026-11-24T08:27:35+0900
 torch 2.15.0+cu132 (cuda 13.2), transformers 5.24.0, peft 0.22.0, numpy 2.5.4, python 3.13.5
 gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
 base model      /home/yamakawa/Development/semindex-learn/models/gemma-4-E2B-it
 adapters        /home/yamakawa/Development/semindex-learn/adapters/{b,a}
 recipe          LoRA r 16 alpha 32 dropout 0.0 bias none, no task_type; AdamW lr 0.0002,
-                torch's other defaults (weight decay 1e-2); constant rate, no warmup;
+                torch's other defaults; the weight decay is read off the optimiser in
+                part 3 and is not typed here; constant rate, no warmup;
                 batch 16, 3 epochs, seed 20261124; no truncation, prompts capped at 1024
 read-out        bf16 base, float32 adapter, batch 1, the three candidate logits at
                 the last real position, first maximum of [' short', ' mid', ' long'] wins a tie
@@ -93,7 +111,7 @@ pad token '<pad>' id 0, padding_side left
 rendered 11438 prompts in 2.7 s, each one through decider.text_of, so the no-node-name
 assertion ran on every row of both candidates (b is a subset of a)
 candidate ids   [2822, 5453, 1440] for [' short', ' mid', ' long'], each one token at this position
-tokenized them in 4.2 s: 224 to 519 tokens, median 473, bound 1024, nothing truncated
+tokenized them in 4.1 s: 224 to 519 tokens, median 473, bound 1024, nothing truncated
 repeat-check row  seed 71 k 72, 496 tokens (the median-length prompt of candidate b's
                   held-out slice, which is inside candidate a's as well)
 
@@ -111,46 +129,56 @@ matched modules 205, exactly those projections and nothing else, e.g. model.lang
 trainable params 24158208 of 5128455712 (0.4711 %), adapter dtype ['torch.float32'], adapter tensors 410 of which
 lora_B exactly zero 205, base params carrying a gradient 0, adapter attached and
 not merged (205 LoRA layers, none merged)
-epoch 1  permutation from default_rng(20261124 + 0), 252 steps in 116.0 s
-         training loss first 3.9074 last 0.4163 mean 0.7903, all finite
-         held-out cross-entropy 0.643996 over 568 rows in 41.3 s
-         held-out agreement 412/568 = 0.7254 (baseline always 10.043 s 0.6831),
-         ties 6, answers {' short': 75, ' mid': 6, ' long': 487}
-epoch 2  permutation from default_rng(20261124 + 1), 252 steps in 116.1 s
-         training loss first 0.8273 last 0.3560 mean 0.6680, all finite
-         held-out cross-entropy 0.789407 over 568 rows in 40.8 s
-         held-out agreement 389/568 = 0.6849 (baseline always 10.043 s 0.6831),
-         ties 0, answers {' short': 1, ' mid': 0, ' long': 567}
-epoch 3  permutation from default_rng(20261124 + 2), 252 steps in 116.8 s
-         training loss first 0.6487 last 0.3991 mean 0.6400, all finite
-         held-out cross-entropy 0.622174 over 568 rows in 40.9 s
-         held-out agreement 408/568 = 0.7183 (baseline always 10.043 s 0.6831),
-         ties 18, answers {' short': 148, ' mid': 0, ' long': 420}
+optimiser AdamW lr 0.0002; weight decay read off it: defaults 0.01, 1 parameter
+group(s) all at [0.01], which is the recipe's 0.01
+epoch 1  permutation from default_rng(20261124 + 0), 252 steps in 115.7 s
+         training loss first 3.9074 last 0.5242 mean 0.7935, all finite
+         held-out cross-entropy 0.667593 over 568 rows in 40.6 s
+         held-out agreement 409/568 = 0.7201 (baseline always 10.043 s 0.6831),
+         ties 13, answers {' short': 86, ' mid': 7, ' long': 475}
+epoch 2  permutation from default_rng(20261124 + 1), 252 steps in 116.3 s
+         training loss first 0.8202 last 0.4356 mean 0.6736, all finite
+         held-out cross-entropy 0.801217 over 568 rows in 40.8 s
+         held-out agreement 395/568 = 0.6954 (baseline always 10.043 s 0.6831),
+         ties 12, answers {' short': 18, ' mid': 0, ' long': 550}
+epoch 3  permutation from default_rng(20261124 + 2), 252 steps in 116.9 s
+         training loss first 0.4898 last 0.4258 mean 0.6504, all finite
+         held-out cross-entropy 0.638168 over 568 rows in 40.8 s
+         held-out agreement 406/568 = 0.7148 (baseline always 10.043 s 0.6831),
+         ties 18, answers {' short': 115, ' mid': 0, ' long': 453}
 
-adapter tensors moved: 410 of 410, largest move 0.04863; peak allocated 25.02 GB
+adapter tensors moved: 410 of 410, largest move 0.07398; peak allocated 25.02 GB
 
   epoch   train loss (first/last/mean)      held-out CE   agreement      baseline
-      1    3.9074  0.4163  0.7903           0.643996    412/568  0.7254  0.6831
-      2    0.8273  0.3560  0.6680           0.789407    389/568  0.6849  0.6831
-      3    0.6487  0.3991  0.6400           0.622174    408/568  0.7183  0.6831  <- kept
+      1    3.9074  0.5242  0.7935           0.667593    409/568  0.7201  0.6831
+      2    0.8202  0.4356  0.6736           0.801217    395/568  0.6954  0.6831
+      3    0.4898  0.4258  0.6504           0.638168    406/568  0.7148  0.6831  <- kept
 
-KEPT b epoch 3: the lowest held-out cross-entropy of the three (0.643996, 0.789407, 0.622174), the rule
+KEPT b epoch 3: the lowest held-out cross-entropy of the three (0.667593, 0.801217, 0.638168), the rule
 fixed before any of them existed; a tie would have gone to the earlier epoch
 
+the scale that margin sits on, and it CHOOSES NOTHING: the epoch above is kept by
+the frozen rule and these numbers are read by nothing.  The kept epoch's own mean
+over its 568 held-out rows is 0.638168, the UNPAIRED standard error of that mean
+0.032201.  Per row, against the kept epoch:
+  epoch   mean(this epoch - kept)   paired standard error      ratio
+      1                  0.029425               0.010900      2.699
+      2                  0.163049               0.024540      6.644
+
 read back from /home/yamakawa/Development/semindex-learn/adapters/b/epoch3, attached and unmerged, adapter dtype float32:
-  cross-entropy 0.622174, agreement 408/568, ties 18 -- the three numbers the epoch was
+  cross-entropy 0.638168, agreement 406/568, ties 18 -- the three numbers the epoch was
   chosen by, to the last bit, so the file on disk is the model that was measured
 
 the repeat check, with the kept adapter attached (seed 71 k 72):
-  two passes over one row: [19.375, 18.75, 19.5]
-                      and: [19.375, 18.75, 19.5]
+  two passes over one row: [18.5, 17.75, 19.25]
+                      and: [18.5, 17.75, 19.25]
   bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
-  one logit moved by 1 FIRES: the repeat check of candidate b, mutated: 1 of 3 logits differ, first at 0: 20.375 against 19.375
+  one logit moved by 1 FIRES: the repeat check of candidate b, mutated: 1 of 3 logits differ, first at 0: 19.5 against 18.5
 
 the kept epoch's files moved to /home/yamakawa/Development/semindex-learn/adapters/b and all 3 epoch directories removed:
   README.md                         5250 bytes  sha256 adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0
-  adapter_config.json               1398 bytes  sha256 fcc7437735d098187b778ccecf0c4c4e7b71f37f03d08aecb9778a70e1f52552
-  adapter_model.safetensors     96693360 bytes  sha256 64fb49840b79a2d16ac32225c8e5e4274bce18f96799e1725d110b4b9edb8172
+  adapter_config.json               1398 bytes  sha256 4d76d6c63d6a9a20ba4018f64e11b76743645617211a8aa7f019126f305cd760
+  adapter_model.safetensors     96693360 bytes  sha256 268a3dd4db8b6e8fc5452ba3aa1ce174a7990979026f82fe0e0ce896ecc32514
 
 ========================================================================
 3.2  CANDIDATE A
@@ -158,7 +186,7 @@ the kept epoch's files moved to /home/yamakawa/Development/semindex-learn/adapte
 tunes on 10013 rows of seeds 1-70, 626 steps per epoch at batch 16
 held out 1425 rows of seeds 71-80, baseline always 10.043 s = 0.5102
 
-loaded the base and attached a fresh adapter in 2.6 s
+loaded the base and attached a fresh adapter in 2.5 s
 text layers 35, of which kv-shared 20, so the language model has 205 projections
 modules ending in one of the seven target names: 353 in the whole model, 148 of them
 in the vision and audio towers, which exclude_modules 'model\\.(vision_tower|audio_tower)\\..*' keeps out
@@ -166,46 +194,56 @@ matched modules 205, exactly those projections and nothing else, e.g. model.lang
 trainable params 24158208 of 5128455712 (0.4711 %), adapter dtype ['torch.float32'], adapter tensors 410 of which
 lora_B exactly zero 205, base params carrying a gradient 0, adapter attached and
 not merged (205 LoRA layers, none merged)
-epoch 1  permutation from default_rng(20261124 + 0), 626 steps in 289.0 s
-         training loss first 5.9417 last 0.9632 mean 0.9970, all finite
-         held-out cross-entropy 0.898804 over 1425 rows in 103.2 s
-         held-out agreement 725/1425 = 0.5088 (baseline always 10.043 s 0.5102),
-         ties 108, answers {' short': 28, ' mid': 84, ' long': 1313}
-epoch 2  permutation from default_rng(20261124 + 1), 626 steps in 289.2 s
-         training loss first 0.8058 last 1.0112 mean 0.9200, all finite
-         held-out cross-entropy 0.895778 over 1425 rows in 103.0 s
-         held-out agreement 747/1425 = 0.5242 (baseline always 10.043 s 0.5102),
-         ties 45, answers {' short': 802, ' mid': 0, ' long': 623}
-epoch 3  permutation from default_rng(20261124 + 2), 626 steps in 289.2 s
-         training loss first 1.0554 last 0.6599 mean 0.9072, all finite
-         held-out cross-entropy 0.893928 over 1425 rows in 103.1 s
-         held-out agreement 777/1425 = 0.5453 (baseline always 10.043 s 0.5102),
-         ties 197, answers {' short': 206, ' mid': 145, ' long': 1074}
+optimiser AdamW lr 0.0002; weight decay read off it: defaults 0.01, 1 parameter
+group(s) all at [0.01], which is the recipe's 0.01
+epoch 1  permutation from default_rng(20261124 + 0), 626 steps in 289.1 s
+         training loss first 5.9417 last 0.8958 mean 0.9686, all finite
+         held-out cross-entropy 0.905865 over 1425 rows in 102.8 s
+         held-out agreement 740/1425 = 0.5193 (baseline always 10.043 s 0.5102),
+         ties 43, answers {' short': 63, ' mid': 0, ' long': 1362}
+epoch 2  permutation from default_rng(20261124 + 1), 626 steps in 289.8 s
+         training loss first 0.7947 last 0.9955 mean 0.9097, all finite
+         held-out cross-entropy 0.888765 over 1425 rows in 102.3 s
+         held-out agreement 757/1425 = 0.5312 (baseline always 10.043 s 0.5102),
+         ties 298, answers {' short': 82, ' mid': 225, ' long': 1118}
+epoch 3  permutation from default_rng(20261124 + 2), 626 steps in 288.7 s
+         training loss first 1.0568 last 0.6954 mean 0.9010, all finite
+         held-out cross-entropy 0.890638 over 1425 rows in 99.1 s
+         held-out agreement 743/1425 = 0.5214 (baseline always 10.043 s 0.5102),
+         ties 130, answers {' short': 50, ' mid': 80, ' long': 1295}
 
-adapter tensors moved: 410 of 410, largest move 0.07574; peak allocated 25.03 GB
+adapter tensors moved: 410 of 410, largest move 0.08365; peak allocated 25.03 GB
 
   epoch   train loss (first/last/mean)      held-out CE   agreement      baseline
-      1    5.9417  0.9632  0.9970           0.898804    725/1425 0.5088  0.5102
-      2    0.8058  1.0112  0.9200           0.895778    747/1425 0.5242  0.5102
-      3    1.0554  0.6599  0.9072           0.893928    777/1425 0.5453  0.5102  <- kept
+      1    5.9417  0.8958  0.9686           0.905865    740/1425 0.5193  0.5102
+      2    0.7947  0.9955  0.9097           0.888765    757/1425 0.5312  0.5102  <- kept
+      3    1.0568  0.6954  0.9010           0.890638    743/1425 0.5214  0.5102
 
-KEPT a epoch 3: the lowest held-out cross-entropy of the three (0.898804, 0.895778, 0.893928), the rule
+KEPT a epoch 2: the lowest held-out cross-entropy of the three (0.905865, 0.888765, 0.890638), the rule
 fixed before any of them existed; a tie would have gone to the earlier epoch
 
-read back from /home/yamakawa/Development/semindex-learn/adapters/a/epoch3, attached and unmerged, adapter dtype float32:
-  cross-entropy 0.893928, agreement 777/1425, ties 197 -- the three numbers the epoch was
+the scale that margin sits on, and it CHOOSES NOTHING: the epoch above is kept by
+the frozen rule and these numbers are read by nothing.  The kept epoch's own mean
+over its 1425 held-out rows is 0.888765, the UNPAIRED standard error of that mean
+0.013616.  Per row, against the kept epoch:
+  epoch   mean(this epoch - kept)   paired standard error      ratio
+      1                  0.017100               0.006684      2.558
+      3                  0.001873               0.005268      0.356
+
+read back from /home/yamakawa/Development/semindex-learn/adapters/a/epoch2, attached and unmerged, adapter dtype float32:
+  cross-entropy 0.888765, agreement 757/1425, ties 298 -- the three numbers the epoch was
   chosen by, to the last bit, so the file on disk is the model that was measured
 
 the repeat check, with the kept adapter attached (seed 71 k 72):
-  two passes over one row: [18.75, 18.875, 19.25]
-                      and: [18.75, 18.875, 19.25]
+  two passes over one row: [28.0, 28.25, 28.625]
+                      and: [28.0, 28.25, 28.625]
   bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
-  one logit moved by 1 FIRES: the repeat check of candidate a, mutated: 1 of 3 logits differ, first at 0: 19.75 against 18.75
+  one logit moved by 1 FIRES: the repeat check of candidate a, mutated: 1 of 3 logits differ, first at 0: 29.0 against 28.0
 
 the kept epoch's files moved to /home/yamakawa/Development/semindex-learn/adapters/a and all 3 epoch directories removed:
   README.md                         5250 bytes  sha256 adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0
-  adapter_config.json               1398 bytes  sha256 fcc7437735d098187b778ccecf0c4c4e7b71f37f03d08aecb9778a70e1f52552
-  adapter_model.safetensors     96693360 bytes  sha256 98f671bf49e25ff21236f503c57a1dc0d4d8c4f23b9565b6df5a05c842c94adf
+  adapter_config.json               1398 bytes  sha256 4d76d6c63d6a9a20ba4018f64e11b76743645617211a8aa7f019126f305cd760
+  adapter_model.safetensors     96693360 bytes  sha256 66c41692e534c27aa547ca7e68ce9363201e323cbcb18a2a17693cbab9c4eeb8
 
 ========================================================================
 4  THE TWO KEPT ADAPTERS
@@ -214,11 +252,11 @@ Neither number below says which candidate is better: these are tuning-half rows,
 the choice is the replay score's on seeds 81 to 100.
 
   cand  kept epoch  held-out CE   held-out agreement   baseline  rows  ties
-  a              3     0.893928    777/1425 = 0.5453     0.5102    1425   197
-  b              3     0.622174    408/568  = 0.7183     0.6831     568    18
+  a              2     0.888765    757/1425 = 0.5312     0.5102    1425   298
+  b              3     0.638168    406/568  = 0.7148     0.6831     568    18
 
 the agreement of candidate a's kept epoch over its 1425 held-out rows of seeds 71-80 is
-777/1425 = 0.545263; the later agreement step reads the same rows with the same adapter and
+757/1425 = 0.531228; the later agreement step reads the same rows with the same adapter and
 has to reproduce it exactly
 
 every file under /home/yamakawa/Development/semindex-learn/adapters:
@@ -239,7 +277,10 @@ can re-run on a machine without one; then this script's.
 
 -- decider.py, with a stub read-out --
 one real label row, seed 1 k 0: 694 characters rendered, no node name in it
-the same decision rendered from a port observation: 694 characters, equal: True
+the text L rendered from the port observation of that row: 694 characters, equal
+to the text the row renders to: True.  That is two CALL SITES over one row and NOT
+the JSON round trip, which is on both sides of it: eval.py part 1 closes that
+seam against the live engine's own captured observation.
 a pair's first send answers 6.000 s and makes no model pass
 its resolution answers 10.043 s and makes one
 the next send answers the same 10.043 s and makes none, so these 3 decisions cost
@@ -255,7 +296,8 @@ the mutations:
   candidate_ids            FIRES: mutated: candidate ids [1, 2, 3], expected [2822, 5453, 1440]
   no_node_name             FIRES: mutated: the rendered text contains the node name(s) ['h3']
   render_roundtrip         FIRES: mutated: the two renderings differ at character 192: 's 0, this decision polls a peer none of ' against ' 0, this decision polls a peer none of t'
-  prompt_len               FIRES: mutated: 1 prompt(s) longer than 8 tokens, longest 694
+  render_roundtrip/L       FIRES: mutated: the two renderings differ at character 51: '60.0 s ago was answered, reply empty\nin ' against '0.0 s ago was answered, reply empty\nin f'
+  prompt_len               FIRES: mutated: 1 prompt(s) longer than 8 characters, longest 694
   adapter_dtype            FIRES: mutated: adapter dtype ['torch.bfloat16'], not ['torch.float32']
   unmerged/none            FIRES: mutated: no adapter layer is attached
   unmerged/merged          FIRES: mutated: 1 of 2 adapter layers are merged into the base
@@ -265,8 +307,13 @@ the mutations:
   repeat/arm               FIRES: mutated: the two passes chose 2 and 1
   memory_empty             FIRES: mutated: the per-pair memory is not empty: 1 entr(ies), e.g. [(('h0', 'h1'), 3.695)]
   no_read_at_send          FIRES: mutated: 1 model pass(es) were made at a send
+  digest_cover             FIRES: mutated: the digest covers ['prefill.py', '../22/observe.py', '../22/port.py', '../22/label.py', '../22/score.py', '../13/replay.py'], not ['decider.py', 'prefill.py', '../22/observe.py', '../22/port.py', '../22/label.py', '../22/score.py', '../13/replay.py']
+  triple                   FIRES: mutated: the read-out of a does not reproduce tune.txt's triple: [1.0, 2.0, 3.0] against [1.0, 2.0, 4.0]
+  tune.txt/two passes      FIRES: tune.txt: candidate b printed [19.375, 18.75, 19.5] and [19.375, 18.75, 20.5] for one row
+  tune.txt/one candidate   FIRES: tune.txt: the kept epoch was found for ['b'], not for a and b
+  tune.txt/the keep rule   FIRES: tune.txt: candidate b kept epoch 1 where the frozen rule picks 3 from [0.643996, 0.789407, 0.622174]
 
-all 18 mutations produced a failure
+all 24 mutations produced a failure
 
 -- tune.py; the module lists and the trained adapter mutated below are candidate a's,
    the last one tuned --
@@ -281,7 +328,10 @@ all 18 mutations produced a failure
   changed                  FIRES: mutated: 410 of 410 adapter tensors did not move, e.g. ['base_model.model.model.language_model.layers.0.mlp.down_proj.lora_A.default.weight', 'base_model.model.model.language_model.layers.0.mlp.down_proj.lora_B.default.weight', 'base_model.model.model.language_model.layers.0.mlp.gate_proj.lora_A.default.weight']
   finite                   FIRES: mutated: 1 non-finite value(s), first at step 1: nan
   prompt_len/lowered bound FIRES: mutated: 9458 prompt(s) longer than 300 tokens, longest 519
-  reload                   FIRES: mutated: cross-entropy 0.8939275145530701 in memory against 0.8939285145530701 from disk
+  reload                   FIRES: mutated: cross-entropy 0.8887649774551392 in memory against 0.8887659774551392 from disk
+  weight_decay             FIRES: mutated: the optimiser carries weight decay [0.0] and the recipe names 0.01
+  paired/rows lost         FIRES: mutated: 1424 row(s) against 1425, so the two epochs are not paired
+  paired/one row           FIRES: mutated: 1 value(s), and a sample standard deviation needs at least two
   batch_of/left-pad        FIRES: FAIL: left padding did not leave a real token last
   batch_of/position        not mutable from an argument: it is an invariant of the
                            builder's own arithmetic, and it is shown firing by the
@@ -290,7 +340,11 @@ all 18 mutations produced a failure
 the keep rule, demonstrated and not counted as a check: on cross-entropies [1.0, 1.0, 0.5] it
 keeps epoch 3, and on [0.5, 0.5, 1.0] it keeps epoch 1, i.e. the earlier of two tied epochs
 
-all 13 mutations of this script and all of decider.py's produced a failure
+the paired arithmetic, demonstrated and not counted as a check: [1.0, 3.0] against
+[0.0, 1.0] differs by [1.0, 2.0] per row, whose mean is 1.5000, whose sample standard
+deviation is 0.7071 over sqrt(2) = 0.5000, and whose ratio is therefore 3.0000
+
+all 16 mutations of this script and all of decider.py's produced a failure
 
 ========================================================================
 6  WHAT THIS RUN DOES NOT SHOW
@@ -318,6 +372,6 @@ all 13 mutations of this script and all of decider.py's produced a failure
 - Nothing about the pass time with an adapter attached.  The repeat check makes two
   passes and times neither.
 
-wall clock    1819.8 s (30.3 min) from the first line to this one
-finished      2026-11-24T05:53:16+0900
+wall clock    1808.6 s (30.1 min) from the first line to this one
+finished      2026-11-24T08:57:43+0900
 end of tune.py

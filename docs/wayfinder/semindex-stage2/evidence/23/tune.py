@@ -13,7 +13,9 @@ run of this script that tuned only one candidate would also have to re-derive ev
 count, every seed set and every assertion below, which is the part a reader checks.
 
 WHAT IT DOES, IN ORDER
-  0. refuses to start if another compute process is on the shared card;
+  0. refuses to start if another compute process is on the shared card, and prints the
+     sha256 of itself and of every module of this step it reads a number through, so the
+     adapters it writes name the code that wrote them;
   1. re-counts both candidates' row sets ON THIS HOST from the label file's own bytes and
      stops if any count differs from the committed `rows.txt`.  The counts are the whole
      definition of what is being tuned, and `rows.py` runs on another machine;
@@ -24,8 +26,10 @@ WHAT IT DOES, IN ORDER
      (seeds 71 to 80) at the read-out the score will be taken at, and prints the held-out
      cross-entropy with the held-out agreement and that slice's own baseline beside it;
   5. keeps the epoch with the lowest held-out cross-entropy, the earlier epoch on a tie,
-     deletes the other two, re-loads the kept adapter from disk and requires it to
-     reproduce the numbers it was chosen by;
+     prints the paired difference between the kept epoch and each other epoch with its
+     standard error (which chooses nothing and is read by nothing), deletes the other two,
+     re-loads the kept adapter from disk and requires it to reproduce the numbers it was
+     chosen by;
   6. shows every check failing on a mutated input, and says what the run does not show.
 
 WHAT IT DOES NOT DO
@@ -66,7 +70,11 @@ import time        # noqa: E402
 SEED = 20261124              # the one tuning seed; no sweep, because a sweep is a selection
 EPOCHS = 3
 BATCH = 16                   # 0.0279 s per row against 0.0326 at batch 8, 24.95 GB of 47.27
-LR = 2e-4                    # torch's own AdamW defaults otherwise, incl. weight decay 1e-2
+LR = 2e-4                    # torch's own AdamW defaults otherwise
+# The one setting of the recipe that is in no argument of the call below.  It is READ off
+# the optimiser in part 3 and the run stops unless it is this, because a torch upgrade
+# that moved the default would otherwise tune at another decay under this recipe's name.
+WEIGHT_DECAY = 1e-2
 MAX_PROMPT_TOKENS = 1024     # a bound no row of this cell reaches; nothing is truncated
 LORA_R, LORA_ALPHA = 16, 32
 LORA_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj",
@@ -162,31 +170,49 @@ def check_counts(got, want, where):
     return len(want)
 
 
-def check_roles(roles, where):
-    """The three seed roles are inside their ranges and meet the measuring seeds nowhere.
+def check_weight_decay(values, want, where):
+    """Every weight decay read off the built optimiser is the one the recipe names.
 
-    The roles are tuning 1 to 70, held out 71 to 80 and selection 81 to 100.  This is the
-    check that the held-out slice was carved out of the TUNING half: a held-out slice taken
-    from 81 to 100 would spend the selection half on the epoch choice and nothing else
-    would notice.
-
-    The measuring seeds are tested BEFORE the ranges, although the range test would catch
-    every one of them: tested after it, the measuring branch could never fire on any input
-    the range test admits, and a branch that cannot fail is not evidence.  In this order
-    both branches have a mutation in part 5.
+    spec.md singles this setting out precisely because it is NOT visible in the call: the
+    optimiser is built with a learning rate and nothing else, and torch's AdamW supplies
+    1e-2 of its own.  2026-11-24: the first run printed the value as a typed string, so a
+    torch whose default had moved would have left the archive asserting a number the
+    optimiser did not hold.  The value is read off the object instead, and it is read
+    before the first step, so a refusal here reaches no weight.
     """
-    want = {"tuning": (1, 70), "held out": (71, 80), "selection": (81, 100)}
-    union = sorted({s for seeds in roles.values() for s in seeds})
-    met = sorted(set(union) & set(range(121, 161)))
-    if met:
-        raise Fail("%s: the seed set meets the measuring seeds 121-160: %s" % (where, met))
-    for role, seeds in sorted(roles.items()):
-        lo, hi = want[role]
-        bad = sorted(s for s in seeds if not lo <= s <= hi)
-        if bad:
-            raise Fail("%s: the %s role carries %s, outside %d-%d"
-                       % (where, role, bad[:4], lo, hi))
-    return union
+    bad = sorted({v for v in values if v != want})
+    if bad:
+        raise Fail("%s: the optimiser carries weight decay %s and the recipe names %r"
+                   % (where, bad, want))
+    return want
+
+
+def paired_se(values, against, where):
+    """(mean, the standard error of that mean, mean over that standard error).
+
+    One function for both of the numbers printed beside the keep rule's margin.  Handed
+    one epoch's per-row held-out cross-entropies with `against` None it gives that
+    epoch's own mean and the UNPAIRED standard error of it.  Handed two epochs' per-row
+    lists it differences them row by row first, so the standard error is the sample
+    standard deviation of the per-row DIFFERENCES over the square root of the row count,
+    which is the paired form and is the one that is comparable with the margin.
+
+    The two lists have to be the same length because row i of one and row i of the other
+    must be the same held-out row.  Two lists of different length are two row sets: the
+    difference of their means would still print a plausible number and the pairing, which
+    is the whole reason the paired standard error is the smaller one, would be gone.
+    """
+    if against is not None:
+        if len(against) != len(values):
+            raise Fail("%s: %d row(s) against %d, so the two epochs are not paired"
+                       % (where, len(values), len(against)))
+        values = [v - a for v, a in zip(values, against)]
+    if len(values) < 2:
+        raise Fail("%s: %d value(s), and a sample standard deviation needs at least two"
+                   % (where, len(values)))
+    mean = statistics.fmean(values)
+    se = statistics.stdev(values) / len(values) ** 0.5
+    return mean, se, (mean / se if se else float("inf"))
 
 
 def check_targets(names, model_named, n_layers, n_shared, where):
@@ -362,6 +388,22 @@ _apps = D.nvidia_compute_apps()
 say("nvidia-smi compute apps: %s" % (_apps.strip() if _apps.strip() else "(none)"))
 D.check_card_free(_apps, "tune.py at start")
 say("OK: no other compute process on the GPU")
+say()
+# 2026-11-24: the first run of this script printed the digest of no code file, so the two
+# adapters it wrote were tied to no code state and a reader of its archive could not tell
+# which decider.py had produced the held-out numbers that chose the epochs.  Printed here
+# in the shape the four later scripts of this step print it, so that the adapters this run
+# writes name the code that wrote them.
+CODE_PARTS = D.code_digests(os.path.abspath(__file__))
+D.check_digest_cover(CODE_PARTS, ["tune.py"] + [n for n, _p in D.CODE_FILES],
+                     "tune.py: the code digests")
+say("the code that produced every number below, one sha256 per file:")
+for _n, _sh in CODE_PARTS:
+    say("  %-18s %s" % (_n, _sh))
+say("combined          %s" % D.combined_sha(CODE_PARTS))
+say("WHAT THESE DIGESTS DO NOT COVER:")
+for _what in D.CODE_UNCOVERED:
+    say("  - %s" % _what)
 
 import numpy   # noqa: E402
 import torch   # noqa: E402
@@ -387,7 +429,8 @@ say("base model      %s" % P.MODEL_DIR)
 say("adapters        %s/{%s}" % (ADAPTERS, ",".join(ORDER)))
 say("recipe          LoRA r %d alpha %d dropout 0.0 bias none, no task_type; AdamW lr %g,"
     % (LORA_R, LORA_ALPHA, LR))
-say("                torch's other defaults (weight decay 1e-2); constant rate, no warmup;")
+say("                torch's other defaults; the weight decay is read off the optimiser in")
+say("                part 3 and is not typed here; constant rate, no warmup;")
 say("                batch %d, %d epochs, seed %d; no truncation, prompts capped at %d"
     % (BATCH, EPOCHS, SEED, MAX_PROMPT_TOKENS))
 say("read-out        bf16 base, float32 adapter, batch 1, the three candidate logits at")
@@ -468,7 +511,13 @@ ROLES = {"tuning": sorted({int(r["seed"]) for r in A_ROWS if int(r["seed"]) < HE
          "held out": sorted({int(r["seed"]) for r in A_ROWS
                              if int(r["seed"]) >= HELD_FROM}),
          "selection": sorted(range(81, 101))}
-UNION = check_roles(ROLES, "the seed roles")
+# 2026-11-24: the ranges go to decider.check_roles, which the three scripts that run after
+# the tuning already use.  This script carried a third copy of them, written before the
+# shared one existed; a second definition of which seeds select is the thing that can
+# drift, and the check that matters here is that the held-out slice was carved out of the
+# TUNING half rather than out of the selection half, which no reader would otherwise see.
+ROLE_RANGE = {"tuning": (1, 70), "held out": (71, 80), "selection": (81, 100)}
+UNION = D.check_roles(ROLES, ROLE_RANGE, "the seed roles")
 say()
 for role in ("tuning", "held out", "selection"):
     seeds = ROLES[role]
@@ -555,13 +604,21 @@ def read_three(model, prompt):
 
 
 def held_out(model, rows, where):
-    """(cross-entropy, agreement count, ties, per-answer counts) on a held-out slice.
+    """(cross-entropy, its per-row values, agreement count, ties, per-answer counts).
 
     At the read-out the score will be taken at: bf16 base, float32 adapter, batch 1, the
     first maximum of the three candidate logits.  The cross-entropy is what chooses the
     epoch, because it is the quantity being optimised; the agreement is printed beside it
     for the reader and chooses nothing, and on 568 rows it can only move in steps of
     0.0018.
+
+    2026-11-24: the per-row vector is returned beside the mean, so that the difference
+    between the kept epoch and each other epoch can be printed PAIRED, with a standard
+    error on the same rows.  The mean is still taken by the same single call it always
+    was and is not re-derived from the vector: a sum over 1425 float32 values in another
+    order need not give the same last bits, and that mean is the number the keep rule,
+    the reload check and the later agreement step all compare against.  No extra forward
+    pass: both reductions read the logits this function already collected.
     """
     logits, targets, answers, ties, agree = [], [], {w: 0 for w in P.CANDIDATES}, 0, 0
     for r in rows:
@@ -573,9 +630,11 @@ def held_out(model, rows, where):
         answers[P.CANDIDATES[index]] += 1
         ties += 1 if tied else 0
         agree += 1 if ARMS[index] == r["label"] else 0
-    ce = float(F.cross_entropy(torch.tensor(logits, dtype=torch.float32),
-                               torch.tensor(targets)))
-    return ce, agree, ties, answers
+    stack = torch.tensor(logits, dtype=torch.float32)
+    labels = torch.tensor(targets)
+    ce = float(F.cross_entropy(stack, labels))
+    per_row = [float(v) for v in F.cross_entropy(stack, labels, reduction="none")]
+    return ce, per_row, agree, ties, answers
 
 
 def one_epoch(model, opt, rows, epoch):
@@ -686,6 +745,17 @@ for NAME in ORDER:
     say()
     BASE, PM, MATCHED, LM_NAMED, N_LAYERS, N_SHARED = build(NAME)
     OPT = torch.optim.AdamW([p for p in PM.parameters() if p.requires_grad], lr=LR)
+    # Read off the object that was just built, before any step is taken: the call above
+    # names no weight decay, so this is the only place the value the run actually uses can
+    # be seen at all.  Both the defaults and every parameter group, because a group may
+    # carry its own and the defaults would then describe nothing.
+    WD_READ = ([OPT.defaults["weight_decay"]]
+               + [g["weight_decay"] for g in OPT.param_groups])
+    check_weight_decay(WD_READ, WEIGHT_DECAY, "the optimiser of candidate %s" % NAME)
+    say("optimiser AdamW lr %g; weight decay read off it: defaults %r, %d parameter"
+        % (OPT.defaults["lr"], OPT.defaults["weight_decay"], len(OPT.param_groups)))
+    say("group(s) all at %r, which is the recipe's %r"
+        % (sorted({g["weight_decay"] for g in OPT.param_groups}), WEIGHT_DECAY))
     BEFORE = lora_params(PM)
     torch.cuda.reset_peak_memory_stats()
 
@@ -697,8 +767,9 @@ for NAME in ORDER:
         shutil.rmtree(epoch_dir, ignore_errors=True)
         PM.save_pretrained(epoch_dir)
         t0 = time.time()
-        ce, agree, ties, answers = held_out(PM, HELD, where)
-        EPOCH_ROWS.append({"epoch": E + 1, "ce": ce, "agree": agree, "ties": ties,
+        ce, ce_rows, agree, ties, answers = held_out(PM, HELD, where)
+        EPOCH_ROWS.append({"epoch": E + 1, "ce": ce, "ce_rows": ce_rows,
+                           "agree": agree, "ties": ties,
                            "answers": dict(answers), "loss_first": losses[0],
                            "loss_last": losses[-1], "loss_mean": statistics.fmean(losses),
                            "steps": len(losses), "train_s": secs,
@@ -734,6 +805,30 @@ for NAME in ORDER:
         % (NAME, KEPT + 1, ", ".join("%.6f" % r["ce"] for r in EPOCH_ROWS)))
     say("fixed before any of them existed; a tie would have gone to the earlier epoch")
 
+    # 2026-11-24: the scale the margin above sits on.  THESE NUMBERS CHOOSE NOTHING -- the
+    # epoch is already kept by the rule, which is untouched -- and they are printed because
+    # the margin alone cannot say whether the three epochs differ on the quantity the rule
+    # uses.  Paired, because the three epochs are read out over the SAME held-out rows and
+    # the unpaired standard error of one epoch's mean is the spread of the rows, not the
+    # spread of the difference between two epochs.
+    say()
+    KEPT_ROWS = EPOCH_ROWS[KEPT]["ce_rows"]
+    _mean0, _se0, _ = paired_se(KEPT_ROWS, None,
+                                "the kept epoch of candidate %s" % NAME)
+    say("the scale that margin sits on, and it CHOOSES NOTHING: the epoch above is kept by")
+    say("the frozen rule and these numbers are read by nothing.  The kept epoch's own mean")
+    say("over its %d held-out rows is %.6f, the UNPAIRED standard error of that mean"
+        % (len(KEPT_ROWS), _mean0))
+    say("%.6f.  Per row, against the kept epoch:" % _se0)
+    say("  epoch   mean(this epoch - kept)   paired standard error      ratio")
+    for row in EPOCH_ROWS:
+        if row["epoch"] == KEPT + 1:
+            continue
+        _mean, _se, _ratio = paired_se(
+            row["ce_rows"], KEPT_ROWS,
+            "epoch %d against the kept epoch of candidate %s" % (row["epoch"], NAME))
+        say("  %5d   %23.6f   %20.6f   %8.3f" % (row["epoch"], _mean, _se, _ratio))
+
     # The adapter is read back from DISK and required to reproduce what it was chosen by,
     # because every later script of this step loads it from there and not from this process.
     del PM, OPT, BASE
@@ -741,7 +836,8 @@ for NAME in ORDER:
     KEPT_DIR = EPOCH_ROWS[KEPT]["dir"]
     BASE2 = D.load_base()
     RELOADED = D.attach_adapter(BASE2, KEPT_DIR, "the kept adapter of candidate %s" % NAME)
-    ce2, agree2, ties2, _answers2 = held_out(RELOADED, HELD, "the reloaded %s" % NAME)
+    ce2, _rows2, agree2, ties2, _answers2 = held_out(RELOADED, HELD,
+                                                     "the reloaded %s" % NAME)
     check_reload({"cross-entropy": EPOCH_ROWS[KEPT]["ce"],
                   "agreement": EPOCH_ROWS[KEPT]["agree"],
                   "ties": EPOCH_ROWS[KEPT]["ties"]},
@@ -846,10 +942,11 @@ FIRED.append(shows("digest", lambda: check_digest(CELL, "deadbeef", GOT, "mutate
 FIRED.append(shows("counts", lambda: check_counts(dict(COUNTED, **{"a rows": 11439}),
                                                   EXPECT, "mutated")))
 FIRED.append(shows("roles/range",
-                   lambda: check_roles(dict(ROLES, tuning=ROLES["tuning"] + [81]),
-                                       "mutated")))
+                   lambda: D.check_roles(dict(ROLES, tuning=ROLES["tuning"] + [81]),
+                                         ROLE_RANGE, "mutated")))
 FIRED.append(shows("roles/measuring",
-                   lambda: check_roles(dict(ROLES, selection=[121]), "mutated")))
+                   lambda: D.check_roles(dict(ROLES, selection=[121]), ROLE_RANGE,
+                                         "mutated")))
 FIRED.append(shows("targets/tower",
                    lambda: check_targets(LAST["matched"] + ["model.audio_tower.q_proj"],
                                          LAST["lm_named"], LAST["n_layers"],
@@ -870,6 +967,17 @@ FIRED.append(shows("reload",
                    lambda: check_reload({"cross-entropy": RESULTS["a"]["ce"]},
                                         {"cross-entropy": RESULTS["a"]["ce"] + 1e-6},
                                         "mutated")))
+FIRED.append(shows("weight_decay",
+                   lambda: check_weight_decay([WEIGHT_DECAY, 0.0], WEIGHT_DECAY,
+                                              "mutated")))
+# One row dropped from one of the two epochs, which is the shape a per-row list that had
+# lost its row alignment has: the two means would still differ by a plausible number.
+FIRED.append(shows("paired/rows lost",
+                   lambda: paired_se(RESULTS["a"]["epochs"][0]["ce_rows"][:-1],
+                                     RESULTS["a"]["epochs"][2]["ce_rows"], "mutated")))
+FIRED.append(shows("paired/one row",
+                   lambda: paired_se([RESULTS["a"]["epochs"][0]["ce_rows"][0]], None,
+                                     "mutated")))
 
 
 def _right_pad():
@@ -902,6 +1010,16 @@ say("the keep rule, demonstrated and not counted as a check: on cross-entropies 
     % [r["ce"] for r in _tied])
 say("keeps epoch %d, and on %s it keeps epoch %d, i.e. the earlier of two tied epochs"
     % (_pick + 1, [r["ce"] for r in _tied2], _pick2 + 1))
+say()
+# The paired arithmetic on an input a reader can finish by hand, demonstrated and not
+# counted as a check: the arithmetic is not a refusal, and the two refusals it does carry
+# (the row alignment and the one-row list) are counted above.
+_dm, _dse, _dr = paired_se([1.0, 3.0], [0.0, 1.0], "the demonstration")
+say("the paired arithmetic, demonstrated and not counted as a check: [1.0, 3.0] against")
+say("[0.0, 1.0] differs by [1.0, 2.0] per row, whose mean is %.4f, whose sample standard"
+    % _dm)
+say("deviation is 0.7071 over sqrt(2) = %.4f, and whose ratio is therefore %.4f"
+    % (_dse, _dr))
 say()
 if all(FIRED) and SELF_OK:
     say("all %d mutations of this script and all of decider.py's produced a failure"

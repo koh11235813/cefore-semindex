@@ -12,7 +12,7 @@ the repeat check, the memory assertion, the counters and the restart path.
 nvidia-smi compute apps: (none)
 OK: no other compute process on the GPU
 
-started         2026-11-24T08:02:09+0900
+started         2026-11-24T08:59:58+0900
 torch 2.15.0+cu132 (cuda 13.2), transformers 5.24.0, numpy 2.5.4, python 3.13.5
 gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
 mode            dry: 2 seed(s) x 2 stream(s) = 4 runs per decider
@@ -64,6 +64,11 @@ of it and therefore unexamined.  So the comparison is made here, against the liv
 object: one labelling roll-in of a tuning seed is re-run (no model, no card), its
 own captured observation of one decision is rendered, and that is held against the
 rendering of the gzip row of the same (seed, k).
+  the seed read here is 1, a TUNING seed, in both modes, and the reason is which
+  seed it is NOT: this mode's own first simulated seed is 1, and in the real mode
+  that is a selection-half seed, whose label row and whose roll-in would then be
+  read before this run's first score.  The seam is a JSON row against a live object
+  and not a question about which seed, so it is pinned to the tuning half.
   the roll-in of seed 1 re-run in 0.0 s, 158 captured decisions, no model
   decision k 79: the roll-in arm the live run drew is 10.043 s and the row's is 10.043 s
   the live observation renders to 1157 characters, the gzip row of the same (seed, k)
@@ -79,11 +84,11 @@ at most one decider's work.  A part file is resumed only if it was produced by t
 script and this adapter; otherwise the run refuses rather than mixing two
 experiments under one decider name.
 
-script digest   1071e451e4ebce92aeaeb2a02abdf13fd705a9f0b4cd39d4cefe4696ab18e387
+script digest   f3a34ad0ceff4a4e2fb746851f504ef13da9fd5700657987eb215dee04031cd8
                 one sha256 over the files below, in this order.  Each part is
                 printed too, because a combined digest tells a reader that
                 something moved and not what:
-  eval.py            077690dbbafa98ebe949458a8aa6cee38a952af305af2ba34d634c0e18f34256
+  eval.py            629c4f0986ec25bb67268ada17c5636e0ee157d91acbf97ad9810fb4ca3a4582
   decider.py         a3a913e9e1c0422d9bae5afb1c9f2974c01c3ddbfbfdc1e616d02f312d7080b0
   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
   ../22/observe.py   9a5808bb40ddfd0f827fa04ff3aa7ad3c2c9c69243104b9651bb7e4da90056c2
@@ -103,12 +108,12 @@ to run now      const3.695, const6.000, const10.043, F, untuned, a, b
 K               4 worker process(es); every row carries it, and a resume of a model
                 decider's part file at another K is refused rather than mixed
 model digest    untuned  none
-model digest    a        bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b7f3dfabfe86b4
-                  adapter_config.json        fcc7437735d098187b778ccecf0c4c4e7b71f37f03d08aecb9778a70e1f52552
-                  adapter_model.safetensors  98f671bf49e25ff21236f503c57a1dc0d4d8c4f23b9565b6df5a05c842c94adf
-model digest    b        a4e5c9011d5c3e661d2df9ca41928a64352970ba1061c3395d1c223ff830a916
-                  adapter_config.json        fcc7437735d098187b778ccecf0c4c4e7b71f37f03d08aecb9778a70e1f52552
-                  adapter_model.safetensors  64fb49840b79a2d16ac32225c8e5e4274bce18f96799e1725d110b4b9edb8172
+model digest    a        922309eb7acd0ee669aeb120d17544fba521eccd42763d621be3eda40f54c48b
+                  adapter_config.json        4d76d6c63d6a9a20ba4018f64e11b76743645617211a8aa7f019126f305cd760
+                  adapter_model.safetensors  66c41692e534c27aa547ca7e68ce9363201e323cbcb18a2a17693cbab9c4eeb8
+model digest    b        6a39ca005019699bef789b6811abd006da7f9445708894ea444d9e8690441cc1
+                  adapter_config.json        4d76d6c63d6a9a20ba4018f64e11b76743645617211a8aa7f019126f305cd760
+                  adapter_model.safetensors  268a3dd4db8b6e8fc5452ba3aa1ce174a7990979026f82fe0e0ce896ecc32514
                 the adapter digest is over those two files together: the config
                 carries r and lora_alpha, which scale the LoRA output and therefore
                 every logit, so weights alone would resume a re-scaled adapter
@@ -125,11 +130,11 @@ computed before the reference it will be compared against exists.
 
   the reference read-out, one process alone on the card
     candidate ids [2822, 5453, 1440] for [' short', ' mid', ' long'], each one token at this position
-    untuned  loaded in  2.7 s, 64 rows at 48.6 ms per read-out, repeat row [17.875, 15.5625, 14.5] -> ' short'
-    a        loaded in  2.6 s, 64 rows at 70.6 ms per read-out, repeat row [18.75, 18.875, 19.25] -> ' long'
-    b        loaded in  2.6 s, 64 rows at 70.9 ms per read-out, repeat row [19.375, 18.75, 19.5] -> ' long'
+    untuned  loaded in  2.7 s, 64 rows at 48.7 ms per read-out, repeat row [17.875, 15.5625, 14.5] -> ' short'
+    a        loaded in  2.6 s, 64 rows at 70.0 ms per read-out, repeat row [28.0, 28.25, 28.625] -> ' long'
+    b        loaded in  2.7 s, 64 rows at 69.0 ms per read-out, repeat row [18.5, 17.75, 19.25] -> ' long'
     the reference child now exits, before any worker is spawned
-  the reference child took 24.9 s in all and its weights are off the card
+  the reference child took 24.8 s in all and its weights are off the card
 
 the repeat check of the reference read-out, per model decider (seed 71 k 72):
   -- untuned --
@@ -138,15 +143,15 @@ the repeat check of the reference read-out, per model decider (seed 71 k 72):
     bit-identical, both chose ' short' (3.695 s), tie at the maximum: False
     one logit moved by 1 FIRES: the repeat check of untuned, mutated: 1 of 3 logits differ, first at 0: 18.875 against 17.875
   -- a --
-    two passes over one row: [18.75, 18.875, 19.25]
-                        and: [18.75, 18.875, 19.25]
+    two passes over one row: [28.0, 28.25, 28.625]
+                        and: [28.0, 28.25, 28.625]
     bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
-    one logit moved by 1 FIRES: the repeat check of a, mutated: 1 of 3 logits differ, first at 0: 19.75 against 18.75
+    one logit moved by 1 FIRES: the repeat check of a, mutated: 1 of 3 logits differ, first at 0: 29.0 against 28.0
   -- b --
-    two passes over one row: [19.375, 18.75, 19.5]
-                        and: [19.375, 18.75, 19.5]
+    two passes over one row: [18.5, 17.75, 19.25]
+                        and: [18.5, 17.75, 19.25]
     bit-identical, both chose ' long' (10.043 s), tie at the maximum: False
-    one logit moved by 1 FIRES: the repeat check of b, mutated: 1 of 3 logits differ, first at 0: 20.375 against 19.375
+    one logit moved by 1 FIRES: the repeat check of b, mutated: 1 of 3 logits differ, first at 0: 19.5 against 18.5
 
 WHERE THIS REPEAT CHECK IS MADE, and where it is not: in the reference child,
 which is one process alone on the card.  No WORKER reads one row twice.  What
@@ -160,8 +165,8 @@ read-out is the tuning's read-out.  The triples are READ OFF tune.txt and not
 typed here: three scripts carried the same hand transcription, so each of their
 archives printed a typed number and a re-tune would have had to be followed into
 three files.  tune.txt is the tuning run's own stdout:
-  a        [18.75, 18.875, 19.25] against tune.txt's [18.75, 18.875, 19.25]: equal True
-  b        [19.375, 18.75, 19.5] against tune.txt's [19.375, 18.75, 19.5]: equal True
+  a        [28.0, 28.25, 28.625] against tune.txt's [28.0, 28.25, 28.625]: equal True
+  b        [18.5, 17.75, 19.25] against tune.txt's [18.5, 17.75, 19.25]: equal True
 
 ========================================================================
 4  THE SEVEN DECIDERS THROUGH THE PORT
@@ -178,20 +183,20 @@ assertion that the memory is empty at a simulation's FIRST decision is what
   F            4 runs in   0.1 s, mean polls per run 176.500, mean score    34572.724 ms
 
 -- untuned, K = 4 workers --
-  worker 0: 64 x 3 logits bit-identical to the reference (loaded in 3.4 s, 55.5 ms per read-out)
-  worker 1: 64 x 3 logits bit-identical to the reference (loaded in 3.6 s, 55.8 ms per read-out)
-  worker 2: 64 x 3 logits bit-identical to the reference (loaded in 3.3 s, 55.3 ms per read-out)
-  worker 3: 64 x 3 logits bit-identical to the reference (loaded in 3.4 s, 55.6 ms per read-out)
+  worker 0: 64 x 3 logits bit-identical to the reference (loaded in 3.5 s, 56.3 ms per read-out)
+  worker 1: 64 x 3 logits bit-identical to the reference (loaded in 3.3 s, 55.7 ms per read-out)
+  worker 2: 64 x 3 logits bit-identical to the reference (loaded in 3.4 s, 56.0 ms per read-out)
+  worker 3: 64 x 3 logits bit-identical to the reference (loaded in 3.3 s, 55.9 ms per read-out)
   the gate passed for all 4 workers, so they may score
-  worker 0 of untuned: loaded in 3.4 s, 64 gate rows at 55.5 ms, pid 1518270
-  worker 0 of untuned: 1 run(s), 282 forward pass(es) at 51.9 ms per read-out
-  worker 1 of untuned: loaded in 3.6 s, 64 gate rows at 55.8 ms, pid 1518271
-  worker 1 of untuned: 1 run(s), 279 forward pass(es) at 52.0 ms per read-out
-  worker 2 of untuned: loaded in 3.3 s, 64 gate rows at 55.3 ms, pid 1518272
+  worker 0 of untuned: loaded in 3.5 s, 64 gate rows at 56.3 ms, pid 1521505
+  worker 0 of untuned: 1 run(s), 282 forward pass(es) at 51.8 ms per read-out
+  worker 1 of untuned: loaded in 3.3 s, 64 gate rows at 55.7 ms, pid 1521506
+  worker 1 of untuned: 1 run(s), 279 forward pass(es) at 51.9 ms per read-out
+  worker 2 of untuned: loaded in 3.4 s, 64 gate rows at 56.0 ms, pid 1521507
   worker 2 of untuned: 1 run(s), 279 forward pass(es) at 51.9 ms per read-out
-  worker 3 of untuned: loaded in 3.4 s, 64 gate rows at 55.6 ms, pid 1518273
+  worker 3 of untuned: loaded in 3.3 s, 64 gate rows at 55.9 ms, pid 1521508
   worker 3 of untuned: 1 run(s), 280 forward pass(es) at 51.9 ms per read-out
-  1120 forward passes in a 14.9 s window = 75.4 passes/s at K = 4, 51.9 ms per
+  1120 forward passes in a 14.8 s window = 75.6 passes/s at K = 4, 51.9 ms per
   read-out inside a worker (the tokenizer call and the pass, not the render)
   per run, as the plan asks so that the real run can be re-estimated:
     seed   1 stream  0  decider_ord state_poll_reschedule 282, state_poll 282, passes 282, ties  0, answers 282/0/0, polls 258, score    42204.624 ms
@@ -201,57 +206,57 @@ assertion that the memory is empty at a simulation's FIRST decision is what
   mean polls per run 256.000, mean score    41139.691 ms, ties 0 of 1120 decisions
 
 -- a, K = 4 workers --
-  worker 0: 64 x 3 logits bit-identical to the reference (loaded in 4.1 s, 80.1 ms per read-out)
-  worker 1: 64 x 3 logits bit-identical to the reference (loaded in 4.0 s, 79.9 ms per read-out)
-  worker 2: 64 x 3 logits bit-identical to the reference (loaded in 4.0 s, 79.5 ms per read-out)
-  worker 3: 64 x 3 logits bit-identical to the reference (loaded in 4.1 s, 80.1 ms per read-out)
+  worker 0: 64 x 3 logits bit-identical to the reference (loaded in 4.2 s, 78.5 ms per read-out)
+  worker 1: 64 x 3 logits bit-identical to the reference (loaded in 4.2 s, 79.0 ms per read-out)
+  worker 2: 64 x 3 logits bit-identical to the reference (loaded in 4.1 s, 79.0 ms per read-out)
+  worker 3: 64 x 3 logits bit-identical to the reference (loaded in 4.2 s, 79.2 ms per read-out)
   the gate passed for all 4 workers, so they may score
-  worker 0 of a: loaded in 4.1 s, 64 gate rows at 80.1 ms, pid 1518415
-  worker 0 of a: 1 run(s), 124 forward pass(es) at 74.8 ms per read-out
-  worker 1 of a: loaded in 4.0 s, 64 gate rows at 79.9 ms, pid 1518416
-  worker 1 of a: 1 run(s), 125 forward pass(es) at 74.6 ms per read-out
-  worker 2 of a: loaded in 4.0 s, 64 gate rows at 79.5 ms, pid 1518417
-  worker 2 of a: 1 run(s), 132 forward pass(es) at 74.5 ms per read-out
-  worker 3 of a: loaded in 4.1 s, 64 gate rows at 80.1 ms, pid 1518418
-  worker 3 of a: 1 run(s), 122 forward pass(es) at 74.7 ms per read-out
-  503 forward passes in a 10.0 s window = 50.5 passes/s at K = 4, 74.6 ms per
+  worker 0 of a: loaded in 4.2 s, 64 gate rows at 78.5 ms, pid 1521555
+  worker 0 of a: 1 run(s), 117 forward pass(es) at 74.1 ms per read-out
+  worker 1 of a: loaded in 4.2 s, 64 gate rows at 79.0 ms, pid 1521556
+  worker 1 of a: 1 run(s), 117 forward pass(es) at 74.1 ms per read-out
+  worker 2 of a: loaded in 4.1 s, 64 gate rows at 79.0 ms, pid 1521557
+  worker 2 of a: 1 run(s), 121 forward pass(es) at 74.0 ms per read-out
+  worker 3 of a: loaded in 4.2 s, 64 gate rows at 79.2 ms, pid 1521558
+  worker 3 of a: 1 run(s), 119 forward pass(es) at 74.2 ms per read-out
+  474 forward passes in a 9.1 s window = 52.2 passes/s at K = 4, 74.1 ms per
   read-out inside a worker (the tokenizer call and the pass, not the render)
   per run, as the plan asks so that the real run can be re-estimated:
-    seed   1 stream  0  decider_ord state_poll_reschedule 124, state_poll 124, passes 124, ties 20, answers 18/15/91, polls 108, score    36034.914 ms
-    seed   1 stream  1  decider_ord state_poll_reschedule 125, state_poll 125, passes 125, ties 17, answers 21/14/90, polls 109, score    37833.176 ms
-    seed   2 stream  0  decider_ord state_poll_reschedule 132, state_poll 132, passes 132, ties 19, answers 30/13/89, polls 116, score    35953.781 ms
-    seed   2 stream  1  decider_ord state_poll_reschedule 122, state_poll 122, passes 122, ties 19, answers 20/10/92, polls 106, score    42250.305 ms
-  mean polls per run 109.750, mean score    38018.044 ms, ties 75 of 503 decisions
+    seed   1 stream  0  decider_ord state_poll_reschedule 117, state_poll 117, passes 117, ties 17, answers 5/14/98, polls 101, score    38547.242 ms
+    seed   1 stream  1  decider_ord state_poll_reschedule 117, state_poll 117, passes 117, ties 27, answers 6/22/89, polls 101, score    36803.509 ms
+    seed   2 stream  0  decider_ord state_poll_reschedule 121, state_poll 121, passes 121, ties 27, answers 10/18/93, polls 105, score    38635.542 ms
+    seed   2 stream  1  decider_ord state_poll_reschedule 119, state_poll 119, passes 119, ties 25, answers 7/20/92, polls 103, score    36986.367 ms
+  mean polls per run 102.500, mean score    37743.165 ms, ties 96 of 474 decisions
 
 -- b, K = 4 workers --
-  worker 0: 64 x 3 logits bit-identical to the reference (loaded in 3.9 s, 79.5 ms per read-out)
-  worker 1: 64 x 3 logits bit-identical to the reference (loaded in 4.0 s, 79.8 ms per read-out)
-  worker 2: 64 x 3 logits bit-identical to the reference (loaded in 3.8 s, 79.7 ms per read-out)
-  worker 3: 64 x 3 logits bit-identical to the reference (loaded in 3.9 s, 79.8 ms per read-out)
+  worker 0: 64 x 3 logits bit-identical to the reference (loaded in 4.0 s, 79.8 ms per read-out)
+  worker 1: 64 x 3 logits bit-identical to the reference (loaded in 3.9 s, 79.6 ms per read-out)
+  worker 2: 64 x 3 logits bit-identical to the reference (loaded in 4.1 s, 80.0 ms per read-out)
+  worker 3: 64 x 3 logits bit-identical to the reference (loaded in 3.9 s, 79.6 ms per read-out)
   the gate passed for all 4 workers, so they may score
-  worker 0 of b: loaded in 3.9 s, 64 gate rows at 79.5 ms, pid 1518548
-  worker 0 of b: 1 run(s), 151 forward pass(es) at 73.9 ms per read-out
-  worker 1 of b: loaded in 4.0 s, 64 gate rows at 79.8 ms, pid 1518549
-  worker 1 of b: 1 run(s), 157 forward pass(es) at 73.7 ms per read-out
-  worker 2 of b: loaded in 3.8 s, 64 gate rows at 79.7 ms, pid 1518550
-  worker 2 of b: 1 run(s), 164 forward pass(es) at 73.3 ms per read-out
-  worker 3 of b: loaded in 3.9 s, 64 gate rows at 79.8 ms, pid 1518551
-  worker 3 of b: 1 run(s), 165 forward pass(es) at 73.7 ms per read-out
-  637 forward passes in a 12.3 s window = 51.8 passes/s at K = 4, 73.6 ms per
+  worker 0 of b: loaded in 4.0 s, 64 gate rows at 79.8 ms, pid 1521605
+  worker 0 of b: 1 run(s), 151 forward pass(es) at 72.1 ms per read-out
+  worker 1 of b: loaded in 3.9 s, 64 gate rows at 79.6 ms, pid 1521606
+  worker 1 of b: 1 run(s), 140 forward pass(es) at 72.5 ms per read-out
+  worker 2 of b: loaded in 4.1 s, 64 gate rows at 80.0 ms, pid 1521607
+  worker 2 of b: 1 run(s), 149 forward pass(es) at 72.6 ms per read-out
+  worker 3 of b: loaded in 3.9 s, 64 gate rows at 79.6 ms, pid 1521608
+  worker 3 of b: 1 run(s), 151 forward pass(es) at 72.4 ms per read-out
+  591 forward passes in a 11.1 s window = 53.4 passes/s at K = 4, 72.4 ms per
   read-out inside a worker (the tokenizer call and the pass, not the render)
   per run, as the plan asks so that the real run can be re-estimated:
-    seed   1 stream  0  decider_ord state_poll_reschedule 151, state_poll 151, passes 151, ties  7, answers 71/0/80, polls 141, score    33607.497 ms
-    seed   1 stream  1  decider_ord state_poll_reschedule 157, state_poll 157, passes 157, ties  7, answers 81/0/76, polls 149, score    31989.148 ms
-    seed   2 stream  0  decider_ord state_poll_reschedule 164, state_poll 164, passes 164, ties  8, answers 89/0/75, polls 156, score    37617.136 ms
-    seed   2 stream  1  decider_ord state_poll_reschedule 165, state_poll 165, passes 165, ties  9, answers 94/0/71, polls 157, score    47209.532 ms
-  mean polls per run 150.750, mean score    37605.828 ms, ties 31 of 637 decisions
+    seed   1 stream  0  decider_ord state_poll_reschedule 151, state_poll 151, passes 151, ties  6, answers 72/0/79, polls 141, score    35130.847 ms
+    seed   1 stream  1  decider_ord state_poll_reschedule 140, state_poll 140, passes 140, ties 14, answers 57/0/83, polls 132, score    35889.767 ms
+    seed   2 stream  0  decider_ord state_poll_reschedule 149, state_poll 149, passes 149, ties  8, answers 67/0/82, polls 141, score    40391.064 ms
+    seed   2 stream  1  decider_ord state_poll_reschedule 151, state_poll 151, passes 151, ties 13, answers 73/0/78, polls 143, score    42210.955 ms
+  mean polls per run 139.250, mean score    38405.658 ms, ties 41 of 591 decisions
 
 ========================================================================
 5  THE CSV
 ========================================================================
 /home/yamakawa/Development/semindex-learn/eval_dry.csv: 28 rows of 7 deciders x 4 runs, one script digest and 3 model digest(s)
 columns         decider,seed,stream,n4,c4,lat_ms,censored_ms,polls,delay_ms,score_ms,score_dropped_ms,weight_ms_per_poll,reads,sends,ties,n_short,n_mid,n_long,ord_poll,ord_resched,k,script_sha,model_sha
-sha256          b4fcddef2594f8846748869053b555d0d27e828a278b32f0d8d2a6d9c372a2a0
+sha256          f38fff0296a23c5fe13f8bfa72b20993eaa8d9ceac26cef31e8a33c6f6e8c923
 Floats are written through repr, so ana.py can recompute delay + weight x polls from
 these columns and require it to equal the score column bit for bit.  reads, sends,
 ties and the three answer counts are empty for the four deciders that call no model.
@@ -265,18 +270,18 @@ more passes.  Measured here, per model decider:
 
   decider   passes/run (min/mean/max)   mean ms per read-out   800 runs
   untuned   279 /   280.0 / 282           51.9                     224000 passes
-  a         122 /   125.8 / 132           74.6                     100600 passes
-  b         151 /   159.2 / 165           73.6                     127400 passes
+  a         117 /   118.5 / 121           74.1                      94800 passes
+  b         140 /   147.8 / 151           72.4                     118200 passes
 
-  the three model deciders together: 452000 forward passes on seeds 81 to 100
-  measured here at K = 4: 59.2 passes/s over the workers' own windows, so
-  452000 passes take 127.2 min (2.1 h)
+  the three model deciders together: 437000 forward passes on seeds 81 to 100
+  measured here at K = 4: 60.4 passes/s over the workers' own windows, so
+  437000 passes take 120.5 min (2.0 h)
 
-  the per-decision cost, measured, in three parts: 66.7 ms of read-out (the
-  tokenizer call and the forward pass) inside a worker at K = 4, 63.4 ms of the
+  the per-decision cost, measured, in three parts: 66.1 ms of read-out (the
+  tokenizer call and the forward pass) inside a worker at K = 4, 62.6 ms of the
   same read-out in the reference child ALONE on the card, and 0.1 ms to render
   one observation on the cpu.  K = 1 is therefore an INFERENCE and not a
-  measurement of this run: 452000 x (63.4 + 0.1) ms = 478.0 min (8.0 h), because the
+  measurement of this run: 437000 x (62.6 + 0.1) ms = 456.4 min (7.6 h), because the
   render overlaps another worker's pass at K > 1 and overlaps nothing at K = 1.
   The plan's own figures, for comparison: 385 704 passes at 75.9 passes/s = 84.7
   min at K = 4 and 278.3 min at K = 1, from 160.7 passes per run.
@@ -308,8 +313,8 @@ caller of: the memory assertion and the repeat check.
   seam/rollin anchor       FIRES: mutated: at decision k 79 the re-run roll-in drew 3.695 and the label row records 10.043, so this is not the run that row came from
   counters/reads           FIRES: mutated: 2 forward pass(es) against 1 resolution-time decision(s)
   counters/sends           FIRES: mutated: 2 send-time decision(s) against the engine's 1
-  sidecar/script digest    FIRES: mutated: script_sha 'deadbeef' against '1071e451e4ebce92aeaeb2a02abdf13fd705a9f0b4cd39d4cefe4696ab18e387'
-  sidecar/model digest     FIRES: mutated: model_sha 'none' against 'bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b7f3dfabfe86b4'
+  sidecar/script digest    FIRES: mutated: script_sha 'deadbeef' against 'f3a34ad0ceff4a4e2fb746851f504ef13da9fd5700657987eb215dee04031cd8'
+  sidecar/model digest     FIRES: mutated: model_sha 'none' against '922309eb7acd0ee669aeb120d17544fba521eccd42763d621be3eda40f54c48b'
   sidecar/K                FIRES: mutated: k '5' against '4'
   complete/one row missing FIRES: mutated: 1 missing (e.g. [(1, 0)]) and 0 unexpected (e.g. []) of 4 runs
   complete/one row twice   FIRES: mutated: 1 row(s) appear twice, e.g. [(1, 0)]
@@ -361,6 +366,6 @@ all 23 mutations of this script produced a failure
   tokenizer call and are taken with K workers queueing on one card; latency.py is
   the measurement.
 
-wall clock    107.4 s (1.8 min) from the first line to this one
-finished      2026-11-24T08:03:56+0900
+wall clock    105.4 s (1.8 min) from the first line to this one
+finished      2026-11-24T09:01:43+0900
 end of eval.py

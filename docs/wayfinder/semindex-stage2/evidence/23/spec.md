@@ -1095,3 +1095,37 @@ the plan's single anchor of 160.7. The real evaluation is therefore about 452 00
 84.7 min. The four-worker gate passed on the dry run (2304 logits bit-identical to the single-process
 reference), so four workers is what the real run uses unless its own gate refuses. The single-worker
 fallback was never run and its 8.0 h is an inference.
+
+**A7. Threat 18: the recipe does not reproduce on this host, so each candidate is one draw of it.** Written
+after the second tuning run and before any score on seeds 81 to 100 (`RUN.txt` sections 20 and 21). The two
+runs of the same recipe on the same rows wrote different weight files for both candidates. Neither run
+asked for a deterministic kernel, which is the recipe as frozen. The first printed number that differs is
+candidate b's last training loss of epoch 1; the first loss is equal in both runs. What moved on the 71 to
+80 slice, first run then second run (`tune_run1.txt`, `tune.txt`):
+
+| | kept epoch | held-out cross-entropy | agreement | baseline |
+|---|---|---|---|---|
+| a | 3, then 2 | 0.893928, then 0.888765 | 777, then 757 of 1425 (0.5453, 0.5312) | 0.5102 |
+| b | 3, then 3 | 0.622174, then 0.638168 | 408, then 406 of 568 (0.7183, 0.7148) | 0.6831 |
+
+Candidate a's gain over its baseline went from 0.035 to 0.021 between two runs of one recipe, so the
+spread of the recipe is of the size of the gain. The second run's paired figures put A5 in its right
+denominator: a's kept epoch is 0.001873 below its runner-up with a paired standard error of 0.005268
+(ratio 0.356), so a's epoch is still not distinguished; b's is (0.029425 with 0.010900, ratio 2.699).
+As A3 fixed in advance, the second run's adapters are the candidates and nothing above selected them.
+**What a reader may therefore not conclude: that a difference between a's and b's replay scores is the
+difference between their row sets.** It carries one draw of tuning noise per candidate, and that noise is
+not measured on the scale of the score by anything in the plan. The 297 ms rule is applied as written;
+its verdict is read with this beside it. One measurement could put a number on that noise afterwards
+without choosing anything: scoring the first run's two adapters (`ROOT/adapters-run1`, fixed files) on the
+same seeds and streams. It is not part of this plan and is run only if the user asks for it.
+
+**A8. What A1 and A2 do not cover.** Both are about reads of the selection half *before any score*.
+`eval.py`'s last part, where its checks are shown failing on mutated inputs, takes the first simulated
+seed, which is 81 in a real run: it builds that seed's run dict once more and starts one simulation that
+the port refuses. That happens after every score of the run is written and reaches none of them.
+
+**A9. A6's cost, re-measured on the second run's adapters.** Resolution-time decisions per run on seeds 1
+and 2: untuned 280.0 (unchanged), a 118.5, b 147.8. The real evaluation is about 437 000 forward passes
+and about 2.0 h at four workers (60.4 passes per second); the single-worker inference is 7.6 h. The
+four-worker gate passed again on these adapters (2304 logits bit-identical to the reference).

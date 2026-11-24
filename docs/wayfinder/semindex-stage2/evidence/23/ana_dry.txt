@@ -22,7 +22,7 @@ deciders        const3.695, const6.000, const10.043, F, untuned, a, b
 seed column     min 1 max 2, 2 distinct
 stream column   min 0 max 1, 2 distinct
 runs            4 per decider
-script digest   1071e451e4ebce92aeaeb2a02abdf13fd705a9f0b4cd39d4cefe4696ab18e387, one value over every row
+script digest   f3a34ad0ceff4a4e2fb746851f504ef13da9fd5700657987eb215dee04031cd8, one value over every row
                 It is a digest over the files eval.py's own output names one by one,
                 beside the list of what it does NOT cover.  This script cannot
                 widen it or name its parts: it reads the csv and nothing else, which
@@ -32,8 +32,8 @@ script digest   1071e451e4ebce92aeaeb2a02abdf13fd705a9f0b4cd39d4cefe4696ab18e387
   const10.043     4 rows, model digest none
   F               4 rows, model digest none
   untuned         4 rows, model digest none
-  a               4 rows, model digest bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b7f3dfabfe86b4
-  b               4 rows, model digest a4e5c9011d5c3e661d2df9ca41928a64352970ba1061c3395d1c223ff830a916
+  a               4 rows, model digest 922309eb7acd0ee669aeb120d17544fba521eccd42763d621be3eda40f54c48b
+  b               4 rows, model digest 6a39ca005019699bef789b6811abd006da7f9445708894ea444d9e8690441cc1
 weight          104.29595912307323 ms per poll, the value ../22/weight.json carries and every row
                 was scored at
 OK: delay + weight x polls recomputes the score column of all 28 rows exactly
@@ -69,10 +69,10 @@ Lower is better.  THIS NUMBER, AND NOTHING ELSE, CHOOSES BETWEEN a AND b.
   const10.043       40300.821           95.750       30314.483   --
   F                 34572.724          176.500       16164.488   --
   untuned           41139.691          256.000       14439.925   0 / 1120
-  a                 38018.044          109.750       26571.562   75 / 503
-  b                 37605.828          150.750       21883.213   31 / 637
+  a                 37743.165          102.500       27052.829   96 / 474
+  b                 38405.658          139.250       23882.446   41 / 591
 
-ranked, lower first: F 34572.7, b 37605.8, a 38018.0, const6.000 39997.1, const10.043 40300.8, const3.695 40313.2, untuned 41139.7
+ranked, lower first: F 34572.7, a 37743.2, b 38405.7, const6.000 39997.1, const10.043 40300.8, const3.695 40313.2, untuned 41139.7
 The three fixed arms' own poll counts on these seeds, which the gain's "no gain"
 message quotes rather than ../22/weight.txt's 95.985 and 256.455 (those are step 4's
 means over seeds 1 to 100 and would name an interval this test did not use):
@@ -117,8 +117,8 @@ unreadable; the dropped count is printed beside every interval.
   decider        gain      95 % interval            half width   dropped   word
   F             0.2230     13.306 % to   29.375 %      8.034 %         0   seen
   untuned      -0.0624    -12.260 % to   -0.708 %      5.776 %         0   reversed
-  a             0.0602      4.684 % to    7.284 %      1.300 %         0   seen
-  b             0.0899      4.724 % to   16.147 %      5.711 %         0   seen
+  a             0.0760      4.899 % to   10.554 %      2.828 %         0   seen
+  b             0.0462      4.057 % to    5.449 %      0.696 %         0   seen
 
 The real mode's 95 % interval, at 20 seeds, is expected to be wider than ../20's at
 40 by roughly sqrt(2); that is an INFERENCE and not a measurement, and the printed
@@ -129,8 +129,8 @@ four model-or-rule deciders.
 ========================================================================
 4  HOW THE CHOICE BETWEEN a AND b IS MADE
 ========================================================================
-mean score      a    38018.044 ms,  b    37605.828 ms
-gap             412.216 ms, the lower being b
+mean score      a    37743.165 ms,  b    38405.658 ms
+gap             662.493 ms, the lower being a
 the band        1.685586 ms per poll x 176.220 polls = 297.0340 ms, and the RULE the frozen
                 plan states is 297.0 ms.  It is the jackknife standard error
                 ../22/weight.txt attaches to the fixed weight, times the midpoint of
@@ -145,24 +145,24 @@ the band        1.685586 ms per poll x 176.220 polls = 297.0340 ms, and the RULE
 
 the part of the band that does NOT cancel: a weight error shifts both candidates in
 the same direction and cancels to the extent their poll counts agree, so
-  1.685586 x |polls(a) - polls(b)| = 1.685586 x |109.750 - 150.750| = 69.109 ms
+  1.685586 x |polls(a) - polls(b)| = 1.685586 x |102.500 - 139.250| = 61.945 ms
 is the part of the wobble that survives the cancellation.  It is computable only
 after the scores exist, so it is reported and is not the rule.
 
 the paired bootstrap over the same 2 seeds and the same index matrix, whose per-seed
 value is the MEAN OF THAT SEED'S 2 RUN SCORES -- the only aggregate under which
 resampling 2 seed indices reproduces the 4-run mean the rule compares:
-  score(a) - score(b): point 412.216 ms, 95 % interval -3311.291 to 4135.722 ms, contains 0: True
+  score(a) - score(b): point -662.493 ms, 95 % interval -3490.055 to 2165.068 ms, contains 0: True
   distinct resample values: 3 of 2000
   AT TWO SEEDS THIS IS DEGENERATE: a resample of two positions has three distinct
   means, so the interval is the arithmetic running and not an interval.
 
-VERDICT: SEPARATED, NOT RESOLVED.  The gap of 412.216 ms clears the 297.0 ms band,
+VERDICT: SEPARATED, NOT RESOLVED.  The gap of 662.493 ms clears the 297.0 ms band,
 so the relabelling clause stays shut and the chosen candidate is the lower one,
-b; but the gap lies inside the paired bootstrap's 95 % interval (-3311.291 to 4135.722
+a; but the gap lies inside the paired bootstrap's 95 % interval (-3490.055 to 2165.068
 ms, which contains 0), so this report does not call the two distinguished.
 
-THE CANDIDATE THIS ANALYSIS CARRIES FORWARD: b
+THE CANDIDATE THIS ANALYSIS CARRIES FORWARD: a
 ...on TUNING seeds, so that name is the arithmetic's answer and not the step's.
 
 The selection bias of choosing one of two candidates on the same seeds is not
@@ -178,7 +178,7 @@ best-of-two against a single comparator.
   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
   roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
   roles/measuring            FIRES: mutated: the seed set meets the measuring seeds 121-160: [121]
-  one script digest          FIRES: mutated: 2 different script_sha values: ['1071e451e4ebce92aeaeb2a02abdf13fd705a9f0b4cd39d4cefe4696ab18e387', 'deadbeef']
+  one script digest          FIRES: mutated: 2 different script_sha values: ['deadbeef', 'f3a34ad0ceff4a4e2fb746851f504ef13da9fd5700657987eb215dee04031cd8']
   one model digest           FIRES: mutated: 2 different model_sha values: ['deadbeef', 'none']
   weight                     FIRES: mutated: 1 row(s) at another weight, e.g. 100.0 against 104.29595912307323
   score/one lat moved        FIRES: mutated: const3.695 seed 1 stream 0: delay 14013.133333333333 and score 40921.49078708623 recompute to 14013.1375 and 40921.494953752896
