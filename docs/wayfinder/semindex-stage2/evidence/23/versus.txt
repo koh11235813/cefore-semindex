@@ -1,0 +1,160 @@
+
+========================================================================
+0  WHAT THIS IS, AND WHAT IT IS NOT
+========================================================================
+THIS ANALYSIS IS NOT IN THE FROZEN PLAN.  spec.md fixes two statistics and one rule
+and ana.py computes all three; this script was written AFTER the scores were seen.
+IT SELECTS NOTHING.  The choice between candidate a and candidate b was made by
+ana.py on the mean selecting score alone, and no number below can reopen it.
+ITS INTERVALS ARE DESCRIPTIVE.  Nine comparisons are printed, no correction for
+multiplicity is applied, and the pairs were chosen after the means were on the
+screen, so an interval here says how far the 20 seeds let a difference move and NOT
+that a difference was predicted or that one decider is better than another.
+
+It reads one csv and nothing else: no card, no model, no run store, no label file,
+no ROOT.  It prints no clock time and no path, so two runs of it are byte-identical.
+
+========================================================================
+1  THE CSV, ITS GRID AND ITS SEEDS
+========================================================================
+rows            5600
+deciders        const3.695, const6.000, const10.043, F, untuned, a, b
+seed column     min 81 max 100, 20 distinct
+stream column   min 0 max 39, 40 distinct
+port.check_seeds (>100 refused) passed them and the seed set meets the measuring
+seeds 121-160 in 0 seeds; both are shown refusing in part 5.  This script starts no
+simulation and reads no label row, so it adds nothing to the seeds-never-used proof
+beyond what the csv's own seed column carries.
+OK: exactly one row per (decider, seed, stream), 5600 in all, and every (decider,
+    seed) group carries the same 40 runs
+OK: every row was scored at one weight, 104.29595912307323 ms per poll
+
+========================================================================
+2  THE PAIRED DIFFERENCES OF MEAN SCORE, SEED BY SEED
+========================================================================
+The mean score is `delay + weight x polls` over a decider's 800 runs, lower being
+better.  A difference is of the FIRST decider minus the second, so a negative value
+means the first scores lower.  The interval is the 95 % percentile interval of a
+paired bootstrap over the 20 SEEDS: 2000 resamples from one integers(0, 20,
+size=(2000, 20)) matrix drawn once with default_rng(20261122), i.e. predict.boot_index,
+the same call ana.py makes, and the per-seed value is THE MEAN OF THAT SEED'S 40
+RUN SCORES.
+
+the mean scores these differences are taken between, ranked, lower first:
+  F               36150.829 ms
+  const6.000      37035.920 ms
+  b               37210.550 ms
+  a               37828.390 ms
+  const10.043     39855.665 ms
+  const3.695      40811.181 ms
+  untuned         40823.648 ms
+
+  first        second        difference ms      95 % interval ms    0 in   first lower
+  a            b                  617.840    -58.424 to  1357.299   yes     8 of 20
+  b            F                 1059.721    643.122 to  1489.109   no      4 of 20
+  a            F                 1677.561    991.267 to  2410.214   no      3 of 20
+  b            const6.000         174.630   -400.568 to   725.613   yes     9 of 20
+  a            const6.000         792.470   -112.889 to  1635.184   yes     6 of 20
+  F            const6.000        -885.091  -1426.711 to  -345.094   no     14 of 20
+  b            untuned          -3613.098  -4106.360 to -3079.190   no     20 of 20
+  a            untuned          -2995.258  -3854.348 to -2118.449   no     18 of 20
+  untuned      const3.695          12.468    -33.061 to    60.774   yes    12 of 20
+
+THE FIRST ROW IS ana.txt's OWN LINE, RECOMPUTED AND ASSERTED.  ana.txt's part 4
+prints point 617.840 ms and the 95 % interval -58.424 to 1357.299 ms, and this run
+reproduces all three digits.
+It is the one row of this table the frozen plan carries; the other eight are post
+hoc.  Shown failing in part 5 on a moved score.
+
+========================================================================
+3  THE ANSWER WORDS, AND HOW FAR THE TIE RULE REACHED
+========================================================================
+One forward pass per resolution-time decision, the largest of the three candidate
+logits winning, and an exact tie going to the first of (' short', ' mid', ' long'),
+i.e. to the shortest interval.  The tie share is the share of a decider's own
+decisions the tie rule settled, which is the reach of a read-out convention and not
+a footnote: spec.md asks for it as a number for exactly that reason.
+
+  decider   decisions    3.695 s    6.0 s   10.043 s    settled by the tie rule
+  untuned      224179     0.9991   0.0008     0.0001        10  0.0000
+  a             95860     0.0801   0.1430     0.7769     19429  0.2027
+  b            122076     0.4783   0.0000     0.5217      7882  0.0646
+
+the same counts, not as shares:
+  untuned  short  223968   mid     189   long      22   ties     10 of 224179
+  a        short    7678   mid   13706   long   74476   ties  19429 of 95860
+  b        short   58393   mid       0   long   63683   ties   7882 of 122076
+
+The four deciders that call no model answer no word and resolve no tie: their rows
+carry those six columns empty, which is why they are absent from this part.
+
+========================================================================
+4  THE RUNS THAT CARRY A CENSORED RECORD
+========================================================================
+A censored record is one whose discovery never completed inside the scoring window.
+The selecting score enters it at its LOWER BOUND and the frontier gain DROPS it, so
+the two statistics disagree about exactly these runs, and this is how many runs they
+disagree about.  Counted per decider over its 800 runs.
+
+  decider        runs with a censored record    censored records in all
+  const3.695                        0                          0
+  const6.000                        0                          0
+  const10.043                      17                        156
+  F                                 0                          0
+  untuned                           0                          0
+  a                                12                        172
+  b                                13                        152
+
+Only the long arm and the two candidates that lean to it carry any, which is why the
+score and the gain can order the same two deciders differently.
+
+========================================================================
+5  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+The mutation is of the INPUT, inside this process.  The checks are functions of plain
+values for that reason; a per-check copy of the script would be seven reads of the
+same csv, and a copy that silently matched nothing would read as a passing check.
+
+  port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  roles/measuring            FIRES: mutated: the seed set meets the measuring seeds 121-160: [121]
+  deciders/one lost          FIRES: mutated: the csv carries ['a', 'b', 'const10.043', 'const3.695', 'const6.000', 'untuned'], not the seven deciders
+  grid/one row missing       FIRES: mutated: 1 missing (e.g. [('const3.695', 81, 0)]) and 0 unexpected (e.g. []) of 5600
+  grid/one row twice         FIRES: mutated: 1 row(s) appear twice, e.g. [('const3.695', 81, 0)]
+  runs per seed/sizes        FIRES: mutated: the (decider, seed) groups carry [39, 40] runs, not one size; e.g. [('const3.695', 81)]
+  runs per seed/groups       FIRES: mutated: 139 (decider, seed) group(s), not 140
+  weight/one row moved       FIRES: mutated: 2 different weights in the csv: [100.0, 104.29595912307323]
+  answers/one word lost      FIRES: mutated: a answered 95859 times against 95860 forward pass(es)
+  boot/shape                 FIRES: mutated: the resample matrix is (2000, 20), not (2000, 21)
+  boot/index out of range    FIRES: mutated: an index is outside 0 to 19: min 20 max 39
+  ana.txt line/one score moved FIRES: mutated: the point of score(a) - score(b) is 617.841, and ana.txt prints 617.840
+
+WHAT HAS NO MUTATION, named and not counted: the choice of the nine pairs, because a
+choice has no failing input.  It is a post hoc choice and part 0 says so rather than
+leaving a reader to count the comparisons.
+
+all 12 mutations produced a failure
+
+========================================================================
+6  WHAT THIS DOES NOT SHOW
+========================================================================
+- No pass or fail on any decider, and no verdict the frozen plan does not carry.
+  The plan's own verdict is ana.txt's, on the a-against-b difference alone.
+- Nothing that corrects the selection bias.  The chosen candidate's figure is the
+  minimum of two draws, so every row above that carries a or b inherits that bias,
+  and the only clean correction is a set of seeds nobody has looked at.
+- Nothing about a difference against an arm being the decider's difference alone.  F
+  and L draw one extra tick lag whenever they change their mind between a send and a
+  resolution and the three fixed arms never do, so the comparator family consumes
+  the pair streams differently by construction, in an unknown direction.
+- Nothing about the weight being right.  Its jackknife standard error is 1.685586 ms
+  per poll and every score above moves with it; the band the plan tests against is
+  built from exactly that uncertainty.
+- Nothing about the tuning being reproducible.  Each candidate is one draw of a
+  recipe whose two runs wrote different weights, so a difference between a and b
+  carries one draw of tuning noise per candidate.
+- Nothing about L on the testbed, and nothing about the agreement with the labels.
+  No run of this step touches the emulator, and agree.py's numbers predict no score
+  in either direction.
+
+no check fired on real input; the failures in part 5 are the mutations
+end of versus.py
