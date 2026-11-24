@@ -3668,3 +3668,125 @@ the run store or the label store).
     one in the ticket.  No number moved.
   - The stale sentences of items 1 and 2 are still in eval.py, agree.py and four
     archived outputs.
+
+========================================================================
+27. THE SECOND OUTSIDE REVIEW, AFTER THE MERGE, AND WHAT IT FOUND
+========================================================================
+2026-11-24 15:37 JST.  The reviewer of 26.4 was restarted by the user and reported at
+15:35, after this directory had been merged.  It read the detached checkout of
+commit e8a5db2 at /home/lab_shared/wt/semindex-ev23-review with the request of 26
+(.review/prompt.md) and wrote .review/agy.md, 21458 bytes; `git status --porcelain`
+of that checkout shows the untracked .review directory and nothing else.  It can run
+code and did: read-only python over the csvs, no ssh, no card.  Its screen named the
+model as "Gemini 4 Neon", effort high.
+Its last line: "VERDICT: no blocker -- every reported number in README.md,
+tickets/10-llm-system-one.md, and map.md matches its cited archive and independent
+CSV recomputation, commit order and selection rules hold without leakage, and the
+six findings (4 minor, 2 nit) are confined to stale run-1 text/literals in agree.py,
+resume-summary formatting in eval_run1.txt, an omitted non-model parity run in the
+pre-score seed-81..100 inventory, and minor prose/comment slips."
+
+  27.1  WHAT IT RECOMPUTED, WHICH NO OUTSIDE PARTY HAD (26.4 is now answered)
+  ------------------------------------------------------------------
+  By its own account: over the 11228 rows of eval.csv, eval_run1.csv and
+  eval_dry.csv, delay = (lat + censored) / (n4 + c4) and score = delay + weight x
+  polls hold to the last bit; the 4001 lines of the deciders that carry no adapter
+  are byte-identical between the two real csvs; all seven deciders' means, the 16
+  distinct paired differences with their intervals and seed counts across ana.txt,
+  ana_run1.txt, versus.txt and spread.txt, and all eight frontier gains with
+  intervals, reproduce (the gains through ../20/predict.py and through its own
+  implementation, largest difference 2.00e-15); ana.py on the three csvs, versus.py
+  and spread.py reproduce their archived outputs byte for byte.  It also read the
+  history and found the order of 26.3.
+  NOT re-run by the main session: these are the reviewer's statements about its own
+  runs.  They agree with the main session's recounts of 22.3 and 24.5.
+
+  27.2  ITS SIX FINDINGS, EACH REPRODUCED BEFORE IT WAS ANSWERED
+  ------------------------------------------------------------------
+  4 (numbered as the reviewer numbers them; this one first because it is about what
+  was looked at before the scores).  minor, REAL, FIXED IN THE WRITE-UP, AND spec.md's
+  AMENDMENT A2 IS WRONG AS A COUNT.  A2 says "The list of what read the selection
+  half before any score is therefore two items long".  It is three.  parity.py, in
+  the preparation step (commit d272197, 2026-11-24 03:12:25, before the plan was
+  frozen at 04:59:28), simulated stream 0 of seeds 81 and 100 for the four deciders
+  that call no model and archived their eight scores:
+      sed -n 2p parity.txt          -> seeds 1,20,21,80,81,100
+      sed -n 19,26p parity.txt      -> seed 81 and seed 100, const3.695, const6.000,
+                                       const10.043 and F, each with its score
+  and spec.md itself quotes that file in two places written before the freeze:
+  line 653 lists the six single-stream const3.695 scores, 39591.96 and 38404.80
+  among them (seeds 81 and 100), as the size of the seed-to-seed spread; line 836
+  quotes seed 100's two outer arms in the reasoning of prediction 3.
+  What that does and does not touch: no setting, wording, read-out rule or row set of
+  L was chosen from those eight runs, no candidate was selected by them, and they are
+  eight of the 4000 no-model rows of eval.csv (the reviewer checked that the eight
+  rows of eval.csv equal parity.txt to every printed digit).  But the plan's author
+  had seen eight selection-half scores of the comparators when the plan and its
+  predictions were written, and A2 did not say so.  spec.md is not edited: its
+  amendments are dated before the scores and an edit now would blur that.  README.md's
+  Acceptance 6 section and the ticket's Acceptance 6 bullet now say three and name
+  the third.
+  2.  minor, REAL.  TWO PARTS.
+      (a) FIXED IN THE README.  Its bullet said candidate a's kept epoch is not
+      distinguished from "the other two" and called a "one of three deciders the rule
+      cannot tell apart".  tune.txt (the second run) prints the paired figures for
+      both: against epoch 3, 0.001873 with paired se 0.005268, ratio 0.356; against
+      epoch 1, 0.017100 with 0.006684, ratio 2.558.  So the kept epoch 2 is not
+      distinguished from epoch 3 and IS 2.6 paired standard errors from epoch 1.  The
+      bullet now says that.  spec.md's A5 ("not distinguished from its other two") was
+      written on the first run with the unpaired scale and A7 states the paired
+      figures correctly; A5 is left as dated.
+      (b) RECORDED, NOT EDITED.  agree.py lines 499 to 510, printed in agree.txt
+      (176 to 187) and agree_dry.txt (182 to 193), say that nothing in this step
+      computes the paired standard error and that "no per-row cross-entropy of epoch
+      1 or epoch 2 exists".  BOTH ARE STALE FIRST-RUN TEXT.  tune.py computes it
+      since the second run, and the second run kept epoch 2 for candidate a and
+      deleted epochs 1 and 3 (agree.txt line 166 itself prints "candidate a kept
+      epoch 2").  agree.py is inside the script digest of the archived csvs and is
+      not edited now.
+  1.  minor, REAL, RECORDED.  agree.py:518 prints the typed literal "tune.txt's
+      408/568" for candidate b.  408/568 is the FIRST run's (tune_run1.txt); the
+      tune.txt this directory carries says 406/568.  It is printed in the dry
+      branch only: `grep -n "408/568" agree.py agree.txt agree_dry.txt` hits
+      agree.py:518 and agree_dry.txt:200 and not agree.txt.  The README, the ticket
+      and the map read 406/568 off tune.txt and are right.  This is the defect class
+      section 19 removed from three other places (a number typed where the script
+      already holds the parsed value); this one was missed.
+  3.  minor, REAL, RECORDED.  eval_run1.txt part 6 reads "the three model deciders
+      together: 231821 forward passes".  That is TWO deciders (102429 + 129392): in
+      the resumed run of section 24 the untuned model's rows were taken from the real
+      run's part file, so its 224179 passes are not in the sum.  The same part ends
+      "the four deciders that call no model took  s here", with nothing between the
+      two spaces, for the same reason.  Neither line is quoted anywhere in the README,
+      the ticket or the map (checked: `grep -rn 231821` finds eval_run1.txt only).
+      The reviewer also notes that the reference child read out the untuned model in
+      that run although it was skipped: about 3 s of card, no score touched.
+  5.  nit, REAL, RECORDED.  ana.py:805 says of the closeness rule "Its two branches
+      are reached by the data".  The rule has three branches (close; separated, not
+      resolved; separated) and one input reaches one of them.  Across the three
+      archived analyses the branches reached are "separated, not resolved" twice
+      (ana_dry.txt, ana.txt) and "separated" once (ana_run1.txt); "close" was reached
+      by no archived run.
+  6.  nit, REAL, RECORDED.  Three comments still say tune.txt carries no digest of
+      any code file: decider.py:386-388, agree.py:205-207, latency.py:177-179.  That
+      is true of tune_run1.txt.  tune.txt lines 12 to 21 print the list.  Same
+      family as 26.2's items.
+
+  27.3  WHY FIVE SCRIPTS ARE STILL NOT EDITED
+  ------------------------------------------------------------------
+  agree.py, eval.py, decider.py and latency.py carry the stale sentences of 26.2 and
+  27.2; ana.py carries item 5.  eval.py and decider.py are in the script digest that
+  eval.csv and eval_run1.csv carry (f3a34ad0...), and decider.py is in the code
+  digest tune.txt printed for the adapters.  Every one of the defects is a sentence
+  or a comment, and none reaches a number.  They are to be corrected together the
+  next time one of those scripts is changed for a reason of its own, with this
+  section and 26.2 as the list.
+
+  27.4  WHAT WAS NOT DONE
+  ------------------------------------------------------------------
+  - No script, no archive and not spec.md was edited.  Three sentences changed, two
+    in README.md and one in the ticket, plus the section range both quote.  No number
+    moved.
+  - The reviewer's recomputations were not repeated here.
+  - The reviewer did not open the host, the run store or the label store, and did
+    not read the first outside review (it says so, to stay independent).
