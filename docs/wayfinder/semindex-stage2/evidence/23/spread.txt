@@ -1,0 +1,204 @@
+
+========================================================================
+0  WHAT THIS IS, AND WHAT IT IS NOT
+========================================================================
+THIS IS NOT IN THE FROZEN PLAN.  spec.md carries this measurement in one sentence,
+amendment A7's last: scoring the first tuning run's two adapters on the same seeds
+and streams is "not part of this plan and is run only if the user asks for it".
+The user asked, the run was made, and this is its reading.
+IT WAS WRITTEN AFTER EVERY SCORE OF BOTH RUNS WAS SEEN.
+IT SELECTS NOTHING.  The candidates are the SECOND run's two adapters, by amendment
+A3, which was written and committed before either run was scored: "the second run's
+adapters are the candidates whatever its numbers are".  The first run's b scores
+lower than the second run's b below; that is a number to report and not a choice to
+make, because choosing between the two runs' adapters on the seeds they were both
+scored on is the one thing A3 fixed against.  ana_run1.txt's line "THE CANDIDATE
+THIS ANALYSIS CARRIES FORWARD: b" is a line ana.py prints for any csv it is handed;
+on the first run's csv it carries nothing forward.
+n = 2 TUNING RUNS IS TWO POINTS AND NOT A DISTRIBUTION.  The two run-to-run rows
+below are a difference of two draws of the recipe, not an estimate of its spread.
+EVERY INTERVAL IS OVER THE 20 SEEDS WITH THE TWO ADAPTERS HELD FIXED.  So it says
+how far the seeds let a difference between two particular weight files move, and it
+says nothing about a third run of the recipe.
+
+It reads two csvs and nothing else: no card, no model, no run store, no label file,
+no ROOT.  It prints no clock time and no path, so two runs of it are byte-identical.
+
+========================================================================
+1  THE TWO CSVS, AND WHAT THEY SHARE
+========================================================================
+the second tuning run's csv, whose a and b are the candidates:
+  rows          5600, 7 decider(s)
+the first tuning run's csv, whose a and b are the adapters A3 set aside:
+  rows          5600, 7 decider(s)
+seed column     min 81 max 100, 20 distinct, the same set in both
+stream column   min 0 max 39, 40 distinct, the same set in both
+port.check_seeds (>100 refused) passed them and the seed set meets the measuring
+seeds 121-160 in 0 seeds; both are shown refusing in part 5.  This script starts no
+simulation and reads no label row, so it adds nothing to the seeds-never-used proof
+beyond what the csvs' own seed columns carry.
+OK: in each csv, exactly one row per (decider, seed, stream), 5600 in all, and every
+    (decider, seed) group carries the same 40 runs
+OK: every row of BOTH csvs was scored at one weight, 104.29595912307323 ms per poll
+OK: every row of BOTH csvs names one script digest,
+    f3a34ad0ceff4a4e2fb746851f504ef13da9fd5700657987eb215dee04031cd8,
+    so the two runs are the same bytes of code pointed at two adapter directories
+OK: the 4001 line(s) no adapter wrote -- the header and the 4000 rows of the five
+    deciders that carry no adapter -- are BYTE FOR BYTE the same in the two csvs.
+    eval.py's resume path skipped those five, so they are the real run's own bytes
+    in both files and only the 1600 rows of a and b are new.  Shown failing in part 5
+    on one mutated character.
+OK: a and b name a DIFFERENT model digest in the two csvs, one value per decider
+    per csv:
+  a   second run  922309eb7acd0ee669aeb120d17544fba521eccd42763d621be3eda40f54c48b
+  a   first run   bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b7f3dfabfe86b4
+  b   second run  6a39ca005019699bef789b6811abd006da7f9445708894ea444d9e8690441cc1
+  b   first run   a4e5c9011d5c3e661d2df9ca41928a64352970ba1061c3395d1c223ff830a916
+
+========================================================================
+2  WHAT THE FOUR ADAPTERS DID, RUN BY RUN
+========================================================================
+The mean score is `delay + weight x polls` over a decider's 800 runs, with every
+censored record entering the delay at its lower bound, and LOWER IS BETTER.  The
+answer shares are shares of a decider's own forward passes, one per resolution-time
+decision, and the tie share is the share of those decisions the tie rule settled
+(an exact tie at the maximum going to the first of (' short', ' mid', ' long')).
+
+  adapter    mean score ms   polls/run   mean delay ms    3.695 s    6.0 s   10.043 s    ties
+  a run1        37379.874     112.036       25694.946     0.2019   0.1007     0.6974  0.1579
+  a run2        37828.390     103.825       26999.862     0.0801   0.1430     0.7769  0.2027
+  b run1        36576.093     152.104       20712.287     0.5408   0.0000     0.4592  0.0544
+  b run2        37210.550     142.959       22300.530     0.4783   0.0000     0.5217  0.0646
+
+  adapter    decisions    short     mid    long    ties settled by the rule
+  a run1       102429    20684   10312   71433   16173
+  a run2        95860     7678   13706   74476   19429
+  b run1       129392    69977       0   59415    7042
+  b run2       122076    58393       0   63683    7882
+
+the two comparators, from the second run's csv and byte for byte the first run's:
+  F               36150.829 ms    179.731 polls/run      17405.586 ms delay
+  const6.000      37035.920 ms    159.536 polls/run      20396.934 ms delay
+They call no model, so they answer no word and resolve no tie.
+
+========================================================================
+3  THE PAIRED DIFFERENCES OF MEAN SCORE, SEED BY SEED
+========================================================================
+A difference is of the FIRST decider minus the second, so a negative value means the
+first scores lower.  The interval is the 95 % percentile interval of a paired
+bootstrap over the 20 SEEDS: 2000 resamples from one integers(0, 20, size=(2000, 20))
+matrix drawn once with default_rng(20261122), i.e. predict.boot_index, the same call
+ana.py makes, and the per-seed value is THE MEAN OF THAT SEED'S 40 RUN SCORES.
+
+  first        second        difference ms      95 % interval ms    0 in   first lower
+  a run1       a run2            -448.515  -1021.930 to   108.977   yes    13 of 20
+  b run1       b run2            -634.457   -889.794 to  -365.865   no     16 of 20
+  a run1       b run1             803.781    414.651 to  1257.029   no      5 of 20
+  a run2       b run2             617.840    -58.424 to  1357.299   yes     8 of 20
+  a run1       F                 1229.046    713.577 to  1731.528   no      3 of 20
+  a run2       F                 1677.561    991.267 to  2410.214   no      3 of 20
+  b run1       F                  425.264     12.791 to   861.503   no      7 of 20
+  b run2       F                 1059.721    643.122 to  1489.109   no      4 of 20
+  a run1       const6.000         343.955   -407.087 to  1086.401   yes    11 of 20
+  a run2       const6.000         792.470   -112.889 to  1635.184   yes     6 of 20
+  b run1       const6.000        -459.827  -1098.902 to   139.113   yes    12 of 20
+  b run2       const6.000         174.630   -400.568 to   725.613   yes     9 of 20
+
+THE FIRST TWO ROWS ARE THE SPREAD OF THE RECIPE AT n = 2, and they are the whole
+reason this run was made: one adapter name, one set of rows, one set of seeds, two
+draws of the same tuning procedure.  Two draws are two points.  The interval beside
+each of them is the seeds' own spread with both weight files held fixed, so it is
+NOT an interval on what a third run would give.
+
+THE a-AGAINST-b ROW OF THE FIRST RUN IS ana_run1.txt's OWN LINE, ASSERTED:
+  its part 4 prints point 803.781 ms and the 95 % interval 414.651 to 1257.029 ms,
+  and this run reproduces all three digits.
+THE a-AGAINST-b ROW OF THE SECOND RUN IS ana.txt's OWN LINE, ASSERTED:
+  its part 4 prints point 617.840 ms and the 95 % interval -58.424 to 1357.299 ms,
+  and this run reproduces all three digits.
+Those two are the only rows of the twelve the frozen plan carries, one per csv; the
+other ten are post hoc.  Both are shown failing in part 5 on a moved score.
+
+WHAT THE TWO WITHIN-RUN ROWS ARE AND ARE NOT: each is the difference its own csv's
+ana.py already reports, and ana.py's verdict on each stands as that run's.  The
+verdict on the first run's csv chooses nothing, because A3 chose the second run's
+adapters before either was scored.
+
+========================================================================
+4  THE FRONTIER GAIN, WHICH THIS SCRIPT DOES NOT RECOMPUTE
+========================================================================
+The gains of the four adapters are in ana.txt's part 3 and ana_run1.txt's part 3,
+each with its 95 % interval, its half width, its dropped count and its word, and
+THEY ARE LEFT THERE.  Recomputing them here would need ana.py's per-seed
+[n4, c4, lat, polls] row builder, its arm-name-to-frontier-key mapping, its two
+row-order checks, its scale-invariance check and its drop-and-count resample loop
+around predict.gain -- not a few lines, and a second route to a number the archives
+already print would be a second place for that number to be wrong.  The two archives
+are ana.py's own output on the two csvs, so reading the four gains off them side by
+side needs no code at all.
+
+========================================================================
+5  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+The mutation is of the INPUT, inside this process.  The checks are functions of plain
+values for that reason; a per-check copy of the script would be many reads of the
+same two csvs, and a copy that silently matched nothing would read as a passing
+check.
+
+  port.check_seeds               FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  roles/measuring                FIRES: mutated: the seed set meets the measuring seeds 121-160: [121]
+  same grid/a seed gone          FIRES: mutated: the two csvs carry different seeds: [81, 82, 83, 84] against [82, 83, 84, 85]
+  grid/one row missing           FIRES: mutated: 1 missing (e.g. [('const3.695', 81, 0)]) and 0 unexpected (e.g. []) of 5600
+  grid/one row twice             FIRES: mutated: 1 row(s) appear twice, e.g. [('const3.695', 81, 0)]
+  runs per seed/sizes            FIRES: mutated: the (decider, seed) groups carry [39, 40] runs, not one size; e.g. [('const3.695', 81)]
+  runs per seed/groups           FIRES: mutated: 139 (decider, seed) group(s), not 140
+  weight/one row moved           FIRES: mutated: 2 different weights in the csvs: [100.0, 104.29595912307323]
+  script digest/one row moved    FIRES: mutated: 2 different script_sha values: ['deadbeef', 'f3a34ad0ceff4a4e2fb746851f504ef13da9fd5700657987eb215dee04031cd8']
+  shared bytes/one character     FIRES: mutated: 1 of 4001 shared line(s) differ, the first at index 1: 'const3.695,81,0,240,0,3069096.0,0.0,257,12787.9,' against 'const3.69X,81,0,240,0,3069096.0,0.0,257,12787.9,'
+  shared bytes/a line gone       FIRES: mutated: 4001 shared line(s) in the one csv and 4000 in the other
+  model digests/the same adapter FIRES: mutated: a carries the same model digest 922309eb7acd0ee669aeb120d17544fba521eccd42763d621be3eda40f54c48b in both csvs, so the two files hold one adapter and not two
+  model digests/two in one csv   FIRES: mutated: a carries ['922309eb7acd0ee669aeb120d17544fba521eccd42763d621be3eda40f54c48b'] in the one csv and ['bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b7f3dfabfe86b4', 'deadbeef'] in the other, not one digest each
+  answers/one word lost          FIRES: mutated: a run1 answered 102428 times against 102429 forward pass(es)
+  boot/shape                     FIRES: mutated: the resample matrix is (2000, 20), not (2000, 21)
+  boot/index out of range        FIRES: mutated: an index is outside 0 to 19: min 20 max 39
+  ana line/first run, one score moved FIRES: mutated: the point of score(a) - score(b) on the first run's csv is 803.783, and its analysis prints 803.781
+  ana line/second run, one score moved FIRES: mutated: the point of score(a) - score(b) on the second run's csv is 617.841, and its analysis prints 617.840
+
+WHAT HAS NO MUTATION, named and not counted: the choice of the twelve pairs, because
+a choice has no failing input.  It is a post hoc choice and part 0 says so rather
+than leaving a reader to count the comparisons.  Also the fact that n = 2, which is
+a property of how many times the recipe was run and not of any input to this script.
+
+all 18 mutations produced a failure
+
+========================================================================
+6  WHAT THIS DOES NOT SHOW
+========================================================================
+- NO CHOICE OF ANY KIND.  The candidates are the second run's adapters by A3, fixed
+  before either run was scored, and the first run's lower b does not reopen that.
+  The rule A3 protects is exactly the one a reader of this table would break by
+  picking the better of two runs on the seeds both were scored on.
+- NOTHING ABOUT A THIRD RUN OF THE RECIPE.  Two runs are two points: there is no
+  spread of the recipe here with a degree of freedom to spare, and the intervals
+  above hold the two weight files fixed and resample only the seeds.
+- Nothing about WHERE the two runs parted.  Neither run asked torch for a
+  deterministic kernel, which is the recipe as frozen, and no log of either run
+  carries a digest of the untuned adapter, so the seeded lora_A draw is unverified
+  as well.  This script reads two csvs of scores and reaches none of that.
+- Nothing that corrects the selection bias.  The chosen candidate's figure is still
+  the minimum of two draws on these seeds, and the only clean correction is a set of
+  seeds nobody has looked at.  Four adapters on the same 20 seeds is more reads of
+  those seeds, not fewer.
+- No correction for multiplicity, and the pairs were chosen after every mean was on
+  the screen.  Twelve differences are printed here beside versus.txt's nine.
+- Nothing about a difference against a comparator being the decider's difference
+  alone.  F and L draw one extra tick lag whenever they change their mind between a
+  send and a resolution and the three fixed arms never do, so the comparator family
+  consumes the pair streams differently by construction, in an unknown direction.
+- Nothing about the label agreement or the pass time of the first run's adapters.
+  agree.py and latency.py were not run on them.
+- Nothing about the weight being right.  Its jackknife standard error is 1.685586 ms
+  per poll and every score above moves with it.
+
+no check fired on real input; the failures in part 5 are the mutations
+end of spread.py

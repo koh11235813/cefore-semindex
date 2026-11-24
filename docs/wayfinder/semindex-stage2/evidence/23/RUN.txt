@@ -3157,3 +3157,430 @@ THE CHECKS, AS THEY PRINTED
     the fixes above all make the write-up claim less rather than more.
   - Amendment A7's measurement (scoring run 1's adapters) was not run, and nothing was
     staged, committed, stashed or pushed.
+
+========================================================================
+24. THE FIRST TUNING RUN'S ADAPTERS, SCORED ON THE SAME SEEDS      4415 s
+========================================================================
+  2026-11-24 13:56 JST, written after eval_run1.csv, eval_run1.txt and ana_run1.txt
+  were committed as d4de8b4 and after the card was free again.
+  WHAT THIS IS: amendment A7's last sentence names one measurement that would put a
+  number on the tuning's run-to-run spread on the scale of the score -- scoring the
+  first run's two adapters on the same seeds and streams -- and says it is not part
+  of the plan and runs only if the user asks.  The user asked (the ticket's decision
+  15, which also says the candidate stays the second run's b), and this section is
+  that run and its reading.
+  IT SELECTS NOTHING.  The candidates are the second run's adapters by amendment A3,
+  which was written and committed before either run was scored.  The first run's b
+  scores LOWER than the second run's b, and that is a number this log reports and not
+  a choice anything here makes: choosing between the two runs' adapters on the seeds
+  both were scored on is exactly what A3 fixed against.
+  NEW FILES: eval_run1.csv, eval_run1.txt and ana_run1.txt, committed alone as
+  d4de8b4 before any reading of them was written; then spread.py and spread.txt.
+  CHANGED: this log, README.md (one new section and the sentences it made stale), the
+  ticket (its result section and one open item), map.md (its evidence/23 entry).
+  NOT CHANGED: spec.md (frozen; A7 is its own amendment and this section carries it
+  out), every script of the pipeline -- NO SCRIPT WAS EDITED FOR THIS RUN -- and
+  every archive of sections 17 to 23, each of which is a run's own stdout.
+  The 4415 s is eval.py's own wall clock, 4414.6 s.  ana.py and spread.py print no
+  clock time at all, which is why neither contributes a figure here: their output is
+  meant to be compared with cmp across two machines.
+  THE HOST COMMANDS BELOW ARE THE MAIN SESSION'S, taken from its own scratch record
+  of the run; this write-up ran no script on the card and started no simulation.
+
+  ------------------------------------------------------------------
+  24.1  THE SECOND ROOT, AND WHY NO SCRIPT HAD TO CHANGE
+  ------------------------------------------------------------------
+  eval.py takes its root from argv, reads the adapters at <root>/adapters/<name> and
+  reads the tuning log beside decider.py in its own repo copy.  So a second root that
+  differs from ROOT in exactly those two things scores the other two adapters with
+  the same bytes of code, and the script digest the csv carries is the same value.
+  S = ROOT/run1root, built 12:25 JST with the card checked free first and S not
+  existing before:
+    mkdir S; cp -a ROOT/repo S/repo
+    cp S/repo/E/tune_run1.txt S/repo/E/tune.txt
+                               the first of the two differences: eval.py's part 3
+                               holds each adapter's read-out against the triples
+                               PRINTED IN tune.txt, so the first run's adapters need
+                               the first run's log in that place or the gate refuses
+                               (section 20.2 shows that refusal happening by
+                               accident, with the new adapters and the old log)
+    ln -s ../models S/models; ln -s ../ev22 S/ev22; ln -s ../hf-home S/hf-home
+    ln -s ../adapters-run1 S/adapters
+                               the second difference: four symlinks, of which only
+                               the last points somewhere else than ROOT's own
+    mkdir S/eval-real-parts
+    cp ROOT/eval-real-parts/{const3.695,const6.000,const10.043,F,untuned}.csv \
+        S/eval-real-parts/
+                               the five part files of the deciders that carry no
+                               adapter, so that eval.py's resume path skips them and
+                               their rows stay the real run's own bytes
+    sha256sum of every file of ROOT/repo/E against S/repo/E
+                               THE ONLY LINE THAT DIFFERS IS tune.txt:
+                               fe7469bb... (the second run's log, under ROOT)
+                               against 15fef38f... (the first run's, under S).
+                               `diff -rq ROOT/repo S/repo` named that one file and
+                               nothing else.  ROOT/repo at that moment was the push
+                               of commit 4110b35, 222 files.
+    sha256sum S/adapters/*/adapter_model.safetensors
+                               a 98f671bf49e25ff21236..., b 64fb49840b79a2d16ac3...,
+                               i.e. the digests tune_run1.txt prints for the first
+                               run's two adapters
+
+  ------------------------------------------------------------------
+  24.2  THE RUN
+  ------------------------------------------------------------------
+    cd S && date -u +%FT%TZ > eval.t0 && nohup env PYTHONDONTWRITEBYTECODE=1 \
+        STORE=ROOT/store PYTHONPATH=S/repo/src HF_HUB_OFFLINE=1 \
+        ROOT/.venv/bin/python -B \
+        repo/docs/wayfinder/semindex-stage2/evidence/23/eval.py S \
+        > eval.log 2> eval.err < /dev/null &
+                               pid 1528481, eval.t0 2026-11-24T03:26:32Z (12:26:32
+                               JST).  Waited with a local loop asking `kill -0
+                               1528481` over ssh every 120 s, never with pgrep.
+                               The log's own last lines: "wall clock 4414.6 s
+                               (73.6 min)", "finished 2026-11-24T13:40:07+0900",
+                               "end of eval.py".  eval.err is 0 bytes.  eval.csv is
+                               5601 lines.
+                               ITS PART 2 TOOK THE RESUME PATH FOR FIVE DECIDERS:
+                               const3.695, const6.000, const10.043, F and untuned
+                               each printed "800 rows already on disk under this
+                               script and this model; skipped", and "to run now"
+                               read "a, b".  That path checks each part file's script
+                               digest AND model digest before it skips, so the five
+                               were skipped because they match and not because they
+                               were found.
+                               ITS PART 3 REPRODUCED THE FIRST RUN'S ARCHIVED
+                               TRIPLES BIT FOR BIT: a [18.75, 18.875, 19.25] against
+                               tune.txt's [18.75, 18.875, 19.25] equal True, b
+                               [19.375, 18.75, 19.5] against the same, equal True.
+                               Under S, "tune.txt" is the first run's log, which is
+                               what makes this a check of the first run's adapters.
+                               THE K = 4 GATE PASSED for all four workers for a and
+                               for b.
+                               Its own per-decider lines: a "mean polls per run
+                               112.036, mean score 37379.874 ms, ties 16173 of
+                               102429 decisions"; b "mean polls per run 152.104,
+                               mean score 36576.093 ms, ties 7042 of 129392
+                               decisions".
+
+  ------------------------------------------------------------------
+  24.3  THE ARCHIVES, AND THE CONTROL ON THE 4000 SHARED ROWS
+  ------------------------------------------------------------------
+  13:41 JST.
+    ssh hpc-debian 'cat S/eval.log' > E/eval_run1.txt
+    ssh hpc-debian 'cat S/eval.csv' > E/eval_run1.csv
+      each followed by `ssh hpc-debian 'cat S/<name>' | diff -q - E/<name>`
+                               NO DIFFERENCE for either.  sha256 on both machines:
+                               eval_run1.txt
+                               8e9491e87483ef856913b339f13aa143c3c905fd0a0900dad512b604544d1b1a
+                               eval_run1.csv
+                               d0d292c05dfce6ca402751c0f058a5d56f385bba0bb360e0241d952fdfd5bb71
+    grep -v "^a,\|^b," E/eval.csv | sha256sum, and the same on E/eval_run1.csv
+                               THE SAME DIGEST FROM BOTH FILES,
+                               f0bbf47354f5210e4a0ba92b99cf36527d917dc7ddf7b9c7ffba87099721f7a5.
+                               So the header and the 4000 rows of the five deciders
+                               that carry no adapter are the REAL RUN'S OWN BYTES in
+                               eval_run1.csv, and only the 1600 rows of a and b are
+                               new.  spread.py below holds the same statement as a
+                               check of its own, line by line, and shows it failing
+                               on one mutated character.
+    this write-up re-ran that control and the two sha256 sums on the archived files
+                               SAME THREE DIGESTS as above.  Checked rather than
+                               taken from the record, because the whole comparison
+                               rests on the 4000 rows being one set of bytes.
+
+  ------------------------------------------------------------------
+  24.4  ana.py ON THE NEW CSV
+  ------------------------------------------------------------------
+    local  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=<worktree>/src \
+        /home/lab_shared/cefore-semindex/.venv/bin/python3 -B E/ana.py \
+        E/eval_run1.csv > E/ana_run1.txt
+                               exit 0, 225 lines; a second run of the same command
+                               is byte-identical.  NOT RUN ON THE HOST: ana.py reads
+                               one csv and no model, and section 22.1 already
+                               compared the two machines' output on the real csv.
+                               ITS "THE CANDIDATE THIS ANALYSIS CARRIES FORWARD: b"
+                               LINE CARRIES NOTHING FORWARD HERE.  ana.py prints that
+                               line for any csv it is handed; the candidates are the
+                               second run's adapters, fixed by A3 before either run
+                               was scored.  Its part 4 verdict on this csv reads
+                               "SEPARATED" (gap 803.781 ms, 95 % interval 414.651 to
+                               1257.029 ms, which does not contain 0), where the
+                               candidates' own csv reads "SEPARATED, NOT RESOLVED".
+    the same command again, this write-up's own, piped to `diff -q - E/ana_run1.txt`
+                               NO DIFFERENCE.  This step re-ran ana.py on the
+                               archived csv itself rather than taking the archive on
+                               trust, which costs one local read of one csv.
+    agree.py and latency.py    NOT RUN on the first run's adapters.  So there is no
+                               label agreement and no pass time for them, and the
+                               write-up says so rather than reusing the candidates'.
+    git commit (the main session's): the three files alone, d4de8b4, before any
+                               reading of them existed.  Same ordering as 22.1's:
+                               the archives are the run's and the reading is this
+                               step's.
+
+  ------------------------------------------------------------------
+  24.5  spread.py, THE ONE ANALYSIS THIS WRITE-UP ADDED
+  ------------------------------------------------------------------
+  NEW FILES: E/spread.py and E/spread.txt.  WHAT IT IS AND WHAT IT IS NOT: a post hoc
+  script, written after every score of both runs was seen, that puts the four
+  adapters side by side.  IT SELECTS NOTHING, and its part 0 says all five things a
+  reader needs before the first number: not in the frozen plan beyond A7's one
+  sentence, written after all the scores were seen, selects nothing, the candidates
+  are the second run's by a rule fixed before either run was scored, n = 2 tuning
+  runs is two points and not a distribution, and every interval is over the 20 seeds
+  with the two adapters HELD FIXED, so it says how far the seeds move a difference
+  between two particular weight files and nothing about a third run of the recipe.
+  It reads eval.csv AND eval_run1.csv AND NOTHING ELSE: no card, no model, no run
+  store, no label file, no ROOT.  It imports ../20/predict.py for `boot_index` (the
+  same (2000, 20) matrix from default_rng(20261122) that ana.py draws) and
+  ../22/port.py for the seed guard.  NEITHER ana.py NOR versus.py CAN BE IMPORTED --
+  each does its whole analysis at import time, printing as it goes -- so the csv
+  reader, the per-seed mean, the paired bootstrap and the seed check are restated in
+  ana.py's own arithmetic (statistics.fmean per decider per seed) and the reason is
+  in the file, exactly as versus.py states it for ana.py.
+  WHAT IT PRINTS: part 1 the two csvs and what they share; part 2 the four adapters'
+  mean score, polls per run, mean delay, answer-word shares and tie share; part 3
+  twelve paired seed differences; part 4 one paragraph saying it does not recompute
+  the frontier gain; part 5 the mutations; part 6 what it does not show.
+  THE TWO ROWS THE RUN WAS MADE FOR: a run1 - a run2 is -448.515 ms with 95 %
+  -1021.930 to 108.977 (13 of 20 seeds lower), and b run1 - b run2 is -634.457 ms
+  with -889.794 to -365.865 (16 of 20).  The second of those is LARGER than the
+  a-against-b gap of 617.840 ms the 297.0 ms rule was applied to.
+  ITS TWO ARCHIVE ASSERTIONS: the a-against-b row of each csv reproduces that csv's
+  own ana.py line to all three printed digits -- 803.781 / 414.651 / 1257.029 from
+  ana_run1.txt and 617.840 / -58.424 / 1357.299 from ana.txt, carried in the script
+  as six literals read off the two archives -- and each is shown failing with one
+  run's score_ms moved by 1.0 ms.
+  THE FRONTIER GAIN IS LEFT TO THE TWO ana FILES, and part 4 says why: recomputing it
+  would need ana.py's per-seed [n4, c4, lat, polls] row builder, its arm-name to
+  frontier-key mapping, its two row-order checks, its scale-invariance check and its
+  drop-and-count resample loop around predict.gain, which is not a few lines, and a
+  second route to a number the archives already print would be a second place for
+  that number to be wrong.  The four gains are read off ana.txt part 3 (a 0.0411,
+  1.372 % to 6.492 %, seen; b -0.0058, -3.135 % to 1.869 %, not-seen) and
+  ana_run1.txt part 3 (a 0.0335, 1.027 % to 5.548 %, seen; b 0.0215, -0.715 % to
+  4.863 %, not-seen), 0 resamples dropped in all four.
+  ITS NUMBERS AGREE WITH THE MAIN SESSION'S HAND-LOGGED RECOUNT, DIGIT FOR DIGIT.
+  That recount (mine2.py, output mine2.out, in the session's scratch directory and
+  NOT in the repository) reads the same two csvs with numpy and shares no code with
+  this directory.  Compared over EXACTLY WHAT spread.txt PRINTS and no more: the four
+  adapters' mean score, polls per run, mean delay, three answer shares and tie share,
+  and the eight paired rows the two files have in common (the point, both interval
+  ends and the count of seeds on which the first is lower).  NO DIGIT DIFFERS.
+  mine2.out carries two further rows, b run1 against a run2 and a run1 against b
+  run2, which spread.txt does NOT print and which are therefore outside this
+  comparison: they are cross-run rankings of one candidate against the other run's,
+  and the four comparator rows of the second run's adapters are checked against
+  versus.txt part 2 instead (1677.561, 1059.721, 792.470 and 174.630 ms, every
+  interval end equal).
+    local  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=<worktree>/src \
+        /home/lab_shared/cefore-semindex/.venv/bin/python3 -B E/spread.py \
+        > E/spread.txt
+                               exit 0, empty stderr, 204 lines, "all 18 mutations
+                               produced a failure".  sha256
+                               aa624bbcd602013d93ee589431e8c1cdbed70e54a18cecdc32a31749289e76f0
+    the same command a second time, to another path, then cmp
+                               BYTE-IDENTICAL.  The script prints no clock time and
+                               no path for that reason, as ana.py and versus.py do.
+    uvx ruff@0.17.2 check --no-cache S2/evidence/23
+                               "All checks passed!"; no __pycache__, no *.pyc and no
+                               .ruff_cache left in the worktree.
+  ITS EIGHTEEN MUTATIONS, all of which fired: port.check_seeds on 101,
+  roles/measuring on 121, same grid/a seed gone, grid/one row missing, grid/one row
+  twice, runs per seed/sizes, runs per seed/groups, weight/one row moved, script
+  digest/one row moved, shared bytes/one character, shared bytes/a line gone, model
+  digests/the same adapter, model digests/two in one csv, answers/one word lost,
+  boot/shape, boot/index out of range, and the two ana lines with one score moved.
+  The measuring test is placed BEFORE port.check_seeds, the order
+  decider.check_roles uses: in the other order 121 would be refused by the >100 guard
+  first and the measuring branch could not fire on any input the guard admits, and a
+  branch that cannot fail is not evidence.
+  WHAT HAS NO MUTATION, named and not counted: the choice of the twelve pairs,
+  because a choice has no failing input, and the fact that n = 2, which is a property
+  of how many times the recipe was run and not of any input to the script.
+
+  ------------------------------------------------------------------
+  24.6  THE WRITE-UP FILES
+  ------------------------------------------------------------------
+  E/README.md gained ONE SECTION, placed after the tuning section and before the
+  predictions: the four adapters' scores in one table with F and the fixed 6.0 s arm
+  beside them, the two run-to-run differences with their intervals, the a-against-b
+  difference and the plan's own verdict word for each run, how each of the four
+  adapters stands against F and against the 6.0 s arm, the four gains, and what the
+  measurement changes and does not change.  It states for EACH of the four adapters
+  whether its interval against F excludes 0 (all four do; the first run's b has the
+  nearest lower end at 12.791 ms) rather than summarising four results into one
+  adjective, and it states that all four intervals against the 6.0 s arm contain 0,
+  the first run's b being the one whose point is BELOW that arm by 459.827 ms.
+  THE SENTENCES OF THE EXISTING README THAT THIS MADE FALSE OR STALE, all corrected:
+  the opening question-and-answer paragraph said the measurement was of one tuning
+  draw (now five sentences, naming what holds across both runs and what does not);
+  the "what cannot be said" bullet on one draw per candidate said the measurement was
+  not run (now carries the two numbers and that two runs are two points); the last
+  section's bullet said it runs only when the user asks (now says it was run, with
+  the numbers and what stays open); the reproduction table gained three rows (the
+  second root with eval_run1.*, ana_run1.txt, spread.py); "RUN.txt sections 17 to 23"
+  became 17 to 24; and the list of files the README was written from gained
+  ana_run1.txt, eval_run1.txt and spread.txt.  NOTHING ELSE IN IT CHANGED, and no
+  number already in it moved.
+  The ticket's result section gained one paragraph after the paragraph that names the
+  candidate going forward, and the open item that said the spread measurement is not
+  run now says what was measured and what stays open.  ITS FRONTMATTER, 決まったこと
+  AND 作業者が決めたこと ARE UNTOUCHED.
+  map.md's evidence/23 entry gained the spread result and its reading bullet no
+  longer says the measurement runs only if the user asks.  Nothing else in that file
+  changed and no Fog item was added or edited.
+
+  ------------------------------------------------------------------
+  24.7  WHAT WAS NOT DONE
+  ------------------------------------------------------------------
+  - NO SCRIPT OF THE PIPELINE WAS EDITED FOR THE RUN.  The second root differs from
+    ROOT in two things, a log file and a symlink, and eval.py's csv carries the same
+    script digest f3a34ad0... as the real run's.
+  - NO GPU WAS USED BY THIS WRITE-UP, no simulation was started and no model was read
+    out.  spread.py reads two csvs; the host run above is the main session's and was
+    finished before this step began.
+  - NOTHING WAS RE-RUN AND NO ARCHIVE WAS EDITED.  eval.csv, eval.txt, ana.txt,
+    agree.txt, latency.txt, versus.txt, tune.txt, tune_run1.txt, eval_run1.csv,
+    eval_run1.txt, ana_run1.txt and every dry archive are as d4de8b4 holds them.
+    spec.md was not edited.
+  - NO CANDIDATE WAS RE-CHOSEN.  ana.txt still chooses b of the second run, A3 still
+    fixes that the second run's adapters are the candidates whatever the numbers are,
+    and ana_run1.txt's own "carries forward" line reaches nothing.
+  - agree.py AND latency.py WERE NOT RUN on the first run's adapters, so this step
+    adds no label agreement and no pass time for them.
+  - NO PREDICTION WAS RE-SCORED.  The five predictions are read against the
+    candidates; the README notes that reading 1, 2 and 4 off the first run's numbers
+    would not change their outcomes, and that 3 and 5 cannot be read off them at all
+    because they use the label agreement.
+  - WHERE THE TWO TUNING RUNS PARTED IS STILL NOT ISOLATED, and the seeded lora_A
+    draw is still unverified: neither log printed a digest of the untuned adapter.
+  - The selection bias is NOT corrected.  Four adapters on the same 20 seeds is more
+    reads of those seeds; the only clean correction is seeds 121 to 160, which
+    ticket 12 holds.
+  - No seed above 100 was read by anything, no key file and no node_dirs were opened,
+    evalgen.generate_run was never called, and no weight or adapter entered the
+    repository or this machine.
+  - Nothing was staged, committed, stashed or pushed by this step, and no branch or
+    worktree changed.  The worktree carries four modified files (README.md, this log,
+    the ticket, map.md) and two untracked ones (spread.py, spread.txt).
+
+========================================================================
+25. A REVIEW OF SECTION 24's WRITE-UP, AND WHAT EACH FINDING CHANGED
+========================================================================
+  2026-11-24 14:17 JST.  A reviewer read spread.py, spread.txt, the README's new
+  section and its corrections, section 24 above, the ticket's paragraph and the map
+  entry, and returned eight findings.  Each was reproduced against the archives
+  first.  ALL EIGHT WERE REAL and all eight were fixed in the write-up; spread.py
+  needed one comment word and no number anywhere moved.  NOTHING HERE SELECTS: the
+  candidate is still the second run's b by A3, and every edit below makes a sentence
+  claim LESS than it did.
+  THE ARCHIVES WERE NOT TOUCHED.  eval_run1.csv, eval_run1.txt, ana_run1.txt,
+  eval.csv, ana.txt, versus.py, versus.txt, spec.md and every other archived file are
+  as d4de8b4 holds them, and spread.txt's bytes did not change.
+
+  25.1  major: the ticket pointed at RUN.txt 17 to 23 after 24 was appended
+  ------------------------------------------------------------------
+  REPRODUCED: the ticket's 結果 opening read "RUN.txt の 17〜23" while this log ends
+  with section 24.  The README's copy of the same sentence had been corrected to
+  17〜24 and the ticket's had not; 24.6's list of corrected sentences is a list of
+  README sentences, so the ticket line was a SECOND place that needed the same
+  correction and was missed.  FIXED: BOTH copies now read 17〜25, the ticket's and the
+  README's, because this section exists and carries a command of its own, the spread.py
+  re-run of 25.8.  17〜24 would have stopped one section short in the same way the
+  reviewer filed.  This section is the record that the ticket line changed too, so 24.6
+  above stands as written, about the README only.
+
+  25.2  minor: a positive run1-to-run2 movement carried the run1-minus-run2 interval
+  ------------------------------------------------------------------
+  REPRODUCED: three places wrote "候補 b の点は 1 回目から 2 回目へ 634.457 ms 動き
+  （区間 -889.794〜-365.865）", i.e. a magnitude in the run1-to-run2 direction beside
+  the interval part 3 prints for b run1 - b run2.  A reader forming run2 - run1 to
+  match the stated direction would expect +365.865 to +889.794.  FIXED in the README's
+  "言えないこと" bullet, the ticket paragraph and the map entry: all three now state
+  the quantity as spread.txt prints it, "1 回目の b から候補 b を引いた差は -634.457
+  ms", keep the interval unflipped, and say in words which run scored lower.  The
+  README's own table in the new section already used that convention and is unchanged.
+
+  25.3  minor: the ticket quoted the two intervals without saying what they are over
+  ------------------------------------------------------------------
+  REPRODUCED: the ticket's 結果 paragraph printed both intervals with no statement of
+  what is resampled, so a reader of that paragraph alone could read them as intervals
+  on the recipe's run-to-run spread.  FIXED: the same sentence now says the two
+  intervals are over the 20 seeds with the two weight files held fixed and that they
+  say nothing about where a third tuning run would come out.
+
+  25.4  minor: the headline paragraph's all-four claim carried no multiplicity caveat
+  ------------------------------------------------------------------
+  REPRODUCED: README 問いと答え stated the strongest form of the four-adapter result
+  while attaching the post hoc caveat only to the older versus.txt numbers.  FIXED:
+  the new clause now carries, in the same parenthesis, that it is post hoc, that no
+  multiplicity correction over the twelve comparisons is in it, and that the nearest
+  lower end is the first run's b at 12.791 ms.  Nothing was strengthened and no
+  adjective was added.
+
+  25.5  minor: spread.txt was missing from the Acceptance 6 inventories
+  ------------------------------------------------------------------
+  REPRODUCED: the README's Acceptance 6 section opens "どの台本も" and then enumerates
+  the scripts, and the ticket's Acceptance 6 bullet carries the same two lists; both
+  stopped at versus.txt.  FIXED: both lists now name spread.txt beside versus.txt --
+  part 1 prints only the csv's seed column and its 0-seed intersection with 121 to
+  160 and prints no role, and part 5 shows 18 refusals (counted: 18 FIRES lines,
+  spread.txt lines 148 to 165, and the line "all 18 mutations produced a failure").
+  The README also names where the ordering argument lives, spread.py's
+  check_seed_roles at lines 138 to 152, which tests the measuring range and then calls
+  PORT.check_seeds.
+
+  25.6  nit: "Acceptance 4 の読みは動かない" read as a claim about the gain interval
+  ------------------------------------------------------------------
+  REPRODUCED: Acceptance 4's own words name the frontier gain and its 95 % interval,
+  and the gain intervals do NOT all exclude 0 (the first run's b -0.715 to 4.863 %
+  and candidate b -3.135 to 1.869 % both contain 0, ana_run1.txt and ana.txt part 3).
+  FIXED: the sentence now names the interval it means, "F との点の差の、対の bootstrap
+  の 95 % 区間".  The same phrase was made explicit in the README headline, which
+  carries the identical clause.  The gains two sentences later were already right.
+
+  25.7  nit: candidate a's movement was given without its interval, which contains 0
+  ------------------------------------------------------------------
+  REPRODUCED: the README's last-section bullet gave 634.457 and 448.515 ms side by
+  side as equally established, while a run1 - a run2's interval -1021.930 to 108.977
+  contains 0 (13 of 20 seeds lower) and b's does not.  FIXED: that bullet now carries
+  both intervals and says which contains 0.  ONE LOCATION BEYOND THE FINDING was
+  fixed the same way, the ticket's 開いたまま残ったこと bullet, which had the same two
+  bare figures.  The README's 「はっきりした文」 sentence keeps its two magnitudes,
+  because the table three subsections above it in the same section prints both
+  intervals and both signs.
+
+  25.8  nit: spread.py's docstring said "A7's last two" where its output says "last"
+  ------------------------------------------------------------------
+  REPRODUCED: spread.py line 8 read "amendment A7's last two" and its printed part 0
+  line reads "amendment A7's last".  FIXED in the docstring, so the script and its
+  output name the same sentence; the printed line and spread.txt were left alone.
+  Both say "in one sentence, amendment A7's last", which is a simplification this log
+  makes as well in 24 above: spec.md:1119-1121 carries the measurement over two
+  sentences, the last of which is the quoted "It is not part of this plan and is run
+  only if the user asks for it", and the quote itself is verbatim in all three places.
+  Changing the printed line instead would have moved spread.txt's bytes and the sha
+  24.5 records, for a comment.
+  RE-RUN AFTER THE EDIT, twice, to scratchpad paths: exit 0, empty stderr, 204 lines,
+  "all 18 mutations produced a failure", the two runs byte-identical to each other and
+  byte-identical to the committed spread.txt, sha256 unchanged at
+  aa624bbcd602013d93ee589431e8c1cdbed70e54a18cecdc32a31749289e76f0.  So no number
+  quoted anywhere from spread.txt moved.
+
+  25.9  WHAT THE REVIEW DID NOT CHANGE
+  ------------------------------------------------------------------
+  - NO NUMBER MOVED.  Every figure in the README, the ticket and map.md is the same
+    digit for digit as before this review; the edits are sign conventions, the scope
+    of an interval, two caveats, two inventory entries and one comment word.
+  - NO SELECTION.  The candidate going to ticket 12 is the second run's b, A3 fixed
+    that before either run was scored, and the first run's lower b still reopens
+    nothing.  ana_run1.txt's "carries forward" line still reaches nothing.
+  - The frontier gains are still read off ana.txt and ana_run1.txt part 3 and are
+    still not recomputed.
+  - No GPU, no ssh, no simulation, no model read-out, no seed above 100, no archive
+    edited, spec.md untouched.  Nothing staged, committed, stashed or pushed, and no
+    branch or worktree change.  The worktree still carries four modified files
+    (README.md, this log, the ticket, map.md) and two untracked ones (spread.py,
+    spread.txt).
