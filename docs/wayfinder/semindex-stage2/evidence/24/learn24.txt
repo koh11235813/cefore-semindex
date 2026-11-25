@@ -1,0 +1,134 @@
+
+========================================================================
+0  SCOPE, DIGESTS AND SETTINGS
+========================================================================
+numpy 2.5.4, python 3.13.5
+grid=[0.0001, 0.001, 0.01, 0.1, 1.0]  lambda_ref=0.0001  horizon_n=4  cond_bar=1.0e+10  iter_cap=20
+code digests (sha256):
+  learn24.py     a520db4b4a7d55c958fad788608f5d41278fdf4c8bcd403e4f8d5154fbe47547
+  m24.py         f93641cb4022a21437365f2f019d8c705e2cdffc99ba1654b879a4cdcdb79719
+  rows24.py      5f4b3c8ba1a854aa7d3aef6fceb03b80c4c7d92390e7aa1640ab847673a34c88
+  charges.py     39c9b8669488b5e848e49e97781988f285245ecbe728b1526f70a5e41e8c0c40
+  precheck.py    cf7fef699b93ff4c69309c47e54a197bc4d3613c57191481bf188bf4d52212df
+  features.py    437e840b04d10d6e58ff28513f994cb85c63c135bc0baee2b230592b30e7b80e
+
+========================================================================
+1  BUILD ROWS (SEEDS 1 TO 80)
+========================================================================
+cand a: fit=7837 held=1104 crit=599
+cand b: fit=15633 held=2194 crit=1187
+
+========================================================================
+2  FIT CANDIDATES A AND B
+========================================================================
+
+--- candidate a (two_rates=False, fit=7837, held=1104, crit=599) ---
+
+grid search on logging policy (Crit m''=599, held m'=1104):
+  lambda          Crit   Crit_SE    res_log     res_SE    msq_log     msq_RB         cond rhos
+  0.0001    964002.421 103299.380   -22.9908    14.5792  207489.98  200922.00    1.073e+05 [17.2626]
+  0.001    1153791.762 89748.023   -24.6531    16.1197  329679.45  323769.28    1.084e+04 [11.156]
+  0.01     18905987.696 738198.122   -16.0030     9.5021  887298.85  878673.58    5.564e+03 [62.4481]
+  0.1      3221682.990 199475.431   -20.6140    11.9277   99000.07   94863.77    1.453e+02 [35.7309]
+  1        2882582.589 191462.898   -21.5238    11.3448   80571.25   77864.59    4.026e+01 [43.7749]
+selected lambda* = 0.0001 (Crit = 964002.421 +- 103299.380)
+instrument block at lambda*: shape=(786, 787) rank(A+lam*P)=785 rank(inst)=786 sv_min2=(1.0000e-04, 1.0000e-04) cond=1.0733e+05
+centring gate PASSED at lambda*: mean=-22.9908  2*SE=29.1584 (g=10)  detectable=29.16 ms/row (4.32 ms/s)
+rate diagnostic (non-gating) at lambda* and across grid:
+  lam=0.0001  p0.2: rho_hat=17.2626 R_fit=48.8953 diff=-31.6327 (SE 0.6317) <- lambda*
+  lam=0.001   p0.2: rho_hat=11.1560 R_fit=48.8953 diff=-37.7393 (SE 0.6317)
+  lam=0.01    p0.2: rho_hat=62.4481 R_fit=48.8953 diff=+13.5528 (SE 0.6317)
+  lam=0.1     p0.2: rho_hat=35.7309 R_fit=48.8953 diff=-13.1644 (SE 0.6317)
+  lam=1       p0.2: rho_hat=43.7749 R_fit=48.8953 diff=-5.1204 (SE 0.6317)
+  lambda* block endpoints (p0.2, 560 blocks): sum=1633523.435 mean=2917.0061 median=2502.6871 (+/560 -/0 0/0) CheckA_gap=3.725e-09
+next-action rule comparison at lambda*:
+  logged a': rhos=[17.2626]  intercepts=[7.339, -20.5629, 13.224]  held_mean_res=-22.9908 (SE 14.5792)
+  1/3 avg  : rhos=[19.3379]  intercepts=[13.5044, -21.4578, 7.9534]  held_mean_res(RB)=-25.5664 (SE 14.7774)
+
+policy iteration at fixed lambda* = 0.0001 (cap=20):
+    k    changed   ||w_k||_2      cond                 rhos       arm_shares status
+    0   0.667985    3576.610 1.073e+05            [17.2626] 0.284/0.380/0.336 vs_log
+    1         --    3285.960 1.091e+05             [8.8813]               -- STOP cand a k=1: |rho(p0.2) 8.8813 - R_fit 48.8953| > 0.25 * R_fit (12.2238) -> fallback pi_greedy(w_0)
+final policy exit: bound_breach_k_1
+
+--- candidate b (two_rates=True, fit=15633, held=2194, crit=1187) ---
+
+grid search on logging policy (Crit m''=1187, held m'=2194):
+  lambda          Crit   Crit_SE    res_log     res_SE    msq_log     msq_RB         cond rhos
+  0.0001   1504845.030 312915.710    -8.0864    12.2050  275817.67  257955.62    2.689e+05 [22.232, 37.299]
+  0.001    1792634.198 292152.717    -7.9895    13.0661  397959.94  379534.76    3.216e+04 [15.8008, 31.1941]
+  0.01     5132144.575 325483.023    -9.6033    10.8952  460751.74  437010.02    3.222e+03 [39.1436, 53.24]
+  0.1      2383603.299 358914.549    -6.4565    11.8048  223224.62  209620.04    1.888e+02 [33.4324, 48.0906]
+  1        2339394.458 453979.143    -4.9903    11.4936  177295.91  169899.70    3.969e+01 [43.6236, 57.9158]
+selected lambda* = 0.0001 (Crit = 1504845.030 +- 312915.710)
+instrument block at lambda*: shape=(787, 788) rank(A+lam*P)=785 rank(inst)=787 sv_min2=(9.9956e-05, 3.8969e-05) cond=2.6887e+05
+centring gate PASSED at lambda*: mean=-8.0864  2*SE=24.4100 (g=20)  detectable=24.41 ms/row (3.60 ms/s)
+rate diagnostic (non-gating) at lambda* and across grid:
+  lam=0.0001  p0.2: rho_hat=22.2320 R_fit=48.8953 diff=-26.6633 (SE 0.6317) | p0.4: rho_hat=37.2990 R_fit=62.1939 diff=-24.8949 (SE 1.2087) <- lambda*
+  lam=0.001   p0.2: rho_hat=15.8008 R_fit=48.8953 diff=-33.0945 (SE 0.6317) | p0.4: rho_hat=31.1941 R_fit=62.1939 diff=-30.9998 (SE 1.2087)
+  lam=0.01    p0.2: rho_hat=39.1436 R_fit=48.8953 diff=-9.7517 (SE 0.6317) | p0.4: rho_hat=53.2400 R_fit=62.1939 diff=-8.9539 (SE 1.2087)
+  lam=0.1     p0.2: rho_hat=33.4324 R_fit=48.8953 diff=-15.4629 (SE 0.6317) | p0.4: rho_hat=48.0906 R_fit=62.1939 diff=-14.1034 (SE 1.2087)
+  lam=1       p0.2: rho_hat=43.6236 R_fit=48.8953 diff=-5.2717 (SE 0.6317) | p0.4: rho_hat=57.9158 R_fit=62.1939 diff=-4.2781 (SE 1.2087)
+  lambda* block endpoints (p0.2, 560 blocks): sum=1376900.208 mean=2458.7504 median=2324.6407 (+/560 -/0 0/0) CheckA_gap=2.794e-09
+  lambda* block endpoints (p0.4, 560 blocks): sum=1282509.881 mean=2290.1962 median=2224.3711 (+/559 -/1 0/0) CheckA_gap=2.794e-09
+next-action rule comparison at lambda*:
+  logged a': rhos=[22.232, 37.299]  intercepts=[-12.8936, -33.8333, 46.7269]  held_mean_res=-8.0864 (SE 12.2050)
+  1/3 avg  : rhos=[22.1256, 37.2778]  intercepts=[-11.4572, -33.7142, 45.1714]  held_mean_res(RB)=-11.1527 (SE 12.6936)
+
+policy iteration at fixed lambda* = 0.0001 (cap=20):
+    k    changed   ||w_k||_2      cond                 rhos       arm_shares status
+    0   0.665451    3038.214 2.689e+05     [22.232, 37.299] 0.304/0.389/0.307 vs_log
+    1         --    2824.138 3.825e+05   [12.4988, 22.7887]               -- STOP cand b k=1: |rho(p0.2) 12.4988 - R_fit 48.8953| > 0.25 * R_fit (12.2238) -> fallback pi_greedy(w_0)
+final policy exit: bound_breach_k_1
+
+========================================================================
+3  CANDIDATE A AGAINST CANDIDATE B (BEFORE ANY SCORE)
+========================================================================
+  block 3.695 s ||w_a - w_b||_2 = 963.639649 (intercept diff +20.232528)
+  block 6.000 s ||w_a - w_b||_2 = 1137.485212 (intercept diff +13.270377)
+  block 10.043 s ||w_a - w_b||_2 = 1173.597195 (intercept diff -33.502905)
+  top 10 coefficient differences:
+    arm 6.000  res_poll_age_s               w_a= -237.4002  w_b= +551.8453  diff= -789.2455
+    arm 10.043 res_poll_age_s               w_a=  +71.9256  w_b= +696.6485  diff= -624.7229
+    arm 3.695  res_poll_age_s               w_a= -278.2593  w_b= -773.3494  diff= +495.0900
+    arm 10.043 peers_known                  w_a= +969.2932  w_b= +529.1721  diff= +440.1211
+    arm 6.000  peers_known                  w_a= +900.9548  w_b= +490.1166  diff= +410.8382
+    arm 3.695  peers_known                  w_a= +936.9825  w_b= +554.6476  diff= +382.3348
+    arm 10.043 x1_waited_s                  w_a=   -2.7076  w_b= +354.8482  diff= -357.5558
+    arm 10.043 x1_age_s                     w_a=  -58.3986  w_b= -385.1725  diff= +326.7739
+    arm 6.000  o1_hi                        w_a=-1022.5200  w_b= -769.9935  diff= -252.5264
+    arm 10.043 x3_age_s                     w_a= -409.1202  w_b= -178.6373  diff= -230.4830
+  argmin disagreement on candidate a's 7837 fit rows: 2659 / 7837 = 0.339288
+
+========================================================================
+4  COEFFICIENT FILES, REPEAT CHECK AND TWO-PROCESS REPRODUCIBILITY
+========================================================================
+wrote coef_a.npy (sha256 bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf, 10608 bytes)
+wrote coef_b.npy (sha256 532a43998fa62d21c03efba90478172f8f009fedd13b460edf3de2cbe805f2cb, 10608 bytes)
+  repeat check cand a (p0.2 seed 1 first resched): values=[1172.615656, 849.984901, 1891.158468] -> arm 6.000
+  repeat check cand b (p0.2 seed 1 first resched): values=[857.063728, 380.882041, 797.278983] -> arm 6.000
+  two-process sha256 identical: a=bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf b=532a43998fa62d21c03efba90478172f8f009fedd13b460edf3de2cbe805f2cb
+
+========================================================================
+5  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+m24.self_check:
+  penalty on intercept           FIRES: mut/p-intercept: diagonal differs from 0 on intercepts / 0.01 elsewhere
+  norm row not u                 FIRES: mut/norm-e0: weight slice of normalisation row is not u
+  norm rhs non-zero              FIRES: mut/norm-rhs: normalisation RHS 1.0 != 0.0
+  tau out of range               FIRES: mut/tau-hi: 1 tau(s) outside [1.0, 14.0], e.g. 14.5000
+  tie pick order                 FIRES: mut/tie: picked arm index 1, expected first minimum 0 for (1.0, 1.0, 2.0)
+  AST check missing              FIRES: features.py: top-level SEND_START = ARMS[1] not found
+  Check A: negated w fails           FIRES: mut/neg-w (p 0.2): telescoped Check A gap 3.267047e+06 > tol 2.524969e+00
+  Check A: shifted rho fails         FIRES: mut/rho-shift (p 0.2): telescoped Check A gap 5.164032e+05 > tol 2.524969e+00
+  Check A: off-by-one successor      FIRES: mut/off-by-one: successor pos 3 != pos + 1 (2)
+  centring gate: shifted residual    FIRES: mut/centring: |mean 500.0000| > 2 * SE (0.0000, g=10)
+  iter bound: negative rho           FIRES: mut/neg-rho: rho(p0.2)=-1.0000 <= 0
+  iter bound: 20x weight norm        FIRES: mut/norm-10x: ||w_k|| 71532.2045 > 10 * ||w_0|| (35766.1023)
+  repeat check: 1 value moved        FIRES: mut/repeat: two passes differed: (1172.6156562851847, 849.9849011520631, 1891.1584677250003) against (1173.6156562851847, 849.9849011520631, 1891.1584677250003)
+  learn seed > 80                    FIRES: mut/81: learning seeds must be whole numbers 1 to 80; refused [81.0]
+  port.check_seeds > 100             FIRES: mut/101: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+
+9 of 9 learn24 mutations produced a failure
+
+end of learn24.py

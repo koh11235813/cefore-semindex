@@ -59,7 +59,9 @@ import score as SCORE  # noqa: E402  `terms`: the one scorer, imported and not r
 R = PORT.R             # ../13/replay.py, which owns WINDOW_START_MS
 A = SCORE.A            # ../14/after.py, which owns CUT_MS and WE_MS
 
-STORE = "/home/lab_shared/semindex-eval"
+# 2026-11-26: allow pointing STORE at the remote host's filtered copy while keeping
+# the default path unchanged for all local runs.
+STORE = os.environ.get("STORE", "/home/lab_shared/semindex-eval")
 STAGE = "s11a"
 NODE_GLOB = os.path.join("debug", "node_dirs", "h*", "semindex", "events.jsonl")
 
@@ -100,8 +102,8 @@ def run_dir(p, seed):
     return os.path.join(STORE, STAGE, "p%s" % p, str(int(seed)))
 
 
-def check_log_seeds(seeds, where):
-    """Every emulator seed this workflow may open is a whole number 1 to MAX_LOG_SEED.
+def check_log_seeds(seeds, where, max_seed=MAX_LOG_SEED):
+    """Every emulator seed this workflow may open is a whole number 1 to `max_seed`.
 
     2026-11-25: the first version tested `int(s) > MAX_LOG_SEED` only, which bounds from
     above and nothing else.  `load_run("0.2", 20.9)` then passed the guard and went on to
@@ -111,14 +113,14 @@ def check_log_seeds(seeds, where):
     """
     bad = sorted({float(s) for s in seeds
                   if float(s) != int(float(s))
-                  or not 1 <= int(float(s)) <= MAX_LOG_SEED})
+                  or not 1 <= int(float(s)) <= max_seed})
     if bad:
         raise Fail("%s: an emulator seed read by this workflow is a whole number 1 to %d;"
-                   " refused %s" % (where, MAX_LOG_SEED, bad[:8]))
+                   " refused %s" % (where, max_seed, bad[:8]))
     return sorted({int(s) for s in seeds})
 
 
-def load_run(p, seed):
+def load_run(p, seed, max_seed=MAX_LOG_SEED):
     """({node: [row, ...] in file order}, t0) for one logged run.
 
     Opens only the five `debug/node_dirs/h*/semindex/events.jsonl` files.  A run's
@@ -127,7 +129,7 @@ def load_run(p, seed):
     workflow may not read -- so the lines below are written rather than that function
     reused.
     """
-    check_log_seeds([seed], "load_run")
+    check_log_seeds([seed], "load_run", max_seed=max_seed)
     PORT.check_seeds([seed], "charges.load_run")
     events = {}
     for path in sorted(glob.glob(os.path.join(run_dir(p, seed), NODE_GLOB))):

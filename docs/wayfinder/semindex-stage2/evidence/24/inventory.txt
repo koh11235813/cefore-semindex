@@ -1,0 +1,1118 @@
+
+========================================================================
+0  SCOPE AND CODE DIGEST
+========================================================================
+directories     ../22, ../23, .
+selection range 81 to 100
+inventory.py    sha256 aa0370f9e90cbbd0b967344effa5c6662fbf89217097b5a994d94cf1720e2466
+
+========================================================================
+1  CSV FILES: PARSED SEED COLUMNS (81 TO 100)
+========================================================================
+  ../22/labels_summary.csv     rows_81_100=   40  seeds=81..100 (20)  deciders=none
+  ../23/eval.csv               rows_81_100= 5600  seeds=81..100 (20)  deciders=['F', 'a', 'b', 'const10.043', 'const3.695', 'const6.000', 'untuned']
+  ../23/eval_dry.csv           rows_81_100=    0  seeds=none  deciders=none
+  ../23/eval_run1.csv          rows_81_100= 5600  seeds=81..100 (20)  deciders=['F', 'a', 'b', 'const10.043', 'const3.695', 'const6.000', 'untuned']
+
+========================================================================
+2  TXT AND MD FILES: TOKEN AND PHRASE MATCHES (EVIDENCE ONLY, NO ASSERTION)
+========================================================================
+  ../22/RUN.txt                matching_lines=  10  token_hits=  13  phrase_hits=   0
+    ../22/RUN.txt:8 [tok=['90'] ph=[]]   The first half of this step is commit 9a909585e7b57f0f03a1596651d90db6d2f2e9c3 and the second half is
+    ../22/RUN.txt:9 [tok=['81', '97'] ph=[]]   0060f53edc9c6b4cc5094cba81acd9faa6dd97ca, which `git rev-parse HEAD` prints.
+    ../22/RUN.txt:19 [tok=['96'] ph=[]] export SCR=/tmp/claude-1001/-home-lab-shared-cefore-emu-sslab/4677c249-e96f-46cd-a827-e50302f7cbe5/scratchpad/t22p5
+    ../22/RUN.txt:31 [tok=['100'] ph=[]] weight.py and label.py run seeds 1 to 100 of both cells; stability.py runs seeds 1 to 10 of both cells;
+    ../22/RUN.txt:33 [tok=['100'] ph=[]] Every script that takes seeds passes them through port.check_seeds, which raises on any seed above 100, so
+    ../22/RUN.txt:180 [tok=['95'] ph=[]]     sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67
+    ../22/RUN.txt:182 [tok=['98', '84'] ph=[]]     sha256 d30759dc23768b6d98f6579c8b7973fc797e9c4e2cc5ce7ddca7e9beb69b84e3
+    ../22/RUN.txt:188 [tok=['99'] ph=[]] weight.json's own sha256 is 99b790b210b76513924467dcc78fa3081d73c593103a8efecd2f1de20043b9c5, unchanged
+    ../22/RUN.txt:199 [tok=['81', '97'] ph=[]] git -C $W rev-parse HEAD                      # 0060f53edc9c6b4cc5094cba81acd9faa6dd97ca
+    ../22/RUN.txt:207 [tok=['100'] ph=[]] - No relabelling under the superseded weight 100.62168514446252. The one comparison of this step that
+  ../22/labels.txt             matching_lines=   4  token_hits=   5  phrase_hits=   0
+    ../22/labels.txt:9 [tok=['100'] ph=[]] p 0.2: 100 runs, 16071 labelled decisions (160.7 per run, min 150, max 170)
+    ../22/labels.txt:18 [tok=['100'] ph=[]] p 0.4: 100 runs, 16148 labelled decisions (161.5 per run, min 146, max 173)
+    ../22/labels.txt:34 [tok=['95'] ph=[]]     sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67
+    ../22/labels.txt:36 [tok=['98', '84'] ph=[]]     sha256 d30759dc23768b6d98f6579c8b7973fc797e9c4e2cc5ce7ddca7e9beb69b84e3
+  ../22/observe.txt            matching_lines=   1  token_hits=   1  phrase_hits=   0
+    ../22/observe.txt:71 [tok=['81'] ph=[]]   on the logged run: 66 of 81.
+  ../22/specnums.txt           matching_lines=  23  token_hits=  13  phrase_hits=  12
+    ../22/specnums.txt:4 [tok=['100'] ph=[]] Weight: 104.29595912307323 ms per poll, read from weight.json. Superseded: 100.62168514446252.
+    ../22/specnums.txt:6 [tok=['95'] ph=[]]     sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67 -- checked before anything below was counted
+    ../22/specnums.txt:8 [tok=['98', '84'] ph=[]]     sha256 d30759dc23768b6d98f6579c8b7973fc797e9c4e2cc5ce7ddca7e9beb69b84e3 -- checked before anything below was counted
+    ../22/specnums.txt:18 [tok=['100'] ph=[]]   labels that changed against the superseded weight 100.62168514446252: 46 of 16071 (0.0029)
+    ../22/specnums.txt:31 [tok=[] ph=['selection']]   t >= 3 or (sd = 0 and labelled), over this cell's own 16071 rows: keeps 5696 rows, 5696 of them carrying a label (0.35
+    ../22/specnums.txt:32 [tok=['99'] ph=[]]     of those rows 39 have a t within 1e-06 of the bar 3, and the float comparison keeps 19 of them and drops 20. A t of 
+    ../22/specnums.txt:33 [tok=[] ph=['selection']]     SO THE COUNT ABOVE IS NOT REPRODUCIBLE ROW BY ROW, which is a weakness of the bar as this step defined it: `t >= 3` 
+    ../22/specnums.txt:34 [tok=[] ph=['selection']]     rows whose runner-up ties the THIRD arm in mean, where the order of `ARMS` and nothing in the data picks which arm t
+    ../22/specnums.txt:35 [tok=[] ph=['selection']]   t >= 3 or (sd = 0 and labelled), over the seeds 1 to 10 of it, which stability.py measured: keeps 538 rows, 538 of the
+    ../22/specnums.txt:36 [tok=['91'] ph=[]]     of those rows 5 have a t within 1e-06 of the bar 3, and the float comparison keeps 2 of them and drops 3. A t of exa
+    ../22/specnums.txt:37 [tok=[] ph=['selection']]     SO THE COUNT ABOVE IS NOT REPRODUCIBLE ROW BY ROW, which is a weakness of the bar as this step defined it: `t >= 3` 
+    ../22/specnums.txt:38 [tok=['81'] ph=['selection']]     rows whose runner-up ties the THIRD arm in mean, where the order of `ARMS` and nothing in the data picks which arm t
+    ../22/specnums.txt:40 [tok=['90'] ph=[]]   last_timeout_s set: 12 of 16071, on seeds 90 (12)
+    ../22/specnums.txt:42 [tok=['90'] ph=[]]   notified_max above the advertiser's own hi: 66 of 43037 advertised cells, on seeds 90 (66)
+    ../22/specnums.txt:62 [tok=['100'] ph=[]]   labels that changed against the superseded weight 100.62168514446252: 53 of 16148 (0.0033)
+    ../22/specnums.txt:75 [tok=[] ph=['selection']]   t >= 3 or (sd = 0 and labelled), over this cell's own 16148 rows: keeps 5897 rows, 5897 of them carrying a label (0.36
+    ../22/specnums.txt:76 [tok=['99'] ph=[]]     of those rows 39 have a t within 1e-06 of the bar 3, and the float comparison keeps 25 of them and drops 14. A t of 
+    ../22/specnums.txt:77 [tok=[] ph=['selection']]     SO THE COUNT ABOVE IS NOT REPRODUCIBLE ROW BY ROW, which is a weakness of the bar as this step defined it: `t >= 3` 
+    ../22/specnums.txt:78 [tok=[] ph=['selection']]     rows whose runner-up ties the THIRD arm in mean, where the order of `ARMS` and nothing in the data picks which arm t
+    ../22/specnums.txt:79 [tok=[] ph=['selection']]   t >= 3 or (sd = 0 and labelled), over the seeds 1 to 10 of it, which stability.py measured: keeps 588 rows, 588 of the
+    ../22/specnums.txt:81 [tok=[] ph=['selection']]     SO THE COUNT ABOVE IS NOT REPRODUCIBLE ROW BY ROW, which is a weakness of the bar as this step defined it: `t >= 3` 
+    ../22/specnums.txt:82 [tok=[] ph=['selection']]     rows whose runner-up ties the THIRD arm in mean, where the order of `ARMS` and nothing in the data picks which arm t
+    ../22/specnums.txt:85 [tok=['93'] ph=[]]   the fetch_timeout_age_s those stamps render as: 17 values, 0.4 s to 93.9 s
+  ../22/stability.txt          matching_lines=   2  token_hits=   2  phrase_hits=   0
+    ../22/stability.txt:23 [tok=['90'] ph=[]]   rule: the smallest J in [1, 2, 4, 8] whose non-tie agreement on the main cell (p 0.2) is at least 0.90, and 8 if none 
+    ../22/stability.txt:57 [tok=['88'] ph=[]]   the table covers 1621 of the cell's 1623 decisions; matching no bin: 2 (t -1.46e-14, -1.88e-14, a tie's rounding below
+  ../22/weight.txt             matching_lines=  31  token_hits=  36  phrase_hits=   0
+    ../22/weight.txt:3 [tok=['100'] ph=[]] Cell: p 0.2, workload w0, the s6 outage shape, seeds 1 to 100, 40 Mode B replicate streams, run dicts built by ../21/pre
+    ../22/weight.txt:14 [tok=['95'] ph=[]]       fixed 10.043 s                 delay  30548.485 ms   polls  95.920   censored 0.00400
+    ../22/weight.txt:15 [tok=['95', '100'] ph=[]]     weight = (30548.484867 - 14390.654667) / (256.500000 - 95.920000) = 100.62168514446252 ms per poll
+    ../22/weight.txt:18 [tok=['95'] ph=[]]       fixed 10.043 s                 delay  30684.233 ms   polls  95.920   censored 0.00400
+    ../22/weight.txt:19 [tok=['95'] ph=[]]     weight = (30684.233083 - 14390.654667) / (256.500000 - 95.920000) = 101.46704705857933 ms per poll
+    ../22/weight.txt:20 [tok=['84'] ph=[]]     moved +0.845362 ms (+0.84 %) against step 1
+    ../22/weight.txt:23 [tok=['95'] ph=[]]       fixed 10.043 s                 delay  30947.171 ms   polls  95.995   censored 0.00350
+    ../22/weight.txt:24 [tok=['95'] ph=[]]     weight = (30947.170833 - 14185.656000) / (256.440000 - 95.995000) = 104.46891354254315 ms per poll
+    ../22/weight.txt:25 [tok=['96'] ph=[]]     moved +3.001866 ms (+2.96 %) against step 2
+    ../22/weight.txt:28 [tok=['95'] ph=[]]       fixed 10.043 s                 delay  30943.591 ms   polls  95.985   censored 0.00351
+    ../22/weight.txt:29 [tok=['95'] ph=[]]     weight = (30943.591493 - 14207.271080) / (256.454750 - 95.985250) = 104.29595912307323 ms per poll
+    ../22/weight.txt:33 [tok=['100'] ph=[]]   step 1   = 100.62168514446252
+    ../22/weight.txt:34 [tok=['100'] ph=[]]   committed= 100.62168514446252
+    ../22/weight.txt:48 [tok=['99'] ph=[]]   min 99.899   median 104.661   max 107.251   over 40 streams
+    ../22/weight.txt:52 [tok=['100'] ph=[]]   The question: the jitter of steps 1 and 2 comes from the node's own stream, seeded with (seed, node name) and NOT with
+    ../22/weight.txt:53 [tok=['100'] ph=[]]   Jackknife standard error of the weight over the 100 seeds, and the move set against it:
+    ../22/weight.txt:56 [tok=['95'] ph=[]]     the step 2 -> step 3 move is +3.001866 ms = 0.95 x step 2's own standard error and 1.43 x step 3's
+    ../22/weight.txt:70 [tok=['95', '100'] ph=[]]   Either way, and about the KEYING move alone: the step 2 -> step 3 move is 0.95 times the step-2 weight's own standard 
+    ../22/weight.txt:73 [tok=['100'] ph=[]]   The uncertainty a reader should carry on the FIXED weight: step 4 is 104.295959 ms per poll with a jackknife standard 
+    ../22/weight.txt:74 [tok=['100', '100', '100', '100'] ph=[]]   The jackknife of steps 2 and 3 is taken on a MEDIAN over the 40 streams, so it is an approximation there and its leave
+    ../22/weight.txt:79 [tok=['96'] ph=[]]       fixed 10.043 s                 delay  41945.763 ms   polls  96.010   censored 0.05458
+    ../22/weight.txt:80 [tok=['96'] ph=[]]     weight = (41945.762721 - 21256.811771) / (256.570000 - 96.010000) = 128.85495110695479 ms per poll
+    ../22/weight.txt:83 [tok=['96'] ph=[]]       fixed 10.043 s                 delay  43621.204 ms   polls  96.010   censored 0.05458
+    ../22/weight.txt:84 [tok=['96'] ph=[]]     weight = (43621.203875 - 21256.811771) / (256.570000 - 96.010000) = 139.28993587547748 ms per poll
+    ../22/weight.txt:88 [tok=['96'] ph=[]]       fixed 10.043 s                 delay  43832.365 ms   polls  96.070   censored 0.05358
+    ../22/weight.txt:89 [tok=['96'] ph=[]]     weight = (43832.364854 - 21358.942000) / (256.500000 - 96.070000) = 140.08242133121399 ms per poll
+    ../22/weight.txt:93 [tok=['96'] ph=[]]       fixed 10.043 s                 delay  43795.091 ms   polls  96.076   censored 0.05386
+    ../22/weight.txt:94 [tok=['96'] ph=[]]     weight = (43795.091366 - 21388.660553) / (256.502250 - 96.076000) = 139.66810800913194 ms per poll
+    ../22/weight.txt:103 [tok=['95'] ph=[]]   fixed 10.043 s                     delay  30688.579 ms   polls  95.940   censored 0.00400
+    ../22/weight.txt:109 [tok=['95'] ph=[]]   fix10.043 row                      delay  30636.847 ms   polls  95.780
+    ../22/weight.txt:111 [tok=['100'] ph=[]]   It is a different set of runs: seeds 1 to 20 and 5 replicates, not 1 to 100 and 40, the arms there are the old fixed-a
+  ../22/README.md              matching_lines=  24  token_hits=  36  phrase_hits=   0
+    ../22/README.md:9 [tok=['100'] ph=[]] | 主のマス | 0.2 | `w0` | `s6`（8〜12 秒） | 1〜100 | 16071 |
+    ../22/README.md:10 [tok=['100'] ph=[]] | もう 1 つ | 0.4 | `w0` | `s6`（8〜12 秒） | 1〜100 | 16148 |
+    ../22/README.md:12 [tok=['100', '100'] ph=[]] 16071 と 16148 は、ラベル付けを当てた判断の数で、印の付かない引き分けも中に数えている。印の付いたほうは 14279 件と 14826 件（`specnums.txt`）。数は `labels.txt`。腕は 3.695・6.0
+    ../22/README.md:16 [tok=['100'] ph=[]] - **1 回の状態確認につく重みは 104.295959 ms になった（`weight.txt`）。** 最初に出した 100.62168514446252 は、ラベルの点が決まる前に測った値で、**打ち切られたレコードを遅れから外した
+    ../22/README.md:17 [tok=['100', '95', '100', '100'] ph=[]] - **ただし、ゆらぎの流れの鍵を付け替えて動いた幅は、seed 100 本では見分けられていない。** 4 つの手順のうちいちばん大きく動いた手順 3 の +3.001866 ms は、手順 2 の重みが持つ jackknife の標準誤
+    ../22/README.md:20 [tok=['90'] ph=[]] - **ラベルは安定しない。** 通し数を 8 ずつに分けた 2 組の、重なりの無いラベル付けが一致したのは、印の付いた判断の 0.7577（主のマス、seed 1〜10、`stability.txt`）。**前もって置いた 0.90 の線
+    ../22/README.md:21 [tok=['100'] ph=[]] - **margin は自信の度合いにならない。** margin の大きいほうの半分の一致は 0.7276 で、全体の 0.7623 より低い（`stability.txt`）。代わりに効くのは組 A 自身の対の t と、判断が run 
+    ../22/README.md:34 [tok=['100'] ph=[]] - **文の中の数を数え直す台本（`specnums.py`、`specnums.txt`）。** `spec.md` がラベルの file から読み取って書いた数を、毎回ラベルの file から数え直す。2 つの file の sha25
+    ../22/README.md:64 [tok=['100'] ph=[]] | 1 | 最初に commit した値そのもの。打ち切られたレコードを遅れから外し、ノード自身のゆらぎの流れを使う | 100.62168514446252 | （再現） |
+    ../22/README.md:65 [tok=['84'] ph=[]] | 2 | 打ち切られたレコードを下限の時刻で入れる。ラベルが採点される遅れ | 101.46704705857933 | +0.845362 ms（+0.84 %） |
+    ../22/README.md:66 [tok=['96'] ph=[]] | 3 | 隣の組ごとのゆらぎの流れも入れる。ラベル付けが回す engine | 104.46891354254315 | +3.001866 ms（+2.96 %） |
+    ../22/README.md:69 [tok=['99'] ph=[]] 手順 1 は commit 済みの値を 1 桁も違わずに再現したので、**4 つの手順は、1 つの量が手順ごとに動いていく姿になっている。別々の 2 回の計測を並べたものにはなっていない。** 固定した値での 2 つの腕の点は 40954.
+    ../22/README.md:71 [tok=['100', '100', '100'] ph=[]] **固定した値に付けて回る不確かさは、jackknife の標準誤差 1.685586 ms（seed 100 本）。** 4 つの手順が印字した 3 つの動きのうち 2 つより大きく、3 つめ（+3.001866）の半分より大きい。手順 
+    ../22/README.md:77 [tok=['90'] ph=[]] 作れた。1 本の報告は `labels_summary.csv` の 1 行目のデータ行、主のマスの seed 1: 判断 158 回、引き分け 22 回、正解が 3.695 秒 31 回・6.0 秒 25 回・10.043 秒 80 回、
+    ../22/README.md:83 [tok=['100', '100'] ph=[]] | run | 100 | 100 |
+    ../22/README.md:113 [tok=['90'] ph=[]] **J を決める決まりは「主のマスで印が両方に付いた判断の一致が 0.90 以上になる、いちばん小さい J。どれも届かなければ 8」で、数が出る前に書いた。届いた J は 1 つも無かったので、J = 8 は逃げ道として拾われた値になる。*
+    ../22/README.md:158 [tok=['90'] ph=[]] - **J = 8 は線を通った値ではない。** 1・2・4・8 のどれも 0.90 に届かなかったので、決まりの逃げ道が拾った。印が両方に付いた 1366 件の 0.2423 が違う印を受け取っている。
+    ../22/README.md:165 [tok=['90', '93', '90'] ph=[]] - **届いた 2 つの状況には、突き合わせる相手が無い。** `last_timeout_s` は主のマスで 16071 件中 12 件（seed 90 に 12 件）、もう 1 つのマスで 16148 件中 17 件（seed 36 に
+    ../22/README.md:168 [tok=['100', '95'] ph=[]] - **ゆらぎの流れの鍵を付け替えて動いた幅は、seed 100 本では見分けられていない。** 手順 3 の +3.001866 ms は手順 2 の標準誤差 3.167161 ms の 0.95 倍、seed ごとの対で見ても自分の標準
+    ../22/README.md:179 [tok=['90'] ph=[]] - **ラベルが安定していること。** 上のとおり、どの通し数でも 0.90 に届かない。
+    ../22/README.md:182 [tok=['100'] ph=[]] - **実機の周回のこと。** 1 回の判断の推論が 100 ms の周回に収まるかはチケット 12 の受け持ち。
+    ../22/README.md:186 [tok=['95', '98', '84'] ph=[]] - **ラベルの file。** リポジトリの外、`/home/lab_shared/semindex-learn/ev22/labels_p0.2.jsonl.gz`（sha256 `fe194e3c43d40e70b5f95bc8af5
+    ../22/README.md:188 [tok=['100'] ph=[]] - **ラベルの選び方。** 全部をそのまま学習に使うと、通しの運を学ぶ。組 A 自身の対の t が 3 以上か、sd が 0 で印の付いた判断に絞ると、主のマスの seed 1〜10 では 1586 件のうち 538 件（全体の 0.33
+    ../22/README.md:216 [tok=['100'] ph=[]] | `specnums.py`、`specnums.txt` | `spec.md` がラベルの file から読んだ数を、毎回数え直す。止まる時刻より後の判断の数と、絞り方が seed 1〜100 で残す数もここ |
+  ../22/spec.md                matching_lines=  59  token_hits=  55  phrase_hits=  13
+    ../22/spec.md:83 [tok=['89'] ph=[]] - **The class is `Tracker`** (`src/semindex/tracker.py:89`), not `SyncTracker`.
+    ../22/spec.md:153 [tok=['93'] ph=[]] most `DECIDER_HISTORY = 8` (`replay.py:93`), each one a dict of the fields a real node writes on its
+    ../22/spec.md:284 [tok=['100'] ph=[]]    Interest lifetime, plus one 100 ms tick, because the timeout is DETECTED at
+    ../22/spec.md:298 [tok=['90'] ph=[]]    them seed 90) and 17 of the 16 148 at p 0.4 (12 on seed 36, 5 on seed 48)**, where `observation`
+    ../22/spec.md:299 [tok=['93'] ph=[]]    turned the stamp into `fetch_timeout_age_s` values from 2.1 s to 43.0 s and from 0.4 s to 93.9 s
+    ../22/spec.md:490 [tok=['100'] ph=[]] **The cell** is p 0.2, workload `w0`, the s6 outage shape (8 to 12 s), seeds 1 to 100, 40 Mode B
+    ../22/spec.md:507 [tok=['99'] ph=[]] the per-stream weights -- **min 99.899, median 104.661, max 107.251 over the 40 streams** -- and the
+    ../22/spec.md:520 [tok=['100'] ph=[]]   `sum(lat4) / sum(n4)` over the **delivered records alone**, pooled over the 100 seeds of one
+    ../22/spec.md:541 [tok=['100'] ph=[]] | 1 | as committed: censored left out, pooled per stream, median over streams, per-node jitter | **100.62168514446252** 
+    ../22/spec.md:542 [tok=['84'] ph=[]] | 2 | the same with every censored record at its lower bound | 101.46704705857933 | +0.845362 (+0.84 %) |
+    ../22/spec.md:543 [tok=['96'] ph=[]] | 3 | step 2 with the per-pair jitter streams on, i.e. the labelling's engine | 104.46891354254315 | +3.001866 (+2.96 %)
+    ../22/spec.md:565 [tok=['100'] ph=[]] their jitter from one sequence per node and the jitter is averaged over 100 independent draws, while
+    ../22/spec.md:574 [tok=['100'] ph=[]] the same jitter over 100 draws instead of 4000 would do; claim 2, the per-seed PAIRED move of the
+    ../22/spec.md:581 [tok=['100'] ph=[]] | step 2's weight, jackknife standard error over the 100 seeds | 101.467047, se 3.167161 ms |
+    ../22/spec.md:583 [tok=['95'] ph=[]] | the step 2 to step 3 move against those | +3.001866 ms = 0.95 x step 2's se, 1.43 x step 3's |
+    ../22/spec.md:593 [tok=['100'] ph=[]] these 100 seeds. Claim 1 does not hold: the per-pair keying cuts the standard error by 1.51 and not
+    ../22/spec.md:602 [tok=['95'] ph=[]] kinds of quantity. The +3.001866 ms keying move is 0.95 times the step-2 measurement's own standard
+    ../22/spec.md:604 [tok=['100'] ph=[]] measurement it corrects**: at 100 seeds this cell cannot tell step 2's 101.467047 from step 3's
+    ../22/spec.md:616 [tok=['100'] ph=[]] over the 100 seeds, about 1.6 % of itself: larger than two of the three moves the four steps print
+    ../22/spec.md:767 [tok=['100'] ph=[]] Seeds 1 to 100 of both cells at J = 8, 3706.3 s on 5 workers, under the corrected weight
+    ../22/spec.md:772 [tok=['100', '100'] ph=[]] | runs | 100 | 100 |
+    ../22/spec.md:875 [tok=['100'] ph=[]] `port.check_seeds`, which refuses any seed above 100 with an error. **The library doors refuse them
+    ../22/spec.md:941 [tok=['90'] ph=[]] non-tie decisions of the main cell is at least 0.90, and 8 if none reaches it.
+    ../22/spec.md:970 [tok=['90'] ph=[]] non-ties (0.6847 at J = 1, 0.7577 at J = 8), so reaching 0.90 by passes alone would cost far more
+    ../22/spec.md:1013 [tok=['88'] ph=[]]   set-A ties whose `fmean(a_j - b_j)` rounds a hair below zero (t = -1.46e-14 and -1.88e-14) and so
+    ../22/spec.md:1048 [tok=['97'] ph=[]] | Q3 | 63 768 to 97 106 | 396 | 36 | 0.8460 | 0.9130 | 104.2960 | 0 | 406 | 10 | 0.8744 | 0.9046 | 104.2960 | 0 |
+    ../22/spec.md:1049 [tok=['97'] ph=[]] | Q4 | 97 189 to 131 907 | 397 | 160 | 0.9597 | 0.9956 | 52.1480 | 4 | 406 | 125 | 0.9680 | 0.9964 | 104.2960 | 9 |
+    ../22/spec.md:1060 [tok=['100'] ph=[]] 100 seeds `specnums.txt` counts 60 at p 0.2 and 78 at p 0.4. Nothing is relabelled for them, because
+    ../22/spec.md:1104 [tok=[] ph=['selection']] is on the label row already (`pass_scores` per arm; `label.paired_t` computes it). The selection is
+    ../22/spec.md:1109 [tok=[] ph=['selection']] rates as well. (`stability.py` prints the selection itself, one line per cell, so every number here
+    ../22/spec.md:1114 [tok=[] ph=['selection']] 1e-13 and the nearest row off that clump at least 776 times the tolerance away, and `>=` keeps 19 of p 0.2's and 25 of p
+    ../22/spec.md:1120 [tok=[] ph=['selection']] data, and 2 and 5 of them cross the selection when the other arm is taken.
+    ../22/spec.md:1122 [tok=[] ph=['selection']] **The earlier figure for this selection, `t >= 3 or sd = 0` keeping 0.4596 at 0.9602, counted the
+    ../22/spec.md:1125 [tok=[] ph=['selection']] prints the wider line under the selection with that stated. The direction of the error is worth
+    ../22/spec.md:1135 [tok=['100'] ph=['selection']] selection keeps over all 100 seeds of each file is in `specnums.txt`, as a retention with no
+    ../22/spec.md:1157 [tok=['89'] ph=[]] (at 89.6 s 2330/2330/2329; at 102.4 s 2360/2359/2358): the runs differ there too, and what makes the
+    ../22/spec.md:1171 [tok=['100'] ph=[]] the testbed. And the agreement was measured on seeds 1 to 10; the full labelling runs 1 to 100 and is
+    ../22/spec.md:1190 [tok=['100'] ph=[]]   digits that carry nothing. One decimal because a tick is 100 ms, which is the resolution of the
+    ../22/spec.md:1206 [tok=['81'] ph=[]]   on a two-peer record), and on the logged run in 66 of 81. That is the two orders coinciding on
+    ../22/spec.md:1377 [tok=[] ph=['selection']] | `labelcheck.py` | the five checks the label tool had to carry, plus the scorer: "F after k" is the rule path's F, the 
+    ../22/spec.md:1378 [tok=['100'] ph=[]] | `label.py` | the labels of every resolution-time decision of both cells' seeds 1 to 100 at J = 8, the per-cell label c
+    ../22/spec.md:1379 [tok=['100'] ph=[]] | `stability.py` | how far a label moves when the 8 passes behind it are replaced by 8 others, at four pass counts, over
+    ../22/spec.md:1381 [tok=['100'] ph=[]] | `weight.py` | one number, reached in four printed steps from the committed value to the label's own score, with the tw
+    ../22/spec.md:1419 [tok=['90'] ph=[]]     all on seed 90; 17 of 16 148 at p 0.4, 12 on seed 36 and 5 on seed 48), where `observation`
+    ../22/spec.md:1420 [tok=['93'] ph=[]]     turned the stamp into `fetch_timeout_age_s` values of 2.1 s to 43.0 s and 0.4 s to 93.9 s;
+    ../22/spec.md:1422 [tok=['90'] ph=[]]     seed 90; 0 of 39 125 at p 0.4). Every count, seed and range here is `specnums.txt`'s, so the
+    ../22/spec.md:1442 [tok=['90'] ph=[]]   between two labellings from disjoint pass sets does not reach 0.90 at any pass count tried, so a
+    ../22/spec.md:1445 [tok=['97', '96'] ph=[]]   from 0.46 to 0.97 across the paired-t bins and from 0.51 to 0.96 across the quartiles of a run, so
+    ../22/spec.md:1456 [tok=['100'] ph=[]]   inside the agent's 100 ms loop is ticket 12's question.
+    ../22/spec.md:1483 [tok=['100'] ph=['selection', 'selection']] | `specnums.py`, `specnums.txt` | the numbers this file states that are read off the two label files and that no other s
+    ../22/spec.md:1524 [tok=['100'] ph=[]] | the weight is `100.62168514446252` ms per poll | `104.29595912307323`. The old value levelled a delay that left the ce
+    ../22/spec.md:1541 [tok=['97', '96'] ph=[]] | `stability.py` shows the larger-margin half agreeing less, with two readings and no third measurement | two breakdowns
+    ../22/spec.md:1546 [tok=['100'] ph=[]] | the label counts, the tie shares and the margin medians of the superseded weight | remade: 46 of p 0.2's 16 071 labels
+    ../22/spec.md:1548 [tok=['93'] ph=[]] | at p 0.4 the `fetch_timeout_age_s` values run "from 0.4 s to 49.6 s" | from 0.4 s to **93.9 s**. 49.6 is the twelfth o
+    ../22/spec.md:1577 [tok=['96', '95', '100'] ph=[]] | step 3 "moved +3.001866 ms (+2.96 %)", with no account of why | the move is 0.95 times the step-2 weight's own jackkni
+    ../22/spec.md:1578 [tok=['100'] ph=[]] | the fixed weight was given as a point value, 104.295959 ms per poll | with a jackknife standard error of 1.685586 ms o
+    ../22/spec.md:1592 [tok=[] ph=['selection']] | `t >= 3 or sd = 0` keeps 0.4596 of p 0.2's decisions at 0.9602 agreement, handed to ticket 10 as the way to select lab
+    ../22/spec.md:1596 [tok=['100'] ph=[]] | nothing anywhere named the decisions the replay makes after a live agent has stopped | 4 of p 0.2's Q4 and 9 of p 0.4'
+    ../22/spec.md:1608 [tok=[] ph=['selection', 'selection']] | nothing anywhere said where the bar `t >= 3` falls among the values the t actually takes | it falls on a mass point of
+  ../23/RUN.txt                matching_lines= 186  token_hits= 225  phrase_hits=  28
+    ../23/RUN.txt:36 [tok=[] ph=['selection']]   selection seeds.  Deciding anything from those 61 steps would be deciding before the
+    ../23/RUN.txt:66 [tok=['86'] ph=[]]   torch-2.15.0+cu132-cp313-cp313-manylinux_2_28_x86_64.whl, and that exact build was
+    ../23/RUN.txt:88 [tok=['86', '90', '100'] ph=[]]   arch list       ['sm_75', 'sm_80', 'sm_86', 'sm_90', 'sm_100', 'sm_120']
+    ../23/RUN.txt:104 [tok=['82'] ph=[]]   # 01:16:27 -> 01:18:32, i.e. 125 s for 10.28 GB, about 82 MB/s
+    ../23/RUN.txt:113 [tok=['98'] ph=[]]   model.safetensors sha256 2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550
+    ../23/RUN.txt:150 [tok=['100'] ph=[]]     100  events.jsonl       20  meta.json       20  results.json
+    ../23/RUN.txt:169 [tok=['95'] ph=[]]   21acdf4dd440d04119fc4b50f380a95e076052f9f7514a8c837e4ac8180dd679.
+    ../23/RUN.txt:174 [tok=['81', '100'] ph=[]]   WHAT IS COMPARED  24 runs: seeds 1, 20, 21, 80, 81, 100 times the three constant arms
+    ../23/RUN.txt:175 [tok=['81', '100'] ph=[]]   and F.  Seeds 1 and 20 read the store; 21, 80, 81 and 100 have no logged run and build
+    ../23/RUN.txt:195 [tok=['81', '100'] ph=[]]   SEEDS: the printed seed set is 1,20,21,80,81,100, and every seed list parity.py computes
+    ../23/RUN.txt:198 [tok=['100'] ph=[]]   the held-out measuring seeds 121-160: port.MAX_SEED is 100, so check_seeds refuses every
+    ../23/RUN.txt:207 [tok=['96'] ph=[]]     OMP=OPENBLAS=MKL=96   8.63 s user, 2774 % cpu, 0.317 s wall
+    ../23/RUN.txt:208 [tok=['99'] ph=[]]     the committed default 0.25 s user,   99 % cpu, 0.261 s wall
+    ../23/RUN.txt:209 [tok=['96'] ph=[]]   A 96-thread pool breaks the brief's cap of 8 processes on a machine shared with other
+    ../23/RUN.txt:212 [tok=['99'] ph=[]]   took 0.638 s at 99 % cpu.  The cap does not touch the result: with
+    ../23/RUN.txt:220 [tok=['99', '100'] ph=[]]   A  parity, one seed changed on the far side (--seeds ...,99 against ...,100):
+    ../23/RUN.txt:221 [tok=['87'] ph=[]]      cmp -> "differ: byte 87, line 2", exit 1.  That difference is in the printed seed
+    ../23/RUN.txt:227 [tok=['100'] ph=[]]      "seeds above 100 are reserved for measuring ... refused [121]", exit 1, on both sides
+    ../23/RUN.txt:256 [tok=['82'] ph=[]] 6. THE FIRST FORWARD PASSES                                            82 s
+    ../23/RUN.txt:265 [tok=['82'] ph=[]]         > smoke.log 2> smoke.err'                              exit 0, 82 s wall
+    ../23/RUN.txt:273 [tok=['99'] ph=[]]   uncapped against 99 % capped).
+    ../23/RUN.txt:281 [tok=['87'] ph=[]]                 peak 13.07 GB allocated / 15.87 GB reserved over the whole run, of 47.27.
+    ../23/RUN.txt:323 [tok=['100'] ph=[]]   TOKEN LENGTHS, over all 16 071 rows of labels_p0.2.jsonl.gz (seeds 1 to 100)
+    ../23/RUN.txt:324 [tok=['99'] ph=[]]     prompt with the legend line    min 224   median 477   p99 509   max 519
+    ../23/RUN.txt:325 [tok=['99'] ph=[]]     prompt without it              min 138   median 391   p99 423   max 433
+    ../23/RUN.txt:326 [tok=['86'] ph=[]]     the legend costs 86 tokens at the median; the instruction alone is 48 tokens.
+    ../23/RUN.txt:330 [tok=['90', '99', '95'] ph=[]]     batch 1    median 43.78 ms   p90 44.39   p99 50.76   max 51.95
+    ../23/RUN.txt:331 [tok=['100'] ph=[]]     Beside it, the number the brief names: 100 ms.  No verdict is drawn here.
+    ../23/RUN.txt:399 [tok=['100'] ph=[]]   b  seedrange  EXPECT_SEEDS (1, 100) -> (1, 80)
+    ../23/RUN.txt:400 [tok=['100'] ph=[]]      "FAIL seeds: (1, 100) != (1, 80)", exit 1.
+    ../23/RUN.txt:443 [tok=['96'] ph=[]]      a control of 1.00 and the three-way softmax moving by 0.96.  Run again after the
+    ../23/RUN.txt:498 [tok=['99'] ph=[]]      uncapped against 99 % capped;
+    ../23/RUN.txt:502 [tok=['100'] ph=[]]    - no latency measured end to end against the 100 ms budget: section 6 times the forward
+    ../23/RUN.txt:594 [tok=['96'] ph=[]]    - parity.py set no thread cap and ran at 2774 % cpu on a shared 96-core host; it now
+    ../23/RUN.txt:595 [tok=['99'] ph=[]]      caps OMP/OPENBLAS/MKL at 1 before numpy is imported and runs at 99 % (section 4).
+    ../23/RUN.txt:633 [tok=['82'] ph=[]] 10. THE SHARED PREFILL MODULE, AND WHY smoke.txt WAS REFRESHED       82 s
+    ../23/RUN.txt:648 [tok=['82'] ph=[]]         > smoke2.log 2> smoke2.err'                            exit 0, 82 s wall
+    ../23/RUN.txt:689 [tok=['90'] ph=[]]       hand about 90 s in, because the mutation preamble was being corrected while it ran,
+    ../23/RUN.txt:712 [tok=['100'] ph=[]]   port.check_seeds (>100 refused); the 512 rows of part 1 are a stride over the file and
+    ../23/RUN.txt:713 [tok=['81', '100'] ph=['81-100']]   land 3 to 7 per seed over all 80.  Seeds 81-100 and 121-160 appear nowhere.
+    ../23/RUN.txt:716 [tok=['99', '98'] ph=[]]     margin = best minus second-best candidate logit.  bf16 median 4.6875, p99 13.98,
+    ../23/RUN.txt:734 [tok=['99'] ph=[]]     SINGLE-PASS TIME, 300 passes, 478-token row: bf16 median 43.02 ms, p99 49.10 ms;
+    ../23/RUN.txt:735 [tok=['99'] ph=[]]     float32 median 36.73 ms, p99 43.09 ms.
+    ../23/RUN.txt:742 [tok=['95'] ph=[]]     leave 37.32 GB free after the bf16 load and 27.68 GB after the float32 one, i.e. 9.95
+    ../23/RUN.txt:746 [tok=['86', '92'] ph=[]]       K = 1    23.1 passes/s    per-worker median pass 42.86 ms    128 000 in 92.2 min
+    ../23/RUN.txt:747 [tok=['98'] ph=[]]       K = 2    45.7 passes/s    42.98-43.43 ms                     128 000 in 46.7 min
+    ../23/RUN.txt:750 [tok=['95'] ph=[]]                nvidia-smi while K = 1 ran, and 8 of them need 80.95 GB against 46.73 GB
+    ../23/RUN.txt:761 [tok=['99'] ph=[]]       with the legend     478 tokens   median 43.06 ms   p99 49.66 ms
+    ../23/RUN.txt:762 [tok=['99'] ph=[]]       without it          392 tokens   median 43.07 ms   p99 50.26 ms
+    ../23/RUN.txt:763 [tok=['86'] ph=[]]     DROPPING THE LEGEND DID NOT SHORTEN THE PASS: 86 fewer tokens, 18.0 % of the prompt,
+    ../23/RUN.txt:765 [tok=['99'] ph=[]]     median-to-p99 spread of 6.6 ms, and against the three runs of this script, which got
+    ../23/RUN.txt:794 [tok=['99'] ph=[]]       batch  8   0.261 s/step (median, steps 4-30; p99 0.269)   peak allocated 17.41 GB
+    ../23/RUN.txt:797 [tok=['99', '95'] ph=[]]       batch 16   0.447 s/step (p99 0.477)                       peak allocated 24.95 GB
+    ../23/RUN.txt:802 [tok=['81'] ph=[]]     that and its batch-16 loss started at 0.81, continuing the batch-8 block -- a number
+    ../23/RUN.txt:818 [tok=['81', '81'] ph=[]]   seeds_tuning        the 80 real seeds plus 81     -> "seeds above 80: [81]"
+    ../23/RUN.txt:860 [tok=['81', '100'] ph=['81-100']]     the next step's work, as is the choice between a and b on seeds 81-100.
+    ../23/RUN.txt:864 [tok=['100', '100'] ph=[]]   - The 100 ms loop.  43 ms for one pass is beside 100 ms, not inside it: a node also has
+    ../23/RUN.txt:875 [tok=['98'] ph=[]]                                                                exit 0, 3.3 s, 98 lines
+    ../23/RUN.txt:916 [tok=['89', '92'] ph=[]]      score.py:89-92's early_four returns (n4, c4, lat, polls) and predict.py:344's vals
+    ../23/RUN.txt:924 [tok=['97', '98'] ph=[]]      Only the seed is shared.  The citation moved from :396 (the def line) to :97-98 and
+    ../23/RUN.txt:929 [tok=['100'] ph=[]]      streams on as well", and weight.txt calls the move undecided at these 100 seeds.
+    ../23/RUN.txt:937 [tok=['95'] ph=[]]      sentence: the pass count per model decider was bracketed as 800 x 95.985 to
+    ../23/RUN.txt:945 [tok=['92', '84'] ph=[]]      28.2 min at K = 4 and 92.8 at K = 1, i.e. 84.7 min at K = 4 for the three, which is
+    ../23/RUN.txt:960 [tok=['100'] ph=['selection']]      other arm moves 2 across the selection (seeds 1-100; NOT recounted on 1-80, because
+    ../23/RUN.txt:1010 [tok=['81', '100'] ph=['81-100']]   most-frequent-arm baseline of the seeds 81-100 labelled rows, and had none, so its band
+    ../23/RUN.txt:1011 [tok=['81', '100'] ph=['81-100']]   sat 0.023 above a number nobody had computed.  Adding a seeds-81-100 count to rows.py
+    ../23/RUN.txt:1031 [tok=['100'] ph=[]]     rows 16071, seeds 1 to 100; seeds 1-80: 12868 rows, 1430 ties, candidate a 11438 with
+    ../23/RUN.txt:1035 [tok=['89', '91'] ph=[]]     10.043 s 0.5102; candidate b's held-out part 568 with 89 / 91 / 388; and the
+    ../23/RUN.txt:1046 [tok=[] ph=['selection']]   the selection.
+    ../23/RUN.txt:1146 [tok=['95'] ph=[]]     Peak allocated 25.02 and 25.03 GB against part 4's 24.95.
+    ../23/RUN.txt:1166 [tok=['84'] ph=[]]     three epochs answered " short"/" mid"/" long" 28/84/1313, then 802/0/623, then
+    ../23/RUN.txt:1189 [tok=['96'] ph=[]]       adapters/b/adapter_model.safetensors  96 693 360 bytes
+    ../23/RUN.txt:1191 [tok=['96'] ph=[]]       adapters/a/adapter_model.safetensors  96 693 360 bytes
+    ../23/RUN.txt:1192 [tok=['98', '94'] ph=[]]         98f671bf49e25ff21236f503c57a1dc0d4d8c4f23b9565b6df5a05c842c94adf
+    ../23/RUN.txt:1195 [tok=['94'] ph=[]]       and adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0 -- which is what
+    ../23/RUN.txt:1288 [tok=['81', '100'] ph=['81-100']]     decider drove a run, and seeds 81-100 were not opened: tune.py reads the label file and
+    ../23/RUN.txt:1376 [tok=['88'] ph=[]]       eval_dry.csv      29 lines  sha256 f24f08dabdbee3cc0060ab0e2c57eca2aca1803debe1f3863d88f32f1175a40a
+    ../23/RUN.txt:1377 [tok=['92'] ph=[]]       ana_dry.txt      217 lines  sha256 ff8ba76fc18b345988f1429f6b9039c5b3b3a30e3f01a446127a0cdcbe92dc0c
+    ../23/RUN.txt:1378 [tok=['83', '96'] ph=[]]       agree_dry.txt    198 lines  sha256 53efff0ca49585b5f83d8b1e96136c23acc6fdd01bb50b884b421a96b680aefd
+    ../23/RUN.txt:1427 [tok=['84'] ph=[]]                against the plan's 84.7 min
+    ../23/RUN.txt:1441 [tok=['90', '99', '84'] ph=[]]     candidate a   median 69.76 ms   p90 72.71   p99 77.34   max 84.41
+    ../23/RUN.txt:1442 [tok=['90', '99'] ph=[]]     untuned base  median 44.36 ms   p90 45.67   p99 49.48   max 51.31
+    ../23/RUN.txt:1443 [tok=['85'] ph=[]]     difference        +25.39 ms        +27.04      +27.85      +33.10
+    ../23/RUN.txt:1448 [tok=['100'] ph=[]]   is what says the two measurements are of the same thing.  100 ms is printed beside the
+    ../23/RUN.txt:1456 [tok=['83'] ph=[]]     b        756/1425 = 0.5306, above it by 0.020, answers 659/0/766, ties 83
+    ../23/RUN.txt:1574 [tok=['81', '100'] ph=['81 to 100']]     above 80 was simulated, no model was read out on a row of seeds 81 to 100, and
+    ../23/RUN.txt:1650 [tok=['84'] ph=[]]              tune.py     e01f84d1d53053c16ca526fd6677d3f1dcf63c20ab561bfde815f3b72e1f0950
+    ../23/RUN.txt:1652 [tok=['91'] ph=[]]              prefill.py  bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/RUN.txt:1836 [tok=['83'] ph=[]]      (<= 0.561); b is 83 against 659 (<= 0.126) and untuned 12 against 1023 (<= 0.012).
+    ../23/RUN.txt:1853 [tok=['95', '95'] ph=[]]      against the archive's ff8ba76f..., one line differing, "95 %%" against "95 %").
+    ../23/RUN.txt:1948 [tok=['83'] ph=[]]   superseded agree_dry output carried the same 472/777/756, the same 12/197/83 ties and
+    ../23/RUN.txt:1998 [tok=['85'] ph=[]]     eval_dry.txt    85f9c333d592af7605352443ed9a04235ae4435bd399a9db817116943d9cb325
+    ../23/RUN.txt:2000 [tok=['87'] ph=[]]     ana_dry.txt     664ddcb28ce405a588119b1f9fc944ad8aa68e2d7e335ec87b502a3ae84192b0
+    ../23/RUN.txt:2002 [tok=['81'] ph=[]]     latency_dry.txt b78fbb2be34a9ce01233adea966b9ca388dcca47153406c49b15dc2c81cb1afa
+    ../23/RUN.txt:2005 [tok=['98'] ph=[]]     eval.py         077690dbbafa98ebe949458a8aa6cee38a952af305af2ba34d634c0e18f34256
+    ../23/RUN.txt:2006 [tok=['87'] ph=[]]     ana.py          6650310331ddd31898370ee87e32b46697fd02eca3e205846b0f731f04add26a
+    ../23/RUN.txt:2007 [tok=['96', '85'] ph=[]]     agree.py        96f666c970e5d46ec148a1f0ee05d878e85f7a4862dd65f545c101bbcbd64130
+    ../23/RUN.txt:2008 [tok=['86', '91'] ph=[]]     latency.py      26d86b4642b02b6e41c14949ea61c4390ee51a74299a31a5323d3949e91d5c36
+    ../23/RUN.txt:2009 [tok=['84'] ph=[]]     tune.py         e01f84d1d53053c16ca526fd6677d3f1dcf63c20ab561bfde815f3b72e1f0950
+    ../23/RUN.txt:2011 [tok=['92'] ph=[]]   THE CSV's COMBINED SCRIPT DIGEST IS 1071e451e4ebce92... over the eight files eval.py
+    ../23/RUN.txt:2014 [tok=['98'] ph=[]]   98f671bf... (a) and 64fb4984... (b), printed per file so a reader can still match the
+    ../23/RUN.txt:2022 [tok=['84'] ph=[]]   measurement.  The plan's own figures were 385 704 passes, 84.7 min and 278.3 min.
+    ../23/RUN.txt:2058 [tok=['81'] ph=[]]       seeds_tuning             FIRES: mutated: seeds above 80: [81]
+    ../23/RUN.txt:2059 [tok=['100'] ph=[]]       port.check_seeds         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anythin
+    ../23/RUN.txt:2103 [tok=['81', '100'] ph=['81 to 100']]     seeds 81 to 100, and eval.csv, eval.txt, ana.txt, agree.txt and latency.txt exist on
+    ../23/RUN.txt:2115 [tok=['81'] ph=[]]   - THE SEAM CHECK IN THE REAL MODE reads one label row of seed 81 and re-runs that
+    ../23/RUN.txt:2117 [tok=['81', '100'] ph=['81 to 100']]     mode's seeds are 81 to 100.  That is new behaviour in a command the main session will
+    ../23/RUN.txt:2119 [tok=[] ph=['selection']]     ONE place the selection half is read before any score exists is the class-share
+    ../23/RUN.txt:2121 [tok=[] ph=['selection']]     mode now reads one selection-half row before its first score as well.  No model
+    ../23/RUN.txt:2161 [tok=['81', '100'] ph=['81 to 100']]   read out on a label row of seeds 81 to 100, and eval.csv, eval.txt, ana.txt,
+    ../23/RUN.txt:2168 [tok=['81', '100'] ph=['81 to 100']]   last moment it could be made with no score on seeds 81 to 100 in hand.
+    ../23/RUN.txt:2177 [tok=['84'] ph=[]]   tune.py, +156 -38 lines in 16 hunks, sha256 e01f84d1... -> 8b160f37...  The four
+    ../23/RUN.txt:2227 [tok=['81'] ph=[]]   (in a real run SEEDS[0] is 81, and the check would have rendered one label row of
+    ../23/RUN.txt:2228 [tok=[] ph=['selection']]   the selection half, and re-run that seed's roll-in, before the run's first score,
+    ../23/RUN.txt:2229 [tok=[] ph=['selection']]   which is what spec.md's sentence about the one early read of the selection half is
+    ../23/RUN.txt:2235 [tok=['81'] ph=[]]   SEEDS[0] -- 81 in a real run -- at its lines 1241 and 1249-1252, where
+    ../23/RUN.txt:2238 [tok=['81'] ph=[]]   decision.  So in a real run eval.py DOES re-run seed 81's run_dict and one refused
+    ../23/RUN.txt:2285 [tok=['98'] ph=[]]                                206-208: a 98f671bf..., b 64fb4984..., both configs
+    ../23/RUN.txt:2304 [tok=['88'] ph=[]]                                fe7469bba120044142f88daeded2965f850b4e5e8473486df79d7bf3843ce25e
+    ../23/RUN.txt:2352 [tok=['88'] ph=[]]       tune.txt         377 lines  sha256 fe7469bba120044142f88daeded2965f850b4e5e8473486df79d7bf3843ce25e
+    ../23/RUN.txt:2353 [tok=['82'] ph=[]]       eval_dry.txt     371 lines  sha256 6c539097c7f21ae76b5ee1c82f41a4dc33a65db65594fa12d740a1ef782830ed
+    ../23/RUN.txt:2355 [tok=['92', '89'] ph=[]]       ana_dry.txt      235 lines  sha256 574ee8b9ebfe61bd5a6b995441e9d3b92c3d6f89c2c672807cc19743f9d7d1b0
+    ../23/RUN.txt:2356 [tok=['83'] ph=[]]       agree_dry.txt    264 lines  sha256 361663059496c8e53b376992b2a1c83d7ccd5619a207f58facccf402ea2302c0
+    ../23/RUN.txt:2372 [tok=['96'] ph=[]]     adapter_model.safetensors, 96 693 360 bytes in all four cases
+    ../23/RUN.txt:2373 [tok=['98', '94'] ph=[]]       a  run 1  98f671bf49e25ff21236f503c57a1dc0d4d8c4f23b9565b6df5a05c842c94adf
+    ../23/RUN.txt:2376 [tok=['82'] ph=[]]          run 2  268a3dd4db8b6e8fc5452ba3aa1ce174a7990979026f82fe0e0ce896ecc32514   DIFFER
+    ../23/RUN.txt:2386 [tok=['94'] ph=[]]       all four files  adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0  IDENTICAL
+    ../23/RUN.txt:2419 [tok=['86'] ph=[]]          r2  3.9074 0.5242 0.7935   0.667593  409/568 0.7201  13  86/7/475
+    ../23/RUN.txt:2425 [tok=['84'] ph=[]]       1  r1  5.9417 0.9632 0.9970   0.898804  725/1425 0.5088  108   28/84/1313
+    ../23/RUN.txt:2428 [tok=['82'] ph=[]]          r2  0.7947 0.9955 0.9097   0.888765  757/1425 0.5312  298   82/225/1118  <- kept
+    ../23/RUN.txt:2504 [tok=[] ph=['selection']]   first simulated seed is 1, and in the real mode that is a selection-half seed",
+    ../23/RUN.txt:2506 [tok=[] ph=['selection']]   seed 1 a selection-half seed.  Every number in it is right and the real mode's
+    ../23/RUN.txt:2507 [tok=['81'] ph=[]]   rendering (first simulated seed 81) reads as intended.  Not re-run for it: that
+    ../23/RUN.txt:2517 [tok=['84'] ph=[]]   385 704 passes, 84.7 min and 278.3 min.  Candidate b is no longer the one near the
+    ../23/RUN.txt:2536 [tok=['83'] ph=[]]   merely printed.  Candidate b moved 756/1425 -> 750/1425, its ties 83 -> 73, its
+    ../23/RUN.txt:2584 [tok=['81', '100'] ph=['81 to 100']]     80 was simulated, no model was read out on a label row of seeds 81 to 100, and
+    ../23/RUN.txt:2588 [tok=['81', '100'] ph=['81 to 100']]     which of the two is better is the replay score's to say on seeds 81 to 100.
+    ../23/RUN.txt:2665 [tok=['81'] ph=[]]   21.2  FINDING 2 (nit): PART 7 OF eval.py STILL BUILDS SEED 81
+    ../23/RUN.txt:2669 [tok=['81'] ph=[]]   score", and a reader can take that to mean eval.py never re-runs seed 81's roll-in
+    ../23/RUN.txt:2673 [tok=['82', '84'] ph=[]]     grep -n "SEEDS\b" eval.py   ->  82, 84, 649, 651, 697, 720, 731, 823, 1241,
+    ../23/RUN.txt:2688 [tok=['81'] ph=[]]   takes the run's first simulated seed (81 in a real run) for its run_dict and for
+    ../23/RUN.txt:2690 [tok=[] ph=['selection']]   A2's list of what reads the selection half "before any score" stays two items long.
+    ../23/RUN.txt:2720 [tok=['92'] ph=[]]     latency_dry.txt:92     [28.0, 28.25, 28.625] against tune.txt's
+    ../23/RUN.txt:2754 [tok=['81'] ph=[]]     81, are read from the source and from no archive, because eval.py has never been
+    ../23/RUN.txt:2756 [tok=['81'] ph=[]]     spend one run_dict and one refused simulation on seed 81 after the csv is
+    ../23/RUN.txt:2769 [tok=['81', '100'] ph=[]] 22. THE REAL EVALUATION ON SEEDS 81 TO 100, AND ITS WRITE-UP      7690 s
+    ../23/RUN.txt:2815 [tok=['81'] ph=[]]                                81d35758473d937c0a7854870d54b7f59ca4c9c2f3c67d4636a76afb4a9d01d9
+    ../23/RUN.txt:2869 [tok=['95'] ph=[]]   two differ by 12.468 ms and the paired 95 % interval, -33.061 to 60.774 ms, contains 0.
+    ../23/RUN.txt:2874 [tok=['95'] ph=[]]   the 297.0 ms band, so the relabelling clause stays shut; the paired bootstrap's 95 %
+    ../23/RUN.txt:2884 [tok=['99', '100'] ph=[]]   THE PASS TIME WITH CANDIDATE b ATTACHED: median 69.47 ms, p99 76.06 ms, beside 100 ms
+    ../23/RUN.txt:2885 [tok=['81', '98'] ph=[]]   with no verdict, the untuned base at 43.81 and 50.98 in the same process
+    ../23/RUN.txt:2894 [tok=['81'] ph=[]]   part 7 did build seed 81's run dict and start one refused simulation, after every
+    ../23/RUN.txt:2920 [tok=['100'] ph=[]]   multiplies by 100 because ../20 reports gains in per cent, and these differences are
+    ../23/RUN.txt:2949 [tok=['85', '94'] ph=[]]                                e85b031f3d67d01511b63970877318046ef07a0c1340a588ba41db94df36c7f5;
+    ../23/RUN.txt:2965 [tok=['100'] ph=[]]   >100 guard first and the measuring branch could not fire on any input the guard
+    ../23/RUN.txt:2999 [tok=['100'] ph=[]]   - No seed above 100 was read by anything, no key file and no node_dirs were opened,
+    ../23/RUN.txt:3028 [tok=['87', '90'] ph=[]]      did.  REPRODUCED: tune.txt 87-90, eval.txt 30-34, ana.txt 46-50, agree.txt 49-53 and
+    ../23/RUN.txt:3035 [tok=['100'] ph=[]]   2. THE 176.220 POLLS OF THE BAND ARE ../22/weight.txt's STEP 4, over seeds 1 to 100, and
+    ../23/RUN.txt:3036 [tok=['96'] ph=[]]      README.md gave them with no provenance beside a table of this csv's own 96.029 and
+    ../23/RUN.txt:3038 [tok=['95', '100'] ph=[]]      step 4 prints 256.455 and 95.985 over "seeds 1 to 100"; ana.txt's part 2 tail warns
+    ../23/RUN.txt:3045 [tok=['96'] ph=[]]      tune_run1.txt 96 and tune.txt 114) and on epoch 1's step time (116.0 s against
+    ../23/RUN.txt:3086 [tok=['81', '100'] ph=['81 to 100']]      main cell) and stood beside the candidates' seeds 81 to 100 agreement with no seed
+    ../23/RUN.txt:3153 [tok=['100'] ph=[]]   - NO GPU, no ssh, no simulation, no model read-out, no seed above 100.
+    ../23/RUN.txt:3225 [tok=['98'] ph=[]]                                a 98f671bf49e25ff21236..., b 64fb49840b79a2d16ac3...,
+    ../23/RUN.txt:3280 [tok=['92', '99'] ph=[]]                                f0bbf47354f5210e4a0ba92b99cf36527d917dc7ddf7b9c7ffba87099721f7a5.
+    ../23/RUN.txt:3307 [tok=['95'] ph=[]]                                "SEPARATED" (gap 803.781 ms, 95 % interval 414.651 to
+    ../23/RUN.txt:3346 [tok=['95'] ph=[]]   THE TWO ROWS THE RUN WAS MADE FOR: a run1 - a run2 is -448.515 ms with 95 %
+    ../23/RUN.txt:3382 [tok=['93'] ph=[]]                                aa624bbcd602013d93ee589431e8c1cdbed70e54a18cecdc32a31749289e76f0
+    ../23/RUN.txt:3396 [tok=['100'] ph=[]]   decider.check_roles uses: in the other order 121 would be refused by the >100 guard
+    ../23/RUN.txt:3459 [tok=[] ph=['selection']]   - The selection bias is NOT corrected.  Four adapters on the same 20 seeds is more
+    ../23/RUN.txt:3462 [tok=['100'] ph=[]]   - No seed above 100 was read by anything, no key file and no node_dirs were opened,
+    ../23/RUN.txt:3537 [tok=['95'] ph=[]]   REPRODUCED: Acceptance 4's own words name the frontier gain and its 95 % interval,
+    ../23/RUN.txt:3541 [tok=['95'] ph=[]]   の 95 % 区間".  The same phrase was made explicit in the README headline, which
+    ../23/RUN.txt:3569 [tok=['93'] ph=[]]   aa624bbcd602013d93ee589431e8c1cdbed70e54a18cecdc32a31749289e76f0.  So no number
+    ../23/RUN.txt:3582 [tok=['100'] ph=[]]   - No GPU, no ssh, no simulation, no model read-out, no seed above 100, no archive
+    ../23/RUN.txt:3603 [tok=[] ph=['selection']]   prose and an incomplete setup sentence; every traced number, rule and selection
+    ../23/RUN.txt:3684 [tok=[] ph=['selection']] CSV recomputation, commit order and selection rules hold without leakage, and the
+    ../23/RUN.txt:3687 [tok=['81', '100'] ph=[]] pre-score seed-81..100 inventory, and minor prose/comment slips."
+    ../23/RUN.txt:3708 [tok=[] ph=['selection']]   AMENDMENT A2 IS WRONG AS A COUNT.  A2 says "The list of what read the selection
+    ../23/RUN.txt:3711 [tok=['81', '100'] ph=[]]   frozen at 04:59:28), simulated stream 0 of seeds 81 and 100 for the four deciders
+    ../23/RUN.txt:3713 [tok=['81', '100'] ph=[]]       sed -n 2p parity.txt          -> seeds 1,20,21,80,81,100
+    ../23/RUN.txt:3714 [tok=['81', '100'] ph=[]]       sed -n 19,26p parity.txt      -> seed 81 and seed 100, const3.695, const6.000,
+    ../23/RUN.txt:3717 [tok=['96'] ph=[]]   line 653 lists the six single-stream const3.695 scores, 39591.96 and 38404.80
+    ../23/RUN.txt:3718 [tok=['81', '100'] ph=[]]   among them (seeds 81 and 100), as the size of the seed-to-seed spread; line 836
+    ../23/RUN.txt:3719 [tok=['100'] ph=[]]   quotes seed 100's two outer arms in the reasoning of prediction 3.
+    ../23/RUN.txt:3724 [tok=[] ph=['selection']]   had seen eight selection-half scores of the comparators when the plan and its
+  ../23/agree.txt              matching_lines=  18  token_hits=  25  phrase_hits=   7
+    ../23/agree.txt:5 [tok=['81', '100'] ph=['81 to 100']] The label agreement of the three model deciders on seeds 81 to 100 of the main
+    ../23/agree.txt:13 [tok=['96', '85'] ph=[]]   agree.py           96f666c970e5d46ec148a1f0ee05d878e85f7a4862dd65f545c101bbcbd64130
+    ../23/agree.txt:15 [tok=['91'] ph=[]]   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/agree.txt:18 [tok=['95', '83'] ph=[]]   ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+    ../23/agree.txt:20 [tok=['82'] ph=[]]   ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+    ../23/agree.txt:31 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/agree.txt:32 [tok=['81', '100'] ph=['81 to 100']] rows            seeds 81 to 100
+    ../23/agree.txt:43 [tok=['100', '100'] ph=[]] rows            16071, seed column min 1 max 100, 100 distinct
+    ../23/agree.txt:44 [tok=['81', '100'] ph=['81 to 100']] this slice      3203 rows of seeds 81 to 100 (20 distinct), of which 2841 carry a label
+    ../23/agree.txt:51 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection       20 seeds, 81 to 100
+    ../23/agree.txt:52 [tok=['81', '100'] ph=['81 to 100']]   read out here   20 seeds, 81 to 100
+    ../23/agree.txt:54 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four roles and is shown refusing in
+    ../23/agree.txt:56 [tok=[] ph=['selection']]   the selection half, which is what the real mode exists to read
+    ../23/agree.txt:115 [tok=['87'] ph=[]]   3.695     s           87      144      409   |    640  0.1359
+    ../23/agree.txt:202 [tok=['81'] ph=[]]   seeds_tuning               FIRES: mutated: seeds above 80: [81]
+    ../23/agree.txt:203 [tok=['100'] ph=[]]   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ../23/agree.txt:204 [tok=['81'] ph=[]]   roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/agree.txt:238 [tok=['90'] ph=[]]   0.7577 of them, with the 0.90 bar fixed in advance never reached.
+  ../23/agree_dry.txt          matching_lines=  21  token_hits=  24  phrase_hits=   5
+    ../23/agree_dry.txt:6 [tok=[] ph=['selection']] in place of the selection half.  Those rows chose the kept epoch of each
+    ../23/agree_dry.txt:9 [tok=['81', '100'] ph=['81 to 100']] score's on seeds 81 to 100.  What the slice does buy is a cross-check this run
+    ../23/agree_dry.txt:16 [tok=['96', '85'] ph=[]]   agree.py           96f666c970e5d46ec148a1f0ee05d878e85f7a4862dd65f545c101bbcbd64130
+    ../23/agree_dry.txt:18 [tok=['91'] ph=[]]   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/agree_dry.txt:21 [tok=['95', '83'] ph=[]]   ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+    ../23/agree_dry.txt:23 [tok=['82'] ph=[]]   ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+    ../23/agree_dry.txt:34 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/agree_dry.txt:46 [tok=['100', '100'] ph=[]] rows            16071, seed column min 1 max 100, 100 distinct
+    ../23/agree_dry.txt:54 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection       20 seeds, 81 to 100
+    ../23/agree_dry.txt:58 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four roles; both are shown refusing
+    ../23/agree_dry.txt:94 [tok=['86'] ph=[]]   3.695     s          237       18       86   |    341  0.6950
+    ../23/agree_dry.txt:95 [tok=['99'] ph=[]]   6.000     s          240       18       99   |    357  0.0504
+    ../23/agree_dry.txt:112 [tok=['99'] ph=[]]   1425 rows in 99.5 s (69.8 ms per row, the render and the tokenizer call included)
+    ../23/agree_dry.txt:120 [tok=['82'] ph=[]]   answers                 82      225     1118   |   1425
+    ../23/agree_dry.txt:140 [tok=['99'] ph=[]]   1425 rows in 99.2 s (69.6 ms per row, the render and the tokenizer call included)
+    ../23/agree_dry.txt:163 [tok=['82'] ph=[]]   a           757/1425    0.531228   +0.021053    298   82/225/1118
+    ../23/agree_dry.txt:213 [tok=['81'] ph=[]]   seeds_tuning               FIRES: mutated: seeds above 80: [81]
+    ../23/agree_dry.txt:214 [tok=['100'] ph=[]]   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ../23/agree_dry.txt:215 [tok=['81'] ph=[]]   roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/agree_dry.txt:243 [tok=[] ph=['selection']]   are neither the selection half nor a held-out slice in the ordinary sense.
+    ../23/agree_dry.txt:252 [tok=['90'] ph=[]]   0.7577 of them, with the 0.90 bar fixed in advance never reached.
+  ../23/ana.txt                matching_lines=  26  token_hits=  32  phrase_hits=   6
+    ../23/ana.txt:5 [tok=['81', '100'] ph=['81 to 100']] The two statistics of the comparison, on seeds 81 to 100 of the main cell.  The
+    ../23/ana.txt:19 [tok=['81', '100'] ph=[]] seed column     min 81 max 100, 20 distinct
+    ../23/ana.txt:48 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection           20 seeds, 81 to 100
+    ../23/ana.txt:49 [tok=['81', '100'] ph=['81 to 100']]   scored in this csv  20 seeds, 81 to 100
+    ../23/ana.txt:51 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four, and is shown refusing in part 5.
+    ../23/ana.txt:66 [tok=['96'] ph=[]]   const10.043       39855.665           96.029       29840.255   --
+    ../23/ana.txt:74 [tok=['95'] ph=[]] message quotes rather than ../22/weight.txt's 95.985 and 256.455 (those are step 4's
+    ../23/ana.txt:75 [tok=['100'] ph=[]] means over seeds 1 to 100 and would name an interval this test did not use):
+    ../23/ana.txt:76 [tok=['96'] ph=[]]   96.029 to 256.491 polls per run
+    ../23/ana.txt:79 [tok=['95'] ph=[]] 3  THE REPORTED FRONTIER GAIN, WITH ITS 95 % INTERVAL
+    ../23/ana.txt:104 [tok=['96'] ph=[]]   s10b10p043     delay  29813.457 ms   polls   3841.150 per seed (  96.029 per run)   censored 0.0008
+    ../23/ana.txt:114 [tok=['95'] ph=[]]   decider        gain      95 % interval            half width   dropped   word
+    ../23/ana.txt:120 [tok=['95'] ph=[]] The real mode's 95 % interval, at 20 seeds, is expected to be wider than ../20's at
+    ../23/ana.txt:152 [tok=['95'] ph=[]]   score(a) - score(b): point 617.840 ms, 95 % interval -58.424 to 1357.299 ms, contains 0: True
+    ../23/ana.txt:157 [tok=['95'] ph=[]] b; but the gap lies inside the paired bootstrap's 95 % interval (-58.424 to 1357.299
+    ../23/ana.txt:162 [tok=[] ph=['selection']] The selection bias of choosing one of two candidates on the same seeds is not
+    ../23/ana.txt:172 [tok=['100'] ph=[]]   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ../23/ana.txt:173 [tok=['81'] ph=[]]   roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/ana.txt:177 [tok=['100'] ph=[]]   weight                     FIRES: mutated: 1 row(s) at another weight, e.g. 100.0 against 104.29595912307323
+    ../23/ana.txt:178 [tok=['81'] ph=[]]   score/one lat moved        FIRES: mutated: const3.695 seed 81 stream 0: delay 12787.9 and score 39591.96149462982 reco
+    ../23/ana.txt:179 [tok=['81'] ph=[]]   score/one poll moved       FIRES: mutated: const3.695 seed 81 stream 0: delay 12787.9 and score 39591.96149462982 reco
+    ../23/ana.txt:180 [tok=['81'] ph=[]]   complete/one row missing   FIRES: mutated: 1 of 5600 missing (e.g. [('const3.695', 81, 0)]) and 0 unexpected (e.g. [])
+    ../23/ana.txt:181 [tok=['81'] ph=[]]   complete/one decider twice FIRES: mutated: 1 row(s) appear twice, e.g. [('const3.695', 81, 0)]
+    ../23/ana.txt:182 [tok=['81', '82', '83'] ph=[]]   grid/a whole stream gone   FIRES: mutated: the csv carries 780 of the 800 (seed, stream) pairs this mode declares; 20 
+    ../23/ana.txt:183 [tok=['81', '81', '81'] ph=[]]   grid/a whole seed gone     FIRES: mutated: the csv carries 760 of the 800 (seed, stream) pairs this mode declares; 40 
+    ../23/ana.txt:212 [tok=[] ph=['selection']] - Nothing that corrects the selection bias of choosing one of two candidates on the
+  ../23/ana_dry.txt            matching_lines=  18  token_hits=  17  phrase_hits=   4
+    ../23/ana_dry.txt:51 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection           20 seeds, 81 to 100
+    ../23/ana_dry.txt:54 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four, and is shown refusing in part 5.
+    ../23/ana_dry.txt:69 [tok=['95'] ph=[]]   const10.043       40300.821           95.750       30314.483   --
+    ../23/ana_dry.txt:72 [tok=['96'] ph=[]]   a                 37743.165          102.500       27052.829   96 / 474
+    ../23/ana_dry.txt:77 [tok=['95'] ph=[]] message quotes rather than ../22/weight.txt's 95.985 and 256.455 (those are step 4's
+    ../23/ana_dry.txt:78 [tok=['100'] ph=[]] means over seeds 1 to 100 and would name an interval this test did not use):
+    ../23/ana_dry.txt:79 [tok=['95'] ph=[]]   95.750 to 256.500 polls per run
+    ../23/ana_dry.txt:82 [tok=['95'] ph=[]] 3  THE REPORTED FRONTIER GAIN, WITH ITS 95 % INTERVAL
+    ../23/ana_dry.txt:107 [tok=['95'] ph=[]]   s10b10p043     delay  30314.483 ms   polls    191.500 per seed (  95.750 per run)   censored 0.0000
+    ../23/ana_dry.txt:117 [tok=['95'] ph=[]]   decider        gain      95 % interval            half width   dropped   word
+    ../23/ana_dry.txt:123 [tok=['95'] ph=[]] The real mode's 95 % interval, at 20 seeds, is expected to be wider than ../20's at
+    ../23/ana_dry.txt:155 [tok=['95'] ph=[]]   score(a) - score(b): point -662.493 ms, 95 % interval -3490.055 to 2165.068 ms, contains 0: True
+    ../23/ana_dry.txt:162 [tok=['95'] ph=[]] a; but the gap lies inside the paired bootstrap's 95 % interval (-3490.055 to 2165.068
+    ../23/ana_dry.txt:168 [tok=[] ph=['selection']] The selection bias of choosing one of two candidates on the same seeds is not
+    ../23/ana_dry.txt:178 [tok=['100'] ph=[]]   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ../23/ana_dry.txt:179 [tok=['81'] ph=[]]   roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/ana_dry.txt:183 [tok=['100'] ph=[]]   weight                     FIRES: mutated: 1 row(s) at another weight, e.g. 100.0 against 104.29595912307323
+    ../23/ana_dry.txt:221 [tok=[] ph=['selection']] - Nothing that corrects the selection bias of choosing one of two candidates on the
+  ../23/ana_run1.txt           matching_lines=  27  token_hits=  33  phrase_hits=   6
+    ../23/ana_run1.txt:5 [tok=['81', '100'] ph=['81 to 100']] The two statistics of the comparison, on seeds 81 to 100 of the main cell.  The
+    ../23/ana_run1.txt:19 [tok=['81', '100'] ph=[]] seed column     min 81 max 100, 20 distinct
+    ../23/ana_run1.txt:32 [tok=['86'] ph=[]]   a             800 rows, model digest bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b7f3dfabfe86b4
+    ../23/ana_run1.txt:48 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection           20 seeds, 81 to 100
+    ../23/ana_run1.txt:49 [tok=['81', '100'] ph=['81 to 100']]   scored in this csv  20 seeds, 81 to 100
+    ../23/ana_run1.txt:51 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four, and is shown refusing in part 5.
+    ../23/ana_run1.txt:66 [tok=['96'] ph=[]]   const10.043       39855.665           96.029       29840.255   --
+    ../23/ana_run1.txt:74 [tok=['95'] ph=[]] message quotes rather than ../22/weight.txt's 95.985 and 256.455 (those are step 4's
+    ../23/ana_run1.txt:75 [tok=['100'] ph=[]] means over seeds 1 to 100 and would name an interval this test did not use):
+    ../23/ana_run1.txt:76 [tok=['96'] ph=[]]   96.029 to 256.491 polls per run
+    ../23/ana_run1.txt:79 [tok=['95'] ph=[]] 3  THE REPORTED FRONTIER GAIN, WITH ITS 95 % INTERVAL
+    ../23/ana_run1.txt:104 [tok=['96'] ph=[]]   s10b10p043     delay  29813.457 ms   polls   3841.150 per seed (  96.029 per run)   censored 0.0008
+    ../23/ana_run1.txt:114 [tok=['95'] ph=[]]   decider        gain      95 % interval            half width   dropped   word
+    ../23/ana_run1.txt:120 [tok=['95'] ph=[]] The real mode's 95 % interval, at 20 seeds, is expected to be wider than ../20's at
+    ../23/ana_run1.txt:152 [tok=['95'] ph=[]]   score(a) - score(b): point 803.781 ms, 95 % interval 414.651 to 1257.029 ms, contains 0: False
+    ../23/ana_run1.txt:156 [tok=['95'] ph=[]] the paired bootstrap's 95 % interval (414.651 to 1257.029 ms), so the chosen candidate
+    ../23/ana_run1.txt:161 [tok=[] ph=['selection']] The selection bias of choosing one of two candidates on the same seeds is not
+    ../23/ana_run1.txt:171 [tok=['100'] ph=[]]   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ../23/ana_run1.txt:172 [tok=['81'] ph=[]]   roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/ana_run1.txt:176 [tok=['100'] ph=[]]   weight                     FIRES: mutated: 1 row(s) at another weight, e.g. 100.0 against 104.29595912307323
+    ../23/ana_run1.txt:177 [tok=['81'] ph=[]]   score/one lat moved        FIRES: mutated: const3.695 seed 81 stream 0: delay 12787.9 and score 39591.96149462982 reco
+    ../23/ana_run1.txt:178 [tok=['81'] ph=[]]   score/one poll moved       FIRES: mutated: const3.695 seed 81 stream 0: delay 12787.9 and score 39591.96149462982 reco
+    ../23/ana_run1.txt:179 [tok=['81'] ph=[]]   complete/one row missing   FIRES: mutated: 1 of 5600 missing (e.g. [('const3.695', 81, 0)]) and 0 unexpected (e.g. [])
+    ../23/ana_run1.txt:180 [tok=['81'] ph=[]]   complete/one decider twice FIRES: mutated: 1 row(s) appear twice, e.g. [('const3.695', 81, 0)]
+    ../23/ana_run1.txt:181 [tok=['81', '82', '83'] ph=[]]   grid/a whole stream gone   FIRES: mutated: the csv carries 780 of the 800 (seed, stream) pairs this mode declares; 20 
+    ../23/ana_run1.txt:182 [tok=['81', '81', '81'] ph=[]]   grid/a whole seed gone     FIRES: mutated: the csv carries 760 of the 800 (seed, stream) pairs this mode declares; 40 
+    ../23/ana_run1.txt:211 [tok=[] ph=['selection']] - Nothing that corrects the selection bias of choosing one of two candidates on the
+  ../23/eval.txt               matching_lines=  25  token_hits=  32  phrase_hits=   7
+    ../23/eval.txt:5 [tok=['81', '100'] ph=['81 to 100']] The seven deciders of the comparison on seeds 81 to 100, 40 streams each.  This
+    ../23/eval.txt:14 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/eval.txt:18 [tok=['88', '81'] ph=[]]                 46.88 GB free; K = 8 would need 81.46 GB and is refused by the same
+    ../23/eval.txt:32 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection       20 seeds, 81 to 100
+    ../23/eval.txt:33 [tok=['81', '100'] ph=['81 to 100']]   simulated here  20 seeds, 81 to 100
+    ../23/eval.txt:35 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four roles, and it is shown refusing
+    ../23/eval.txt:37 [tok=[] ph=['selection']]   is the selection half, which is what the real mode exists to read
+    ../23/eval.txt:42 [tok=['100', '100'] ph=[]] rows            16071, seed column min 1 max 100, 100 distinct
+    ../23/eval.txt:65 [tok=['81'] ph=[]]   seed it is NOT: this mode's own first simulated seed is 81, and in the real mode
+    ../23/eval.txt:66 [tok=[] ph=['selection']]   that is a selection-half seed, whose label row and whose roll-in would then be
+    ../23/eval.txt:88 [tok=['91', '97'] ph=[]]   eval.py            629c4f0986ec25bb67268ada17c5636e0ee157d91acbf97ad9810fb4ca3a4582
+    ../23/eval.txt:90 [tok=['91'] ph=[]]   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/eval.txt:93 [tok=['95', '83'] ph=[]]   ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+    ../23/eval.txt:95 [tok=['82'] ph=[]]   ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+    ../23/eval.txt:113 [tok=['82'] ph=[]]                   adapter_model.safetensors  268a3dd4db8b6e8fc5452ba3aa1ce174a7990979026f82fe0e0ce896ecc32514
+    ../23/eval.txt:179 [tok=['96'] ph=[]]   const10.043  800 runs in  10.9 s, mean polls per run  96.029, mean score    39855.665 ms
+    ../23/eval.txt:241 [tok=['81'] ph=[]] sha256          81d35758473d937c0a7854870d54b7f59ca4c9c2f3c67d4636a76afb4a9d01d9
+    ../23/eval.txt:258 [tok=['81', '100'] ph=['81 to 100']]   the three model deciders together: 442115 forward passes on seeds 81 to 100
+    ../23/eval.txt:268 [tok=['84'] ph=[]]   The plan's own figures, for comparison: 385 704 passes at 75.9 passes/s = 84.7
+    ../23/eval.txt:284 [tok=['81'] ph=[]]   seeds_tuning             FIRES: mutated: seeds above 80: [81]
+    ../23/eval.txt:285 [tok=['100'] ph=[]]   port.check_seeds         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on
+    ../23/eval.txt:286 [tok=['81'] ph=[]]   roles/range              FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/eval.txt:288 [tok=['81', '88'] ph=[]]   fits/K=8                 FIRES: mutated: 8 worker(s) need 81.46 GB beside the parent and the card has 46.88 GB free
+    ../23/eval.txt:301 [tok=['81'] ph=[]]   complete/one row missing FIRES: mutated: 1 missing (e.g. [(81, 0)]) and 0 unexpected (e.g. []) of 800 runs
+    ../23/eval.txt:302 [tok=['81'] ph=[]]   complete/one row twice   FIRES: mutated: 1 row(s) appear twice, e.g. [(81, 0)]
+  ../23/eval_dry.txt           matching_lines=  26  token_hits=  33  phrase_hits=   5
+    ../23/eval_dry.txt:8 [tok=['81', '100'] ph=['81 to 100']] seeds 81 to 100, which the real mode produces and this run does not.
+    ../23/eval_dry.txt:17 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/eval_dry.txt:21 [tok=['88', '81'] ph=[]]                 46.88 GB free; K = 8 would need 81.46 GB and is refused by the same
+    ../23/eval_dry.txt:35 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection       20 seeds, 81 to 100
+    ../23/eval_dry.txt:39 [tok=['100'] ph=[]]   and port.check_seeds (>100 refused) passed all four roles; both are shown
+    ../23/eval_dry.txt:45 [tok=['100', '100'] ph=[]] rows            16071, seed column min 1 max 100, 100 distinct
+    ../23/eval_dry.txt:69 [tok=[] ph=['selection']]   that is a selection-half seed, whose label row and whose roll-in would then be
+    ../23/eval_dry.txt:91 [tok=['91', '97'] ph=[]]   eval.py            629c4f0986ec25bb67268ada17c5636e0ee157d91acbf97ad9810fb4ca3a4582
+    ../23/eval_dry.txt:93 [tok=['91'] ph=[]]   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/eval_dry.txt:96 [tok=['95', '83'] ph=[]]   ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+    ../23/eval_dry.txt:98 [tok=['82'] ph=[]]   ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+    ../23/eval_dry.txt:116 [tok=['82'] ph=[]]                   adapter_model.safetensors  268a3dd4db8b6e8fc5452ba3aa1ce174a7990979026f82fe0e0ce896ecc32514
+    ../23/eval_dry.txt:182 [tok=['95'] ph=[]]   const10.043  4 runs in   0.0 s, mean polls per run  95.750, mean score    40300.821 ms
+    ../23/eval_dry.txt:225 [tok=['98'] ph=[]]     seed   1 stream  0  decider_ord state_poll_reschedule 117, state_poll 117, passes 117, ties 17, answers 5/14/98, pol
+    ../23/eval_dry.txt:226 [tok=['89'] ph=[]]     seed   1 stream  1  decider_ord state_poll_reschedule 117, state_poll 117, passes 117, ties 27, answers 6/22/89, pol
+    ../23/eval_dry.txt:227 [tok=['93'] ph=[]]     seed   2 stream  0  decider_ord state_poll_reschedule 121, state_poll 121, passes 121, ties 27, answers 10/18/93, po
+    ../23/eval_dry.txt:228 [tok=['92'] ph=[]]     seed   2 stream  1  decider_ord state_poll_reschedule 119, state_poll 119, passes 119, ties 25, answers 7/20/92, pol
+    ../23/eval_dry.txt:229 [tok=['96'] ph=[]]   mean polls per run 102.500, mean score    37743.165 ms, ties 96 of 474 decisions
+    ../23/eval_dry.txt:249 [tok=['83'] ph=[]]     seed   1 stream  1  decider_ord state_poll_reschedule 140, state_poll 140, passes 140, ties 14, answers 57/0/83, pol
+    ../23/eval_dry.txt:250 [tok=['82'] ph=[]]     seed   2 stream  0  decider_ord state_poll_reschedule 149, state_poll 149, passes 149, ties  8, answers 67/0/82, pol
+    ../23/eval_dry.txt:276 [tok=['81', '100'] ph=['81 to 100']]   the three model deciders together: 437000 forward passes on seeds 81 to 100
+    ../23/eval_dry.txt:286 [tok=['84'] ph=[]]   The plan's own figures, for comparison: 385 704 passes at 75.9 passes/s = 84.7
+    ../23/eval_dry.txt:302 [tok=['81'] ph=[]]   seeds_tuning             FIRES: mutated: seeds above 80: [81]
+    ../23/eval_dry.txt:303 [tok=['100'] ph=[]]   port.check_seeds         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on
+    ../23/eval_dry.txt:304 [tok=['81'] ph=[]]   roles/range              FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/eval_dry.txt:306 [tok=['81', '88'] ph=[]]   fits/K=8                 FIRES: mutated: 8 worker(s) need 81.46 GB beside the parent and the card has 46.88 GB free
+  ../23/eval_run1.txt          matching_lines=  25  token_hits=  33  phrase_hits=   7
+    ../23/eval_run1.txt:5 [tok=['81', '100'] ph=['81 to 100']] The seven deciders of the comparison on seeds 81 to 100, 40 streams each.  This
+    ../23/eval_run1.txt:14 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/eval_run1.txt:18 [tok=['88', '81'] ph=[]]                 46.88 GB free; K = 8 would need 81.46 GB and is refused by the same
+    ../23/eval_run1.txt:32 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection       20 seeds, 81 to 100
+    ../23/eval_run1.txt:33 [tok=['81', '100'] ph=['81 to 100']]   simulated here  20 seeds, 81 to 100
+    ../23/eval_run1.txt:35 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four roles, and it is shown refusing
+    ../23/eval_run1.txt:37 [tok=[] ph=['selection']]   is the selection half, which is what the real mode exists to read
+    ../23/eval_run1.txt:42 [tok=['100', '100'] ph=[]] rows            16071, seed column min 1 max 100, 100 distinct
+    ../23/eval_run1.txt:65 [tok=['81'] ph=[]]   seed it is NOT: this mode's own first simulated seed is 81, and in the real mode
+    ../23/eval_run1.txt:66 [tok=[] ph=['selection']]   that is a selection-half seed, whose label row and whose roll-in would then be
+    ../23/eval_run1.txt:88 [tok=['91', '97'] ph=[]]   eval.py            629c4f0986ec25bb67268ada17c5636e0ee157d91acbf97ad9810fb4ca3a4582
+    ../23/eval_run1.txt:90 [tok=['91'] ph=[]]   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/eval_run1.txt:93 [tok=['95', '83'] ph=[]]   ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+    ../23/eval_run1.txt:95 [tok=['82'] ph=[]]   ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+    ../23/eval_run1.txt:112 [tok=['86'] ph=[]] model digest    a        bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b7f3dfabfe86b4
+    ../23/eval_run1.txt:114 [tok=['98', '94'] ph=[]]                   adapter_model.safetensors  98f671bf49e25ff21236f503c57a1dc0d4d8c4f23b9565b6df5a05c842c94adf
+    ../23/eval_run1.txt:239 [tok=['81', '100'] ph=['81 to 100']]   the three model deciders together: 231821 forward passes on seeds 81 to 100
+    ../23/eval_run1.txt:249 [tok=['84'] ph=[]]   The plan's own figures, for comparison: 385 704 passes at 75.9 passes/s = 84.7
+    ../23/eval_run1.txt:265 [tok=['81'] ph=[]]   seeds_tuning             FIRES: mutated: seeds above 80: [81]
+    ../23/eval_run1.txt:266 [tok=['100'] ph=[]]   port.check_seeds         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on
+    ../23/eval_run1.txt:267 [tok=['81'] ph=[]]   roles/range              FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/eval_run1.txt:269 [tok=['81', '88'] ph=[]]   fits/K=8                 FIRES: mutated: 8 worker(s) need 81.46 GB beside the parent and the card has 46.88 GB free
+    ../23/eval_run1.txt:280 [tok=['86'] ph=[]]   sidecar/model digest     FIRES: mutated: model_sha 'none' against 'bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b
+    ../23/eval_run1.txt:282 [tok=['81'] ph=[]]   complete/one row missing FIRES: mutated: 1 missing (e.g. [(81, 0)]) and 0 unexpected (e.g. []) of 800 runs
+    ../23/eval_run1.txt:283 [tok=['81'] ph=[]]   complete/one row twice   FIRES: mutated: 1 row(s) appear twice, e.g. [(81, 0)]
+  ../23/hpc_freeze.txt         matching_lines=   5  token_hits=   5  phrase_hits=   0
+    ../23/hpc_freeze.txt:26 [tok=['86'] ph=[]] nvidia-cuda-cupti==13.2.86
+    ../23/hpc_freeze.txt:27 [tok=['86'] ph=[]] nvidia-cuda-nvrtc==13.2.86
+    ../23/hpc_freeze.txt:28 [tok=['86'] ph=[]] nvidia-cuda-runtime==13.2.86
+    ../23/hpc_freeze.txt:36 [tok=['92'] ph=[]] nvidia-nvjitlink==13.4.92
+    ../23/hpc_freeze.txt:38 [tok=['86'] ph=[]] nvidia-nvtx==13.2.86
+  ../23/latency.txt            matching_lines=  26  token_hits=  34  phrase_hits=   3
+    ../23/latency.txt:6 [tok=['100'] ph=[]] unmerged, beside 100 ms, with NO VERDICT attached.
+    ../23/latency.txt:12 [tok=['86', '91'] ph=[]]   latency.py         26d86b4642b02b6e41c14949ea61c4390ee51a74299a31a5323d3949e91d5c36
+    ../23/latency.txt:14 [tok=['91'] ph=[]]   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/latency.txt:17 [tok=['95', '83'] ph=[]]   ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+    ../23/latency.txt:19 [tok=['82'] ph=[]]   ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+    ../23/latency.txt:20 [tok=['83'] ph=[]] combined          e1abe65c69999cfd593015bd8afa83b6e6b60a6d71ce528acd0e4a6291109335
+    ../23/latency.txt:30 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/latency.txt:42 [tok=['100', '100'] ph=[]] rows            16071, seed column min 1 max 100, 100 distinct
+    ../23/latency.txt:43 [tok=[] ph=['selection']] labelled rows of seeds 1-80: 11438, over 80 seeds.  The selection half is NOT read: the
+    ../23/latency.txt:53 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection    20 seeds, 81 to 100
+    ../23/latency.txt:57 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four roles; both are shown refusing in
+    ../23/latency.txt:68 [tok=['99'] ph=[]]                 478-token row of the same half at 43.02 ms median and 49.10 p99, so
+    ../23/latency.txt:81 [tok=['88'] ph=[]] gpu memory      27.56 GB free with both models on the card, from 46.88 GB before
+    ../23/latency.txt:96 [tok=['90', '99'] ph=[]]   model              median      p90      p99      max   |  beside the budget
+    ../23/latency.txt:97 [tok=['84', '100'] ph=[]]   candidate b         69.47    70.58    76.06    84.72   |  100 ms
+    ../23/latency.txt:98 [tok=['81', '98', '100'] ph=[]]   untuned base        43.81    44.39    50.98    52.16   |  100 ms
+    ../23/latency.txt:101 [tok=['100'] ph=[]] NO VERDICT.  100 ms is the node's loop and is printed beside these numbers because
+    ../23/latency.txt:104 [tok=['99'] ph=[]] precheck.txt part 1 has the untuned pass at 43.02 ms median and 49.10 p99 on a 478-token
+    ../23/latency.txt:107 [tok=['81'] ph=[]] THE TWO ARE NOT THE SAME CALL: 43.81 ms here against precheck's 43.02 ms differs by
+    ../23/latency.txt:121 [tok=['90', '99'] ph=[]]   part                       median      p90      p99      max
+    ../23/latency.txt:127 [tok=['100'] ph=[]] median, against the 100 ms budget.  The sum is the sum and is not a measurement of a
+    ../23/latency.txt:140 [tok=['81'] ph=[]]   seeds_tuning               FIRES: mutated: seeds above 80: [81]
+    ../23/latency.txt:141 [tok=['100'] ph=[]]   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ../23/latency.txt:142 [tok=['81'] ph=[]]   roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/latency.txt:177 [tok=['100'] ph=[]] - Nothing about whether 100 ms is the right budget.  The loop question is the next
+    ../23/latency.txt:178 [tok=['100'] ph=[]]   ticket's, and 100 ms is printed beside these numbers with no verdict attached.
+  ../23/latency_dry.txt        matching_lines=  26  token_hits=  35  phrase_hits=   4
+    ../23/latency_dry.txt:7 [tok=['81', '100'] ph=['81 to 100']] score's on seeds 81 to 100 and is ana.py's to make.  The pass time itself is a
+    ../23/latency_dry.txt:14 [tok=['86', '91'] ph=[]]   latency.py         26d86b4642b02b6e41c14949ea61c4390ee51a74299a31a5323d3949e91d5c36
+    ../23/latency_dry.txt:16 [tok=['91'] ph=[]]   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/latency_dry.txt:19 [tok=['95', '83'] ph=[]]   ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+    ../23/latency_dry.txt:21 [tok=['82'] ph=[]]   ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+    ../23/latency_dry.txt:22 [tok=['83'] ph=[]] combined          e1abe65c69999cfd593015bd8afa83b6e6b60a6d71ce528acd0e4a6291109335
+    ../23/latency_dry.txt:32 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/latency_dry.txt:44 [tok=['100', '100'] ph=[]] rows            16071, seed column min 1 max 100, 100 distinct
+    ../23/latency_dry.txt:45 [tok=[] ph=['selection']] labelled rows of seeds 1-80: 11438, over 80 seeds.  The selection half is NOT read: the
+    ../23/latency_dry.txt:55 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection    20 seeds, 81 to 100
+    ../23/latency_dry.txt:59 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all four roles; both are shown refusing in
+    ../23/latency_dry.txt:70 [tok=['99'] ph=[]]                 478-token row of the same half at 43.02 ms median and 49.10 p99, so
+    ../23/latency_dry.txt:83 [tok=['88'] ph=[]] gpu memory      27.56 GB free with both models on the card, from 46.88 GB before
+    ../23/latency_dry.txt:98 [tok=['90', '99'] ph=[]]   model              median      p90      p99      max   |  beside the budget
+    ../23/latency_dry.txt:99 [tok=['89', '96', '100'] ph=[]]   candidate a         69.26    70.36    75.89    77.96   |  100 ms
+    ../23/latency_dry.txt:100 [tok=['86', '100'] ph=[]]   untuned base        43.70    44.21    49.76    51.86   |  100 ms
+    ../23/latency_dry.txt:103 [tok=['100'] ph=[]] NO VERDICT.  100 ms is the node's loop and is printed beside these numbers because
+    ../23/latency_dry.txt:106 [tok=['99'] ph=[]] precheck.txt part 1 has the untuned pass at 43.02 ms median and 49.10 p99 on a 478-token
+    ../23/latency_dry.txt:123 [tok=['90', '99'] ph=[]]   part                       median      p90      p99      max
+    ../23/latency_dry.txt:128 [tok=['92'] ph=[]] one decision, as the sum of its parts: 69.26 + 0.042 + 0.212 + 0.403 = 69.92 ms at the
+    ../23/latency_dry.txt:129 [tok=['100'] ph=[]] median, against the 100 ms budget.  The sum is the sum and is not a measurement of a
+    ../23/latency_dry.txt:142 [tok=['81'] ph=[]]   seeds_tuning               FIRES: mutated: seeds above 80: [81]
+    ../23/latency_dry.txt:143 [tok=['100'] ph=[]]   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ../23/latency_dry.txt:144 [tok=['81'] ph=[]]   roles/range                FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/latency_dry.txt:179 [tok=['100'] ph=[]] - Nothing about whether 100 ms is the right budget.  The loop question is the next
+    ../23/latency_dry.txt:180 [tok=['100'] ph=[]]   ticket's, and 100 ms is printed beside these numbers with no verdict attached.
+  ../23/parity.txt             matching_lines=  22  token_hits=  37  phrase_hits=   0
+    ../23/parity.txt:2 [tok=['81', '100'] ph=[]] seeds 1,20,21,80,81,100
+    ../23/parity.txt:4 [tok=['88'] ph=[]] seed   1 const6.000 c38ec08bfd06b718d02831beb1ec1ed448001a88a47071e9f653b1492d40749b n4 240 c4 0 lat 4639524.0 cens 0.0 
+    ../23/parity.txt:5 [tok=['95'] ph=[]] seed   1 const10.043 c6f1cd30864cc54595767700018c119cf6855e4c8db9beceac9d824ba00f3054 n4 240 c4 0 lat 7201804.0 cens 0.0
+    ../23/parity.txt:6 [tok=['83'] ph=[]] seed   1 F          b43a2edcbe48aab83b76d3943b9aceb2ba1bab57fcdcfeb02cfa04861ad1b627 n4 240 c4 0 lat 2990312.0 cens 0.0 
+    ../23/parity.txt:7 [tok=['84'] ph=[]] seed  20 const3.695 ea53035eb515f84b00a9b424792ea7670d553ed725ceae54d679aea11cefd6a5 n4 240 c4 0 lat 3828196.0 cens 0.0 
+    ../23/parity.txt:9 [tok=['96'] ph=[]] seed  20 const10.043 2c3154c4c05f41ea560a1c9a9fc2d51a50519827ff05563c5201c6148e8607f3 n4 240 c4 0 lat 8031952.0 cens 0.0
+    ../23/parity.txt:11 [tok=['97', '97'] ph=[]] seed  21 const3.695 ed59a97975f49949956343742c7ff2c7f14d97ebece739df01101c97d2d9f0a0 n4 240 c4 0 lat 4504676.0 cens 0.0 
+    ../23/parity.txt:12 [tok=['86'] ph=[]] seed  21 const6.000 db2d40a52ba6cd92628e9554b2b4662eb86a18e2763ddabc5fcae6b68575d887 n4 240 c4 0 lat 5598528.0 cens 0.0 
+    ../23/parity.txt:13 [tok=['87', '96'] ph=[]] seed  21 const10.043 d13b226fec32af55badd6312739edd8098c9c083b194e4f084e2dc388a78f87a n4 240 c4 0 lat 9129024.0 cens 0.0
+    ../23/parity.txt:14 [tok=['87'] ph=[]] seed  21 F          3e518227f4681a9437839b854e3e0d7a87a5d9f947e2ca0206eed5e864074dcf n4 240 c4 0 lat 4996840.0 cens 0.0 
+    ../23/parity.txt:15 [tok=['89', '95', '93', '88'] ph=[]] seed  80 const3.695 b23a36ad4e2b7af8b2c89e1d56ff5b95e4d93bb0f978c6eeee9edafb88df991b n4 240 c4 0 lat 4029100.0 cens 0.0 
+    ../23/parity.txt:16 [tok=['96'] ph=[]] seed  80 const6.000 a0d765153f1586b0fbe96e9f01e934234e4eec29a0acd53ded139c678d229548 n4 240 c4 0 lat 5589396.0 cens 0.0 
+    ../23/parity.txt:17 [tok=['96'] ph=[]] seed  80 const10.043 01b7809c4ae8ce744ea052b81534253e9f19104ede5d05c747bc8a2497a5522f n4 240 c4 0 lat 7040220.0 cens 0.0
+    ../23/parity.txt:18 [tok=['91', '95'] ph=[]] seed  80 F          dcebec2d89860f91b491692a1404d616a95f93259131f2c880f5f1781478fcbc n4 240 c4 0 lat 3952952.0 cens 0.0 
+    ../23/parity.txt:19 [tok=['81', '97'] ph=[]] seed  81 const3.695 46759c3979a9cb6ca37c49afbb7c69f3f97e32636417dd11d3f3c07c3e36c821 n4 240 c4 0 lat 3069096.0 cens 0.0 
+    ../23/parity.txt:20 [tok=['81', '87'] ph=[]] seed  81 const6.000 b4c8e6539ba8c63b9831d08c39ba7dcbe1feb6e14681e87f3a1ad5f6e6269b08 n4 240 c4 0 lat 5334080.0 cens 0.0 
+    ../23/parity.txt:21 [tok=['81', '94'] ph=[]] seed  81 const10.043 5a49ac56b0a16c9b46180541db17072ec1b9a0f7006174805dd86201c9ceffa0 n4 240 c4 0 lat 8025732.0 cens 0.0
+    ../23/parity.txt:22 [tok=['81'] ph=[]] seed  81 F          da37ab67a0b685ef410ca07fbb46c9f99958abc53afb2dbaafbd412a66285aa4 n4 240 c4 0 lat 5637460.0 cens 0.0 
+    ../23/parity.txt:23 [tok=['100'] ph=[]] seed 100 const3.695 c17f888fb15b2b98860a4f1e42f483accf0b52b16f29b0c6e639f581ac80d8d4 n4 240 c4 0 lat 2809208.0 cens 0.0 
+    ../23/parity.txt:24 [tok=['100', '87', '81'] ph=[]] seed 100 const6.000 71564ef11c892528f992c3a4e666a73dbe87af81c124511363894d4fcc339fda n4 240 c4 0 lat 5188432.0 cens 0.0 
+    ../23/parity.txt:25 [tok=['100', '81', '96'] ph=[]] seed 100 const10.043 13e6c0fcf02985959c0975371bdc4ebb81ebfc4999e24d752db6853a8d8c5f52 n4 240 c4 0 lat 10277768.0 cens 0.
+    ../23/parity.txt:26 [tok=['100', '87'] ph=[]] seed 100 F          237db2f87fcbab03568fc4a9775bb440fbafb5b2c7e5b6274022b2d1eeddb618 n4 240 c4 0 lat 4298072.0 cens 0.0 
+  ../23/precheck.txt           matching_lines=  31  token_hits=  36  phrase_hits=   2
+    ../23/precheck.txt:17 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/precheck.txt:24 [tok=['100'] ph=[]] seeds in file   min 1 max 100
+    ../23/precheck.txt:28 [tok=['81', '100'] ph=['81-100', 'selection']] seeds 81-100 (selection) and 121-160 (measuring) appear nowhere: the row list is cut
+    ../23/precheck.txt:45 [tok=['99', '85'] ph=[]] bf16 batch 1    single pass over 300 passes: median 43.02 ms, p99 49.10 ms, max 50.85 ms
+    ../23/precheck.txt:53 [tok=['99'] ph=[]] with legend     478 tokens   median 43.06 ms  p99 49.66 ms  max 52.52 ms
+    ../23/precheck.txt:54 [tok=['99'] ph=[]] without legend  392 tokens   median 43.07 ms  p99 50.26 ms  max 52.11 ms
+    ../23/precheck.txt:55 [tok=['86'] ph=[]] the legend is 86 tokens of this row, 18.0 % of them
+    ../23/precheck.txt:58 [tok=['99'] ph=[]] Either way the difference is to be read against this row's own spread, median to p99
+    ../23/precheck.txt:75 [tok=['99'] ph=[]] fp32 batch 1    single pass over 300 passes: median 36.73 ms, p99 43.09 ms, max 43.40 ms
+    ../23/precheck.txt:76 [tok=['99', '85'] ph=[]] beside bf16 batch 1: median 43.02 ms, p99 49.10 ms.  float32 is 0.85x the bf16 median.
+    ../23/precheck.txt:86 [tok=['99'] ph=[]] bf16 b1  margin median  4.6875  p99 13.9844  max 15.5156  min  0.0000   arms chosen short 334 mid 20 long 158
+    ../23/precheck.txt:87 [tok=['99'] ph=[]] bf16 b8  margin median  4.6875  p99 13.9766  max 15.5469  min  0.0000   arms chosen short 341 mid 20 long 151
+    ../23/precheck.txt:88 [tok=['99'] ph=[]] fp32 b1  margin median  4.7036  p99 14.0711  max 15.7322  min  0.0125   arms chosen short 337 mid 21 long 154
+    ../23/precheck.txt:89 [tok=['99'] ph=[]] fp32 b8  margin median  4.7036  p99 14.0711  max 15.7322  min  0.0126   arms chosen short 337 mid 21 long 154
+    ../23/precheck.txt:102 [tok=['99'] ph=[]] bf16 b1  vs bf16 b8   argmax differs on  14 of 512   |diff| median 0.2500 p99 1.9219 max 3.3750   rows with margin < 3.3
+    ../23/precheck.txt:103 [tok=['99'] ph=[]] bf16 b1  vs fp32 b1   argmax differs on  13 of 512   |diff| median 0.2130 p99 1.6423 max 6.0445   rows with margin < 6.0
+    ../23/precheck.txt:104 [tok=['99'] ph=[]] bf16 b1  vs fp32 b8   argmax differs on  13 of 512   |diff| median 0.2131 p99 1.6421 max 6.0444   rows with margin < 6.0
+    ../23/precheck.txt:105 [tok=['99'] ph=[]] bf16 b8  vs fp32 b1   argmax differs on   6 of 512   |diff| median 0.2118 p99 1.5472 max 5.0445   rows with margin < 5.0
+    ../23/precheck.txt:106 [tok=['99'] ph=[]] bf16 b8  vs fp32 b8   argmax differs on   6 of 512   |diff| median 0.2119 p99 1.5472 max 5.0444   rows with margin < 5.0
+    ../23/precheck.txt:107 [tok=['99'] ph=[]] fp32 b1  vs fp32 b8   argmax differs on   0 of 512   |diff| median 0.0000 p99 0.0002 max 0.0013   rows with margin < 0.0
+    ../23/precheck.txt:122 [tok=['86', '86'] ph=[]] K = 1    23.1 passes/s total   per-worker median pass 42.86-42.86 ms   window 8.64 s
+    ../23/precheck.txt:123 [tok=['92'] ph=[]]         128000 passes at this rate: 92.2 min
+    ../23/precheck.txt:124 [tok=['98'] ph=[]] K = 2    45.7 passes/s total   per-worker median pass 42.98-43.43 ms   window 8.75 s
+    ../23/precheck.txt:128 [tok=['95'] ph=[]] K = 8 NOT RUN: one worker measured 10.12 GB, 8 of them would need 80.95 GB and the card has 46.73 GB free.
+    ../23/precheck.txt:131 [tok=['97'] ph=[]] K = 2 is 1.97x the single-process rate
+    ../23/precheck.txt:155 [tok=['99'] ph=[]]           seconds per step (steps 4-30): median 0.261  p99 0.269  max 0.269
+    ../23/precheck.txt:156 [tok=['92'] ph=[]]           peak allocated 17.41 GB, peak reserved 17.92 GB
+    ../23/precheck.txt:162 [tok=['99'] ph=[]]           seconds per step (steps 4-30): median 0.447  p99 0.477  max 0.477
+    ../23/precheck.txt:163 [tok=['95', '84'] ph=[]]           peak allocated 24.95 GB, peak reserved 30.84 GB
+    ../23/precheck.txt:178 [tok=['81'] ph=[]]   seeds_tuning           FIRES: mutated: seeds above 80: [81]
+    ../23/precheck.txt:179 [tok=['100'] ph=[]]   port.check_seeds       FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on t
+  ../23/rows.txt               matching_lines=  12  token_hits=  16  phrase_hits=   5
+    ../23/rows.txt:6 [tok=['95'] ph=[]] sha256          fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67  == evidence/22/labels.sha256
+    ../23/rows.txt:8 [tok=['100', '100'] ph=[]] seeds in file   min 1 max 100, 100 distinct
+    ../23/rows.txt:9 [tok=['100'] ph=[]] port.check_seeds passed them, so nothing above 100 is in this file
+    ../23/rows.txt:15 [tok=['81', '100'] ph=['81-100', 'selection']] seeds 81-100 (selection) and 121-160 (measuring) appear nowhere below: the row list
+    ../23/rows.txt:41 [tok=['99'] ph=[]] the largest |t - 3| among them: 9.99201e-14, which is 9.99e-08 of the tolerance
+    ../23/rows.txt:52 [tok=['81', '100'] ph=['81-100']] The held-out slice is carved out of the TUNING half, so no number from seeds 81-100
+    ../23/rows.txt:63 [tok=['89', '91'] ph=[]]     held out 3.695 s 89 (0.1567)  6.000 s 91 (0.1602)  10.043 s 388 (0.6831)
+    ../23/rows.txt:73 [tok=['95'] ph=[]]   digest                 FIRES: digest of labels_p0.2.jsonl.gz is fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001
+    ../23/rows.txt:74 [tok=['81'] ph=[]]   seeds_tuning           FIRES: mutated: seeds above 80: [81]
+    ../23/rows.txt:75 [tok=['100'] ph=[]]   port.check_seeds       FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on t
+    ../23/rows.txt:88 [tok=['81', '100'] ph=['81-100']]   and b is made on seeds 81-100 by the replay score, and not here and not by any
+    ../23/rows.txt:91 [tok=[] ph=['selection']]   agreement: the agreement of that selection was measured on seeds 1-10 against a
+  ../23/smoke.txt              matching_lines=   9  token_hits=  11  phrase_hits=   0
+    ../23/smoke.txt:17 [tok=['95'] ph=[]] after loading   allocated 9.52 GB, reserved 9.55 GB, card in use 9.95 GB of 47.27 GB
+    ../23/smoke.txt:25 [tok=['100'] ph=[]] seeds           min 1 max 100
+    ../23/smoke.txt:101 [tok=['99'] ph=[]] prompt, with legend    min  224  median  477  p99  509  max  519
+    ../23/smoke.txt:102 [tok=['99'] ph=[]] prompt, no legend      min  138  median  391  p99  423  max  433
+    ../23/smoke.txt:103 [tok=['86'] ph=[]] the legend costs 86 tokens at the median
+    ../23/smoke.txt:109 [tok=['90', '99', '95'] ph=[]] batch 1, 300 passes    median   43.78  p90   44.39  p99   50.76  max   51.95  ms
+    ../23/smoke.txt:110 [tok=['100'] ph=[]] beside it, the number the brief names: 100 ms.  No verdict is drawn here.
+    ../23/smoke.txt:146 [tok=['87'] ph=[]] peak reserved   15.87 GB
+    ../23/smoke.txt:147 [tok=['87'] ph=[]] at the end      allocated 9.59 GB, reserved 15.87 GB, card in use 16.40 GB of 47.27 GB
+  ../23/spread.txt             matching_lines=  17  token_hits=  25  phrase_hits=   1
+    ../23/spread.txt:34 [tok=['81', '100'] ph=[]] seed column     min 81 max 100, 20 distinct, the same set in both
+    ../23/spread.txt:36 [tok=['100'] ph=[]] port.check_seeds (>100 refused) passed them and the seed set meets the measuring
+    ../23/spread.txt:54 [tok=['86'] ph=[]]   a   first run   bbd339c105875b79e4ef66d7bd96841f7c213b1b233c3155d3b7f3dfabfe86b4
+    ../23/spread.txt:88 [tok=['95'] ph=[]] first scores lower.  The interval is the 95 % percentile interval of a paired
+    ../23/spread.txt:93 [tok=['95'] ph=[]]   first        second        difference ms      95 % interval ms    0 in   first lower
+    ../23/spread.txt:114 [tok=['95'] ph=[]]   its part 4 prints point 803.781 ms and the 95 % interval 414.651 to 1257.029 ms,
+    ../23/spread.txt:117 [tok=['95'] ph=[]]   its part 4 prints point 617.840 ms and the 95 % interval -58.424 to 1357.299 ms,
+    ../23/spread.txt:131 [tok=['95'] ph=[]] each with its 95 % interval, its half width, its dropped count and its word, and
+    ../23/spread.txt:148 [tok=['100'] ph=[]]   port.check_seeds               FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anyth
+    ../23/spread.txt:150 [tok=['81', '82', '83', '84', '82', '83', '84', '85'] ph=[]]   same grid/a seed gone          FIRES: mutated: the two csvs carry different seeds: [81, 82, 83, 84] against [82, 83, 8
+    ../23/spread.txt:151 [tok=['81'] ph=[]]   grid/one row missing           FIRES: mutated: 1 missing (e.g. [('const3.695', 81, 0)]) and 0 unexpected (e.g. []) of 
+    ../23/spread.txt:152 [tok=['81'] ph=[]]   grid/one row twice             FIRES: mutated: 1 row(s) appear twice, e.g. [('const3.695', 81, 0)]
+    ../23/spread.txt:153 [tok=['81'] ph=[]]   runs per seed/sizes            FIRES: mutated: the (decider, seed) groups carry [39, 40] runs, not one size; e.g. [('c
+    ../23/spread.txt:155 [tok=['100'] ph=[]]   weight/one row moved           FIRES: mutated: 2 different weights in the csvs: [100.0, 104.29595912307323]
+    ../23/spread.txt:157 [tok=['81', '81'] ph=[]]   shared bytes/one character     FIRES: mutated: 1 of 4001 shared line(s) differ, the first at index 1: 'const3.695,81,0
+    ../23/spread.txt:160 [tok=['86'] ph=[]]   model digests/two in one csv   FIRES: mutated: a carries ['922309eb7acd0ee669aeb120d17544fba521eccd42763d621be3eda40f5
+    ../23/spread.txt:188 [tok=[] ph=['selection']] - Nothing that corrects the selection bias.  The chosen candidate's figure is still
+  ../23/tune.txt               matching_lines=  29  token_hits=  37  phrase_hits=   8
+    ../23/tune.txt:6 [tok=['81', '100'] ph=['81 to 100']] choice between the candidates is the replay score's on seeds 81 to 100 and is not
+    ../23/tune.txt:13 [tok=['96'] ph=[]]   tune.py            8b160f378aa6f58c507724264351c223ba0ea8594448d09e96e10671af3e956f
+    ../23/tune.txt:15 [tok=['91'] ph=[]]   prefill.py         bd47719cd131638e741f7c309c12d64b20a91d1ecc73d2999837fb70b064a372
+    ../23/tune.txt:18 [tok=['95', '83'] ph=[]]   ../22/label.py     3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+    ../23/tune.txt:20 [tok=['82'] ph=[]]   ../13/replay.py    f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+    ../23/tune.txt:21 [tok=['93'] ph=[]] combined          1cf4ce11342fbab6d56be8687a7f240c93dbfe22b9faa135b12ce089a3c5be38
+    ../23/tune.txt:31 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/tune.txt:45 [tok=['95'] ph=[]] sha256          fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67
+    ../23/tune.txt:48 [tok=['100', '100'] ph=[]] seed column     min 1 max 100, 100 distinct
+    ../23/tune.txt:49 [tok=['100'] ph=[]] port.check_seeds passed them, so nothing above 100 is in this file
+    ../23/tune.txt:51 [tok=['81', '100'] ph=['81-100', 'selection']] rendered, so seeds 81-100 (selection) and 121-160 (measuring) appear nowhere below
+    ../23/tune.txt:70 [tok=['89'] ph=[]]   b held 3.695                         89  == rows.txt
+    ../23/tune.txt:71 [tok=['91'] ph=[]]   b held 6.0                           91  == rows.txt
+    ../23/tune.txt:80 [tok=['100'] ph=[]]   file seeds                          100  == rows.txt
+    ../23/tune.txt:89 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection  20 seeds, 81 to 100  (named here so the roles are complete; not read by this run)
+    ../23/tune.txt:92 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all three; both are shown refusing in part 5
+    ../23/tune.txt:138 [tok=['86'] ph=[]]          ties 13, answers {' short': 86, ' mid': 7, ' long': 475}
+    ../23/tune.txt:179 [tok=['94'] ph=[]]   README.md                         5250 bytes  sha256 adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0
+    ../23/tune.txt:181 [tok=['82'] ph=[]]   adapter_model.safetensors     96693360 bytes  sha256 268a3dd4db8b6e8fc5452ba3aa1ce174a7990979026f82fe0e0ce896ecc32514
+    ../23/tune.txt:208 [tok=['82'] ph=[]]          ties 298, answers {' short': 82, ' mid': 225, ' long': 1118}
+    ../23/tune.txt:211 [tok=['99'] ph=[]]          held-out cross-entropy 0.890638 over 1425 rows in 99.1 s
+    ../23/tune.txt:244 [tok=['94'] ph=[]]   README.md                         5250 bytes  sha256 adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0
+    ../23/tune.txt:252 [tok=['81', '100'] ph=['81 to 100']] the choice is the replay score's on seeds 81 to 100.
+    ../23/tune.txt:292 [tok=['81'] ph=[]]   seeds_tuning             FIRES: mutated: seeds above 80: [81]
+    ../23/tune.txt:293 [tok=['100'] ph=[]]   port.check_seeds         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on
+    ../23/tune.txt:320 [tok=['95'] ph=[]]   digest                   FIRES: mutated: digest of labels_p0.2.jsonl.gz is fe194e3c43d40e70b5f95bc8af5b20134b342c531f4
+    ../23/tune.txt:322 [tok=['81'] ph=[]]   roles/range              FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/tune.txt:353 [tok=['81', '100'] ph=['81 to 100']]   the choice between a and b is the mean replay score on seeds 81 to 100.
+    ../23/tune.txt:356 [tok=['81', '100'] ph=['81 to 100']] - Nothing about the agreement the ticket asks for.  That is on seeds 81 to 100; the
+  ../23/tune_run1.txt          matching_lines=  22  token_hits=  30  phrase_hits=   8
+    ../23/tune_run1.txt:6 [tok=['81', '100'] ph=['81 to 100']] choice between the candidates is the replay score's on seeds 81 to 100 and is not
+    ../23/tune_run1.txt:14 [tok=['88'] ph=[]] gpu NVIDIA RTX PRO 5000 Blackwell, 46.88 GB free of 47.27 GB
+    ../23/tune_run1.txt:27 [tok=['95'] ph=[]] sha256          fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67
+    ../23/tune_run1.txt:30 [tok=['100', '100'] ph=[]] seed column     min 1 max 100, 100 distinct
+    ../23/tune_run1.txt:31 [tok=['100'] ph=[]] port.check_seeds passed them, so nothing above 100 is in this file
+    ../23/tune_run1.txt:33 [tok=['81', '100'] ph=['81-100', 'selection']] rendered, so seeds 81-100 (selection) and 121-160 (measuring) appear nowhere below
+    ../23/tune_run1.txt:52 [tok=['89'] ph=[]]   b held 3.695                         89  == rows.txt
+    ../23/tune_run1.txt:53 [tok=['91'] ph=[]]   b held 6.0                           91  == rows.txt
+    ../23/tune_run1.txt:62 [tok=['100'] ph=[]]   file seeds                          100  == rows.txt
+    ../23/tune_run1.txt:71 [tok=['81', '100'] ph=['selection', '81 to 100']]   selection  20 seeds, 81 to 100  (named here so the roles are complete; not read by this run)
+    ../23/tune_run1.txt:74 [tok=['100'] ph=[]]   port.check_seeds (>100 refused) passed all three; both are shown refusing in part 5
+    ../23/tune_run1.txt:151 [tok=['94'] ph=[]]   README.md                         5250 bytes  sha256 adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0
+    ../23/tune_run1.txt:173 [tok=['84'] ph=[]]          ties 108, answers {' short': 28, ' mid': 84, ' long': 1313}
+    ../23/tune_run1.txt:206 [tok=['94'] ph=[]]   README.md                         5250 bytes  sha256 adb9b9b072cc3246f451b0df0c280d3c258452d703b6f94edb627fece9c903d0
+    ../23/tune_run1.txt:208 [tok=['98', '94'] ph=[]]   adapter_model.safetensors     96693360 bytes  sha256 98f671bf49e25ff21236f503c57a1dc0d4d8c4f23b9565b6df5a05c842c94adf
+    ../23/tune_run1.txt:214 [tok=['81', '100'] ph=['81 to 100']] the choice is the replay score's on seeds 81 to 100.
+    ../23/tune_run1.txt:251 [tok=['81'] ph=[]]   seeds_tuning             FIRES: mutated: seeds above 80: [81]
+    ../23/tune_run1.txt:252 [tok=['100'] ph=[]]   port.check_seeds         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on
+    ../23/tune_run1.txt:273 [tok=['95'] ph=[]]   digest                   FIRES: mutated: digest of labels_p0.2.jsonl.gz is fe194e3c43d40e70b5f95bc8af5b20134b342c531f4
+    ../23/tune_run1.txt:275 [tok=['81'] ph=[]]   roles/range              FIRES: mutated: the tuning role carries [81], outside 1-70
+    ../23/tune_run1.txt:299 [tok=['81', '100'] ph=['81 to 100']]   the choice between a and b is the mean replay score on seeds 81 to 100.
+    ../23/tune_run1.txt:302 [tok=['81', '100'] ph=['81 to 100']] - Nothing about the agreement the ticket asks for.  That is on seeds 81 to 100; the
+  ../23/versus.txt             matching_lines=  11  token_hits=  11  phrase_hits=   1
+    ../23/versus.txt:22 [tok=['81', '100'] ph=[]] seed column     min 81 max 100, 20 distinct
+    ../23/versus.txt:24 [tok=['100'] ph=[]] port.check_seeds (>100 refused) passed them and the seed set meets the measuring
+    ../23/versus.txt:37 [tok=['95'] ph=[]] means the first scores lower.  The interval is the 95 % percentile interval of a
+    ../23/versus.txt:52 [tok=['95'] ph=[]]   first        second        difference ms      95 % interval ms    0 in   first lower
+    ../23/versus.txt:64 [tok=['95'] ph=[]] prints point 617.840 ms and the 95 % interval -58.424 to 1357.299 ms, and this run
+    ../23/versus.txt:118 [tok=['100'] ph=[]]   port.check_seeds           FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ../23/versus.txt:121 [tok=['81'] ph=[]]   grid/one row missing       FIRES: mutated: 1 missing (e.g. [('const3.695', 81, 0)]) and 0 unexpected (e.g. []) of 5600
+    ../23/versus.txt:122 [tok=['81'] ph=[]]   grid/one row twice         FIRES: mutated: 1 row(s) appear twice, e.g. [('const3.695', 81, 0)]
+    ../23/versus.txt:123 [tok=['81'] ph=[]]   runs per seed/sizes        FIRES: mutated: the (decider, seed) groups carry [39, 40] runs, not one size; e.g. [('const
+    ../23/versus.txt:125 [tok=['100'] ph=[]]   weight/one row moved       FIRES: mutated: 2 different weights in the csv: [100.0, 104.29595912307323]
+    ../23/versus.txt:142 [tok=[] ph=['selection']] - Nothing that corrects the selection bias.  The chosen candidate's figure is the
+  ../23/README.md              matching_lines=  32  token_hits=  55  phrase_hits=   0
+    ../23/README.md:3 [tok=['81', '100'] ph=[]] 後から知った正解のラベル（`../22`）で gemma-4-E2B-it を LoRA 調整し、答えの頭を先に入れて次の 1 語の確率を 1 回読むだけの決め方 L を作り、なぞり直し（`../13/replay.py`）の差し込み口の上
+    ../23/README.md:9 [tok=['95'] ph=[]] **L は式の決まり F に勝たなかった。これは 2 回の調整の 4 つのアダプタ全部に当てはまり、4 つとも F より点が高く、4 つとも F との点の差の、対の bootstrap の 95 % 区間が 0 を外す**（`spread.
+    ../23/README.md:21 [tok=['96'] ph=[]] | 5 | 固定 10.043 秒 | 39855.665 | 96.029 | 29840.255 | 当てはまらない |
+    ../23/README.md:29 [tok=['95'] ph=[]] | 前 | 後 | 差（ms） | 95 % 区間（ms） | 0 を挟むか | 前が低い seed |
+    ../23/README.md:51 [tok=['95'] ph=[]] | 対の bootstrap の 95 % 区間 | -58.424〜1357.299 ms、0 を挟む |
+    ../23/README.md:54 [tok=['95'] ph=[]] 差 617.840 ms は線 297.0 ms を越えるので、ラベルを付け直す道（利用者の決めたこと 6）は開かず、点の低い b を次のチケットへ渡す。ただし差は対の bootstrap の 95 % 区間の中にあり、その区間は 0 を挟
+    ../23/README.md:56 [tok=['100', '95', '96'] ph=[]] 線 297.0 ms は、重みの jackknife の標準誤差 1.685586 ms に 176.220 回を掛けた値である。この 176.220 回は、`../22/weight.txt` の段 4 が seed 1〜100 で取った
+    ../23/README.md:64 [tok=['95'] ph=[]] | 決め方 | 得 | 95 % 区間 | 半幅 | 落ちた取り直し | 読み |
+    ../23/README.md:75 [tok=['81', '100'] ph=[]] ## ラベルへの当たり具合（seed 81〜100）
+    ../23/README.md:77 [tok=['81', '100'] ph=[]] **調整した 2 つの候補の当たりは、どちらも「いつも 10.043 秒と答える」の高さである。合否は付けない**（チケットの Acceptance 3 の文のとおり）。seed 81〜100 のラベルの行は 3203 件で、印の付いたもの
+    ../23/README.md:91 [tok=['99', '100'] ph=[]] **候補 b の前向き計算 1 回は中央 69.47 ms、p99 76.06 ms で、100 ms と並べて書く。合否は付けない**（Acceptance 5 の文のとおり）。`hpc-debian` の RTX PRO 5000 Bl
+    ../23/README.md:93 [tok=['90', '99'] ph=[]] | 何 | 中央 | p90 | p99 | 最大 | 並べる相手 |
+    ../23/README.md:95 [tok=['84', '100'] ph=[]] | 候補 b | 69.47 | 70.58 | 76.06 | 84.72 | 100 ms |
+    ../23/README.md:96 [tok=['81', '98', '100'] ph=[]] | 調整していない重み | 43.81 | 44.39 | 50.98 | 52.16 | 100 ms |
+    ../23/README.md:99 [tok=['100'] ph=[]] **前向き計算の外にあって、ノードが同じく払うもの**（`latency.txt` part 4、どれも中央、300 回）: 記録を組んで文にするのが 0.044 ms、chat template が 0.211 ms、tokenizer 
+    ../23/README.md:120 [tok=['95'] ph=[]] **答え: 候補がどちらの回の物でも、L は F に勝たない。4 つのアダプタは 4 つとも F より点が高く、4 つとも対の bootstrap の 95 % 区間が 0 を外す。** そして **4 つとも固定 6.0 秒の腕とは見分け
+    ../23/README.md:133 [tok=['81', '100'] ph=[]] `spread.txt` part 2。4 つのアダプタは同じ seed 81〜100・同じ 40 本の流れ・同じ台本の digest `f3a34ad0…` の上で採点してある。F と固定 6.0 秒の腕の行は 2 つの csv で by
+    ../23/README.md:137 [tok=['95'] ph=[]] | 前 | 後 | 差（ms） | 95 % 区間（ms） | 0 を挟むか | 前が低い seed |
+    ../23/README.md:146 [tok=['95'] ph=[]] | 回 | a − b（ms） | 95 % 区間（ms） | 段取り自身の読み |
+    ../23/README.md:155 [tok=['95', '95'] ph=[]] | アダプタ | 対 F の差（ms） | 95 % 区間（ms） | 0 を挟むか | 対 固定 6.0 秒の差（ms） | 95 % 区間（ms） | 0 を挟むか |
+    ../23/README.md:166 [tok=['95'] ph=[]] | アダプタ | 得 | 95 % 区間 | 半幅 | 落ちた取り直し | 読み |
+    ../23/README.md:196 [tok=['95'] ph=[]] | 4 | 得の 95 % 区間は、どちらの候補でも 0 を挟む（`word` が not-seen を返す） | 候補 a の区間は 1.372 %〜6.492 % で 0 を外す（`ana.txt` part 3） | 外れた |
+    ../23/README.md:217 [tok=['90'] ph=[]] - **ラベル自身が揺れている**（Threats 3）。重ならない 2 組の 8 通しのラベル付けの一致は、主のマスの seed 1〜10 の上で 0.7577 で、前もって置いた 0.90 の線はどの通し数でも越えていない。2 つの候補
+    ../23/README.md:220 [tok=['99'] ph=[]] - **重み自身が不確かである**（Threats 9）。jackknife の標準誤差は 1.685586 ms/回、40 本の流れごとの重みは 99.899〜107.251。点はこの値とともに動き、297 ms の線はまさにこの不確かさ
+    ../23/README.md:223 [tok=['100'] ph=[]] - **候補 b の 4586 行は、データだけから決まる数ではない**（Threats 15）。`../22/specnums.txt` が seed 1〜100 で数えた 1246 件は、2 位の腕が 3 位の腕と平均で並ぶ行で、t を
+    ../23/README.md:225 [tok=['100'] ph=[]] - **1 回の判断が 100 ms の周回に収まるかは、この段では決まらない。** `latency.txt` は GPU 1 枚の上の前向き計算 1 回を測った数で、ノードの機械でもノードの周回でもない。周回の問いはチケット 12 が持
+    ../23/README.md:231 [tok=['100', '81', '100'] ph=[]] - **門は 2 つある。** `../22/port.py` の `check_seeds` が 100 を超える seed を断り（121〜160 はここで落ちる）、各台本の `check_seeds_tuning` が 80 を超える
+    ../23/README.md:232 [tok=['81', '100', '81', '100'] ph=[]] - **役は出力に印字される。** 調整 seed 1〜70、残す周を決める seed 71〜80、候補を選ぶ seed 81〜100、合併と 121〜160 の交わりは 0 個。`tune.txt`・`eval.txt`・`ana.txt
+    ../23/README.md:234 [tok=['100', '100'] ph=[]] - **読んだラベルの行の seed も数えている。** `rows.txt` part 0、`agree.txt` part 1、`latency.txt` part 1 が、file の seed の最小・最大・個数（1、100、100
+    ../23/README.md:235 [tok=['100'] ph=[]] - **断る所を見せている。** `rows.txt` part 5（2 つの門）、`eval.txt` part 7（23 個）、`ana.txt` part 5（22 個）、`agree.txt` part 4（17 個）、`laten
+    ../23/README.md:236 [tok=['81', '100', '81', '100', '81', '81'] ph=[]] - **選びの側の seed 81〜100 を、点が出る前に読んだ所は 3 つある。追補 A2 が「2 つ」と数えたのは数え落としである。** 落ちていたのは用意の段の `parity.py` で、2 つの機械でなぞり直しが同じ byte 
+    ../23/README.md:265 [tok=['100'] ph=[]] - 1 回の判断が 100 ms の周回に収まるかは、チケット 12 の持ち物のまま残っている。
+  ../23/spec.md                matching_lines= 103  token_hits= 118  phrase_hits=  39
+    ../23/spec.md:15 [tok=['90'] ph=[]] `RUN.txt:688` records that it was killed by hand about 90 s in. Several numbers here are a subtraction of two
+    ../23/spec.md:16 [tok=['81', '100'] ph=[]] generated numbers rather than a count of their own -- 3203, 2841, the three seeds-81-to-100 class counts and
+    ../23/spec.md:52 [tok=['81', '100'] ph=['81 to 100']] 3. **The agreement with the labels on seeds 81 to 100, untuned against tuned**, with no pass or fail attached.
+    ../23/spec.md:53 [tok=['99', '100'] ph=[]] 4. **What one decision's forward pass costs on `hpc-debian`**, median and p99, printed beside 100 ms, with no
+    ../23/spec.md:63 [tok=['100'] ph=[]] - **Nothing about whether one decision fits the node's 100 ms loop.** The pass is timed on an RTX PRO 5000
+    ../23/spec.md:64 [tok=['99'] ph=[]]   Blackwell (`precheck.txt` part 1: bf16 batch 1 median 43.02 ms, p99 49.10 ms), which is not a node's
+    ../23/spec.md:66 [tok=['100'] ph=[]]   rest of its loop. 43 ms sits *beside* 100 ms, not inside it.
+    ../23/spec.md:69 [tok=['90'] ph=[]]   the decisions both of them labelled (`../22/stability.txt`, main cell, seeds 1 to 10), and the bar of 0.90
+    ../23/spec.md:112 [tok=[] ph=['selection']] - **Nothing corrects the selection bias of choosing one of two candidates on the same 20 seeds.** See Threats.
+    ../23/spec.md:190 [tok=['86'] ph=[]] 86 tokens (18.0 % of the prompt) moved the median 0.02 ms the *wrong* way, far below the row's own
+    ../23/spec.md:191 [tok=['99'] ph=[]] median-to-p99 spread of 6.61 ms. Across three runs of that script the same comparison gave -0.69, +0.05 and
+    ../23/spec.md:197 [tok=['86'] ph=[]] another route. Alternative not taken: dropping it, which would save 86 tokens of prompt, buy no measured time,
+    ../23/spec.md:272 [tok=['95'] ph=[]]   9.95) and its parallel throughput was never measured, while bf16's is: one worker's footprint is 10.12 GB,
+    ../23/spec.md:293 [tok=['86'] ph=[]]   fetched: `precheck.txt` part 2 shows the per-worker median pass rising from 42.86 ms at K = 1 to 52.5 ms at
+    ../23/spec.md:325 [tok=['100'] ph=[]] copy), `port` (for the >100 seed guard) and `stability` (for the bar the agreement was binned on), and
+    ../23/spec.md:331 [tok=['100'] ph=[]] The main cell's label file holds 16071 rows over seeds 1 to 100; 12868 of them are of seeds 1 to 80, of which
+    ../23/spec.md:332 [tok=['81', '100'] ph=['81 to 100']] 1430 (0.1111) are ties that carry no label (`rows.txt` parts 0 and 1). So seeds 81 to 100 hold
+    ../23/spec.md:348 [tok=['99'] ph=[]]   `|t - 3|` among the 31 is 9.99201e-14, which is 9.99e-08 of the tolerance, and the nearest `|t - 3|`
+    ../23/spec.md:354 [tok=['100'] ph=[]]   residue is left and it is `../22/specnums.txt`'s own, over seeds 1 to 100: 1246 rows have a runner-up that
+    ../23/spec.md:358 [tok=[] ph=['selection']]   those rows across the selection. So that many rows of b rest on this directory's arm order and not on the
+    ../23/spec.md:388 [tok=['81'] ph=[]] **The held-out slice: seeds 71 to 80 do not tune.** Carved out of the tuning half, never out of seeds 81 to
+    ../23/spec.md:389 [tok=['100'] ph=[]] 100. What each candidate actually optimises on (`rows.txt` part 4):
+    ../23/spec.md:404 [tok=['81', '100'] ph=['81 to 100']] Every setting below is fixed in this file. **No setting is chosen by looking at seeds 81 to 100, and no
+    ../23/spec.md:437 [tok=['95'] ph=[]]   regularised. Alternative not taken: an 8-bit or paged optimiser, unnecessary at 24.95 GB peak on a 47.27 GB
+    ../23/spec.md:443 [tok=['95'] ph=[]] - **Batch size 16** -- worker's choice. `precheck.txt` part 4: 0.447 s per step at a peak of 24.95 GB
+    ../23/spec.md:444 [tok=['95'] ph=[]]   allocated, against 0.261 s at 17.41 GB for batch 8, i.e. 0.0279 s per row against 0.0326, and 24.95 GB fits
+    ../23/spec.md:456 [tok=[] ph=['selection', 'selection']]   would be a selection, and a selection made on the held-out slice would spend that slice on a second choice.
+    ../23/spec.md:478 [tok=['81', '100'] ph=['81 to 100']] ## The evaluation on seeds 81 to 100
+    ../23/spec.md:503 [tok=['81', '100'] ph=['81 to 100']] **The streams.** 20 seeds (81 to 100) x 40 replicate streams = **800 runs per decider**. The per-pair stream
+    ../23/spec.md:525 [tok=['100', '95'] ph=[]] streams on as well", and `weight.txt` itself calls the +3.001866 undecided at these 100 seeds (0.95 of step
+    ../23/spec.md:534 [tok=['100'] ph=[]]   1 to 20 and 5 replicates, not 1 to 100 and 40, the arms there are the old fixed-arm path, and its delay
+    ../23/spec.md:577 [tok=['95'] ph=[]] 2. **The reported frontier gain**, with a 95 % interval, reusing `../20/predict.py`'s `interp`, `gain`,
+    ../23/spec.md:582 [tok=['89', '92'] ph=[]]      (`../22/score.py:89-92`) and `vals` unpacks exactly that -- `n4, c4, lat, polls = m.sum(0)` at
+    ../23/spec.md:607 [tok=['97', '98'] ph=[]]      `numpy.random.default_rng(20261122)` -- `BOOT_N` and `BOOT_SEED` at `../20/predict.py:97-98`, the draw
+    ../23/spec.md:620 [tok=['81', '100'] ph=['81 to 100']]      outside [MIN, MAX]", where **MIN and MAX are the re-run arms' own poll counts on seeds 81 to 100, which
+    ../23/spec.md:621 [tok=['95'] ph=[]]      `eval.py` prints** -- not `../22/weight.txt`'s 95.985 and 256.455, which are step 4's means over seeds 1
+    ../23/spec.md:622 [tok=['100'] ph=[]]      to 100 and would make the message quote an interval the test did not use.
+    ../23/spec.md:623 [tok=['95'] ph=[]]    - The 95 % interval at 20 seeds is expected to be wider than `../20`'s at 40 by roughly sqrt(2); **that is
+    ../23/spec.md:632 [tok=['100'] ph=[]] per poll** over the 100 seeds, which is the uncertainty that file tells a reader to carry on it; the two outer
+    ../23/spec.md:633 [tok=['95'] ph=[]] arms' step-4 poll counts are 256.455 and 95.985 per run, whose midpoint is 176.220; and
+    ../23/spec.md:640 [tok=['99'] ph=[]] Read beside it, the second reading from the same file is wider: the per-stream weights range from 99.899 to
+    ../23/spec.md:653 [tok=['88', '98'] ph=[]]   is large: `parity.txt`'s six single-stream `const3.695` runs score 40921.49, 42754.88, 45469.25, 43591.98,
+    ../23/spec.md:654 [tok=['96'] ph=[]]   39591.96 and 38404.80, a spread of some thousands of ms per run over six seeds. **No generated file carries
+    ../23/spec.md:657 [tok=['95'] ph=[]] - **a "separated" verdict whose gap lies inside the paired bootstrap's 95 % interval is reported as
+    ../23/spec.md:665 [tok=['95'] ph=[]] **Reported beside the band and not the rule**: the 95 % percentile interval of `score(a) - score(b)` from a
+    ../23/spec.md:686 [tok=['100'] ph=[]] earlier draft of this file wrongly said none did: `../22/labels.txt` line 9 reads "p 0.2: 100 runs, 16071
+    ../23/spec.md:694 [tok=['92'] ph=[]] | 800 runs x 160.7, one model decider | 128 568 | 28.2 min | 92.8 min |
+    ../23/spec.md:695 [tok=['84'] ph=[]] | the three model deciders together | 385 704 | 84.7 min | 278.3 min |
+    ../23/spec.md:701 [tok=['95'] ph=[]] poll counts of the two outer arms are 256.455 and 95.985 per run, so a near-constant candidate could cost
+    ../23/spec.md:708 [tok=['92'] ph=[]] 92.2 min at K = 1, 46.7 at K = 2, 28.1 at K = 4, and K = 8 does not fit (one worker is 10.12 GB, eight need
+    ../23/spec.md:709 [tok=['95'] ph=[]] 80.95 GB against 46.73 GB free).
+    ../23/spec.md:713 [tok=['81', '100'] ph=['81 to 100']] On **seeds 81 to 100** of the main cell: 3203 rows, of which 2841 carry a label. For each of the three model
+    ../23/spec.md:724 [tok=['81', '100'] ph=['81 to 100']]   counts gives seeds 81 to 100 as 3.695 s 3221 - 2581 = 640, 6.0 s 3675 - 2972 = 703, 10.043 s
+    ../23/spec.md:726 [tok=['81', '100'] ph=['81 to 100']]   was counted on seeds 81 to 100 to get it and `agree.py` recomputes it from the rows it reads, which has to
+    ../23/spec.md:746 [tok=['90'] ph=[]] rows**: 10 warm-up passes then 300 timed passes, each bracketed by `torch.cuda.synchronize()`, median and p90
+    ../23/spec.md:747 [tok=['99', '100'] ph=[]] and p99 and max printed **beside 100 ms, with no verdict**, as the ticket requires. The card is checked free
+    ../23/spec.md:750 [tok=['81', '100'] ph=['81 to 100', 'selection']] **Seeds 1 to 80 and not 81 to 100** -- a correction, not a preference: an earlier draft timed the selection
+    ../23/spec.md:751 [tok=[] ph=['selection']] half's median prompt, which is a use of the selection half for something this file promised it would not be
+    ../23/spec.md:760 [tok=['99'] ph=[]] The untuned pass is already on record at 43.02 ms median and 49.10 p99 (`precheck.txt` part 1), so the figure
+    ../23/spec.md:766 [tok=['100'] ph=[]] merged adapter, nothing about contention with other work on the card, and nothing about whether 100 ms is the
+    ../23/spec.md:779 [tok=['100', '81', '100'] ph=['81 to 100']]    tuning list. `port.check_seeds` refuses above 100 and would let 81 to 100 through, so it cannot stand in
+    ../23/spec.md:780 [tok=[] ph=['selection']]    for the tuning guard: a tuning number that quietly used a selection seed would make the choice between a
+    ../23/spec.md:782 [tok=['81', '100'] ph=['selection', '81 to 100']] 3. **Prints the sorted seed set for each role** -- tuning 1 to 70, held out 71 to 80, selection 81 to 100 --
+    ../23/spec.md:786 [tok=['100', '100'] ph=[]]    covers the data and not only the simulations. `rows.txt` part 0 already does this: min 1, max 100, 100
+    ../23/spec.md:789 [tok=['81'] ph=[]]    `rows.txt` part 5 shows both guards firing -- `seeds_tuning` on 81 and `port.check_seeds` on 101 -- and
+    ../23/spec.md:797 [tok=[] ph=['selection']] **The one place the selection half is read before any score exists** is the class-share baseline of the
+    ../23/spec.md:800 [tok=['81', '100'] ph=['81 to 100']] at seeds 81 to 100 -- is read against a full list and not an implicit one. Nothing else of this step reads
+    ../23/spec.md:833 [tok=['81', '100'] ph=['81 to 100']]    below it. **What that level is on seeds 81 to 100 is an output of `eval.py` and not a known constant**:
+    ../23/spec.md:835 [tok=['100'] ph=[]]    step 4's **arithmetic identity over the 4000 runs of seeds 1 to 100**, the weight having been solved for
+    ../23/spec.md:836 [tok=['100'] ph=[]]    it, and it does not hold on a subset. `parity.txt` shows how far apart the arms sit per seed -- seed 100:
+    ../23/spec.md:839 [tok=['95'] ph=[]] 4. **The frontier gain's 95 % interval contains 0 for every candidate at 20 seeds**, i.e. `word` returns
+    ../23/spec.md:841 [tok=['81', '100'] ph=['81 to 100']] 5. **Agreement with the labels in the 0.55 to 0.70 band** for a tuned candidate on seeds 81 to 100. The band
+    ../23/spec.md:872 [tok=['90'] ph=[]]    (`../22/stability.txt`), the 0.90 bar fixed in advance was never reached, and J = 8 was taken by the rule's
+    ../23/spec.md:904 [tok=['100'] ph=[]] 9. **The weight itself is uncertain.** Jackknife standard error 1.685586 ms per poll over 100 seeds, with the
+    ../23/spec.md:905 [tok=['99'] ph=[]]    per-stream weights ranging 99.899 to 107.251 (`../22/weight.txt`). The selecting statistic moves with it,
+    ../23/spec.md:911 [tok=[] ph=['selection']]     deliberate (a sweep would be a second selection) and its cost is exactly this.
+    ../23/spec.md:924 [tok=[] ph=['selection']]     its selection is `buckets[T_BINS[-1]] + buckets[SD0_LABELLED]` (`:462`), so the 538 rows it measured are
+    ../23/spec.md:952 [tok=['100'] ph=[]]     `../22/specnums.txt`, seeds 1 to 100: 1246 rows have a runner-up that ties the third arm in mean, "the
+    ../23/spec.md:954 [tok=[] ph=['selection']]     (`../22/label.py:311`), and taking the other arm of the tie moves **2** of them across the selection.
+    ../23/spec.md:968 [tok=['86'] ph=[]] | keep the legend line | no measurable time cost (`precheck.txt` part 3); it is what makes `o1`/`p1` resolvable | drop i
+    ../23/spec.md:971 [tok=['95'] ph=[]] | batch 16 for tuning | 0.0279 s/row against 0.0326 at batch 8, 24.95 GB of 47.27 (`precheck.txt` part 4) | batch 8, lea
+    ../23/spec.md:974 [tok=['81', '100'] ph=['81 to 100']] | carve seeds 71 to 80 out of the tuning half | gives the epoch rule something to read that is not seeds 81 to 100 | tun
+    ../23/spec.md:975 [tok=[] ph=['selection']] | one tuning seed, 20261124 | a seed sweep is a second selection and would spend the held-out slice on it | three seeds 
+    ../23/spec.md:981 [tok=['81', '100'] ph=['selection', 'selection']] | `latency.py` times the seeds-1-to-80 median prompt | keeps the promise about the selection half, and 478 tokens is alr
+    ../23/spec.md:983 [tok=['81', '100'] ph=[]] | the 0.5273 baseline by subtracting two generated files, not by a new count | prediction 5 needs a bar fixed before any
+    ../23/spec.md:1008 [tok=['95'] ph=[]] | `ana.py` | the selecting score, the frontier gain with its 95 % interval, the a-against-b decision against the 297 ms 
+    ../23/spec.md:1009 [tok=['81', '100'] ph=['81 to 100']] | `agree.py` | the label-agreement numbers on seeds 81 to 100, three model deciders, against the pre-registered 0.5273 b
+    ../23/spec.md:1010 [tok=['100'] ph=[]] | `latency.py` | the pass time with the chosen candidate's kept epoch attached, beside 100 ms | `hpc-debian` | `latency.
+    ../23/spec.md:1026 [tok=['81', '100'] ph=['81 to 100']] ## Amendments after the freeze, written before any score on seeds 81 to 100 exists (2026-11-24)
+    ../23/spec.md:1031 [tok=[] ph=['selection']] real mode, so that a reader can tell what was decided with no selection-half score in hand. No setting of
+    ../23/spec.md:1036 [tok=['81'] ph=[]] decision, and the fix placed it in `eval.py`'s first part on the first simulated seed, which is seed 81 in
+    ../23/spec.md:1037 [tok=['81'] ph=[]] a real run. That would have rendered one label row of seed 81 before any score, against the sentence above
+    ../23/spec.md:1038 [tok=[] ph=['selection']] ("The one place the selection half is read before any score exists is the class-share baseline"). The seam
+    ../23/spec.md:1042 [tok=['81'] ph=[]] **A2. One thing did touch seed 81 during the build, and it is named here.** A scratch probe that is not
+    ../23/spec.md:1043 [tok=['81'] ph=[]] in the repository called `label.run_dict(0.2, 81)` once to time the call. That builds the outage timeline
+    ../23/spec.md:1044 [tok=['81'] ph=[]] and the record schedule of seed 81. No simulation was run on it, no model was read out, and no label row
+    ../23/spec.md:1045 [tok=[] ph=['selection']] was opened (`RUN.txt` section 18). The list of what read the selection half before any score is therefore
+    ../23/spec.md:1053 [tok=[] ph=['selection']] repair, and this is the last moment it can be made without a selection-half score in hand. The rule, fixed
+    ../23/spec.md:1084 [tok=['84'] ph=[]] prints. The three epochs are visibly different deciders (their answers over the 1425 rows are 28/84/1313,
+    ../23/spec.md:1095 [tok=['84'] ph=[]] 84.7 min. The four-worker gate passed on the dry run (2304 logits bit-identical to the single-process
+    ../23/spec.md:1100 [tok=['81', '100'] ph=['81 to 100']] after the second tuning run and before any score on seeds 81 to 100 (`RUN.txt` sections 20 and 21). The two
+    ../23/spec.md:1123 [tok=[] ph=['selection']] **A8. What A1 and A2 do not cover.** Both are about reads of the selection half *before any score*.
+    ../23/spec.md:1125 [tok=['81'] ph=[]] seed, which is 81 in a real run: it builds that seed's run dict once more and starts one simulation that
+  ./RUN.txt                    matching_lines=  33  token_hits=  40  phrase_hits=  10
+    ./RUN.txt:30 [tok=[] ph=['selection']]   label seed above 80 is read anywhere, so nothing here touches the selection half
+    ./RUN.txt:31 [tok=['81', '100'] ph=['81 to 100']]   (81 to 100) or the measuring half (121 to 160).  The time-fair comparison of the three
+    ./RUN.txt:49 [tok=['96'] ph=[]]   labelsig.py    1069  445762a24c96a71d    labelsig.txt      366
+    ./RUN.txt:74 [tok=['82'] ph=[]]     vector length 261, name list sha256 16c2aa02c5738abcb819fa4503067eeaff3a82a3a0fa2020
+    ./RUN.txt:80 [tok=['91', '92'] ph=[]]     records, 0 texts with two vectors and 0 vectors with two texts (features.txt:91-92).
+    ./RUN.txt:117 [tok=['81', '82', '91', '92'] ph=[]]     (charges.txt:81-82, :91-92).  The earlier precheck had to leave 3.582 % of p 0.4's
+    ./RUN.txt:120 [tok=['87', '90'] ph=[]]     0.809 % (charges.txt:77-80, :87-90).
+    ./RUN.txt:162 [tok=['83', '85'] ph=[]]     at p 0.4, per-run SE 0.8402 and 1.5872 over 20 runs (precheck.txt:83-85).  Within each
+    ./RUN.txt:165 [tok=['97'] ph=[]]     the interval (precheck.txt:97-103).
+    ./RUN.txt:199 [tok=['81'] ph=[]]     cheapest on 0.3425 of them (p 0.2), and those rows' realised y is -81.72 score ms
+    ./RUN.txt:200 [tok=['82'] ph=[]]     against 0.00 over all rows, per-run difference -82.45 +- 9.57; at p 0.4 -117.39 +- 9.71
+    ./RUN.txt:202 [tok=['81', '88'] ph=[]]     rank the ridge gave the logged interval, y goes -81.72 / -6.17 / +88.47 at p 0.2 and
+    ./RUN.txt:203 [tok=['99'] ph=[]]     -118.56 / -10.99 / +126.46 at p 0.4, monotone in the rank (precheck.txt:254-260).
+    ./RUN.txt:215 [tok=['82', '89'] ph=[]]     p 0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283, 6288 bytes of
+    ./RUN.txt:217 [tok=['100'] ph=[]]     TIME, beside the 100 ms tick, no verdict (precheck.txt:413-416, the archived run):
+    ./RUN.txt:218 [tok=['99'] ph=[]]       observe.observation  median 0.0184 ms  p99 0.0260 ms  max 0.0752 ms
+    ./RUN.txt:219 [tok=['99'] ph=[]]       features.vector      median 0.0713 ms  p99 0.0819 ms  max 0.1089 ms
+    ./RUN.txt:220 [tok=['99'] ph=[]]       3 values + argmin    median 0.0064 ms  p99 0.0118 ms  max 0.0995 ms
+    ./RUN.txt:281 [tok=['82'] ph=[]]                                                                      SE 0.0104, t 2.82 on
+    ./RUN.txt:287 [tok=['94'] ph=[]]                                                                      SE 0.0109, t 3.94 on
+    ./RUN.txt:341 [tok=['81', '100'] ph=['81 to 100']]     not read.  Seeds 81 to 100 are not read.  The penalty is fixed at 10.0 and not tuned.
+    ./RUN.txt:370 [tok=['100'] ph=[]]                    and calls port.check_seeds, which refuses one above 100; both are
+    ./RUN.txt:384 [tok=[] ph=['selection']]                    is parsed; a selection-half row is parsed and thrown away, and nothing
+    ./RUN.txt:387 [tok=['81', '100'] ph=['81 to 100', 'selection']]     So seeds 81 to 100 (selection) and 121 to 160 (measuring) are opened, counted,
+    ./RUN.txt:426 [tok=['81'] ph=[]]      with three new mutation rows (21, 0, 20.9 / 81, 0, 1.5).
+    ./RUN.txt:455 [tok=['82', '94'] ph=[]]      t 2.82 (8 of 10 seeds positive) and t 3.94 (9 of 10).
+    ./RUN.txt:464 [tok=[] ph=['selection']]      computed from a selection-half row and the committed digest needs every byte, so the
+    ./RUN.txt:535 [tok=[] ph=['selection']]      row happens to have four further decisions, or the selection is on what the drawn
+    ./RUN.txt:564 [tok=['93'] ph=[]]      synthetic harness: rho_k swung to -93.9 and -59.9 score ms/s and the weight norm to
+    ./RUN.txt:586 [tok=['82'] ph=[]]      49.5153, i.e. 3.57 and 4.82 higher, more than four of the quoted per-run standard
+    ./RUN.txt:590 [tok=[] ph=['selection']]   9. The window does not make a kept row's COST arm-independent, only the row selection.
+    ./RUN.txt:594 [tok=[] ph=['selection']]      selection, the cause is named with those counts, rows24.py prints the 0/1/2
+    ./RUN.txt:646 [tok=['91', '92'] ph=[]]      exist.  Confirmed in the source: ../22/observe.py:91-92 sets AGE_DECIMALS = 1 and
+  ./charges.txt                matching_lines=  18  token_hits=  25  phrase_hits=   0
+    ./charges.txt:9 [tok=['100'] ph=[]]                  port.check_seeds refuses one above 100; both run inside
+    ./charges.txt:77 [tok=['99'] ph=[]]   owned periods                   190421995.0 ms   99.816 %
+    ./charges.txt:79 [tok=['100'] ph=[]]   total cost                      190772429.4 ms  100.000 %
+    ./charges.txt:87 [tok=['99'] ph=[]]   owned periods                   239158386.8 ms   99.772 %
+    ./charges.txt:89 [tok=['100'] ph=[]]   total cost                      239705826.4 ms  100.000 %
+    ./charges.txt:182 [tok=['91'] ph=[]]   0.2  answered     timed_out        3.695    91           5.733             -2.038
+    ./charges.txt:189 [tok=['92'] ph=[]]   0.2  timed_out    timed_out        6.000    92           6.134             -0.134
+    ./charges.txt:202 [tok=['100'] ph=[]]   0.4  timed_out    timed_out       10.043   100          10.058             -0.015
+    ./charges.txt:274 [tok=['96', '88'] ph=[]]   0.2  to2           gap/caused      96.070    88.010   107.336 10.043  6.000   184
+    ./charges.txt:275 [tok=['96', '86'] ph=[]]   0.2  to2           gap/start       96.070    86.069   103.367 10.043  6.000   191
+    ./charges.txt:276 [tok=['97'] ph=[]]   0.2  to2           period         110.537    97.925   117.158 10.043  6.000   184
+    ./charges.txt:277 [tok=['99'] ph=[]]   0.2  to3           gap/caused     110.911   137.357    99.790 6.000 10.043    53
+    ./charges.txt:278 [tok=['98'] ph=[]]   0.2  to3           gap/start      110.911   131.000    98.446 6.000 10.043    55
+    ./charges.txt:289 [tok=['91', '81', '96'] ph=[]]   0.4  to2           gap/caused      91.883    81.885    96.679 10.043  6.000   326
+    ./charges.txt:290 [tok=['91', '93'] ph=[]]   0.4  to2           gap/start       91.112    80.048    93.474 10.043  6.000   340
+    ./charges.txt:291 [tok=['93'] ph=[]]   0.4  to2           period         109.358    93.310   105.378 3.695  6.000   324
+    ./charges.txt:367 [tok=['100', '100'] ph=[]]   chain/one instant twice    FIRES: two decisions at one instant: h0->h1 has a decision at or before its predecessor's o
+    ./charges.txt:379 [tok=['100', '100'] ph=[]]   port.check_seeds > 100     FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+  ./features.txt               matching_lines=  10  token_hits=  11  phrase_hits=   1
+    ./features.txt:11 [tok=[] ph=['selection']]                  its seed is above 80 -- so a selection-half row is parsed and
+    ./features.txt:18 [tok=['100'] ph=[]]                  port.check_seeds refuses anything above 100; part 6 shows all
+    ./features.txt:21 [tok=['82'] ph=[]] name list        sha256 16c2aa02c5738abcb819fa4503067eeaff3a82a3a0fa2020cca6ae29d79aafce
+    ./features.txt:33 [tok=['95'] ph=[]]                  fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67 == ../22/labels.sha256
+    ./features.txt:110 [tok=['100'] ph=[]]   res_poll_age_s                      0.000        2.100        3 
+    ./features.txt:291 [tok=['100', '100'] ph=[]]   x1_age_s                            0.000       13.100      100 
+    ./features.txt:523 [tok=['99'] ph=[]]   NEARLY constant: a cell whose commonest value covers at least 99 % of the
+    ./features.txt:575 [tok=['81'] ph=[]]   label seeds > 80         FIRES: mutated: a label seed read here is a whole number 1 to 80, the tuning half; refused [8
+    ./features.txt:579 [tok=['100', '100'] ph=[]]   port.check_seeds > 100   FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on
+    ./features.txt:580 [tok=['95'] ph=[]]   label file digest        FIRES: labels_p0.2.jsonl.gz has sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001
+  ./labelsig.txt               matching_lines=  21  token_hits=  27  phrase_hits=   6
+    ./labelsig.txt:16 [tok=['95'] ph=[]] sha256           fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67
+    ./labelsig.txt:20 [tok=[] ph=['selection']]                  row if its seed is above 80, so nothing of the selection half
+    ./labelsig.txt:21 [tok=['81', '100'] ph=['81 to 100']]                  (81 to 100) is counted, rendered, fitted or summarised anywhere
+    ./labelsig.txt:26 [tok=['100'] ph=[]]                  port.check_seeds refuses one above 100; part 6 shows both firing
+    ./labelsig.txt:63 [tok=['89', '91'] ph=[]]   b                    89         91        388   10.043 s 0.6831
+    ./labelsig.txt:120 [tok=['82'] ph=[]]     with SE 0.0104, t 2.82 on 9 degrees of freedom, and 8 of the 10 seeds
+    ./labelsig.txt:130 [tok=['94'] ph=[]]     with SE 0.0109, t 3.94 on 9 degrees of freedom, and 9 of the 10 seeds
+    ./labelsig.txt:221 [tok=['100'] ph=[]]     to3              100     0.3400     0.1800     0.4800     10.043
+    ./labelsig.txt:236 [tok=['90'] ph=[]]     3.695                90         63        188        341
+    ./labelsig.txt:257 [tok=['89'] ph=[]]     3.695                26         13         50         89
+    ./labelsig.txt:258 [tok=['91'] ph=[]]     6.000                17         14         60         91
+    ./labelsig.txt:264 [tok=['89', '89'] ph=[]]     3.695                 0          0         89         89
+    ./labelsig.txt:265 [tok=['91', '91'] ph=[]]     6.000                 0          0         91         91
+    ./labelsig.txt:271 [tok=['89', '89'] ph=[]]     3.695                 0          0         89         89
+    ./labelsig.txt:272 [tok=['91', '91'] ph=[]]     6.000                 0          0         91         91
+    ./labelsig.txt:297 [tok=['95'] ph=[]]   label file digest          FIRES: labels_p0.2.jsonl.gz has sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a512490
+    ./labelsig.txt:298 [tok=['81'] ph=[]]   label seeds > 80           FIRES: mutated: a label seed read here is a whole number 1 to 80, the tuning half; refused 
+    ./labelsig.txt:299 [tok=['100', '100'] ph=[]]   port.check_seeds > 100     FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ./labelsig.txt:302 [tok=['81'] ph=['selection']]   seed outside 1 to 80       FIRES: a selection-half row: 1 seed(s) outside 1 to 80, e.g. [81]
+    ./labelsig.txt:352 [tok=[] ph=['selection']]   selection seeds, which this file does not read.
+    ./labelsig.txt:361 [tok=['81', '100'] ph=['81 to 100', 'selection']]   81 to 100, which are the selection half.
+  ./precheck.txt               matching_lines=  22  token_hits=  33  phrase_hits=   0
+    ./precheck.txt:8 [tok=['100'] ph=[]]                  port.check_seeds refuses one above 100; part 6 shows both firing
+    ./precheck.txt:15 [tok=['82'] ph=[]]                   name list sha256 16c2aa02c5738abcb819fa4503067eeaff3a82a3a0fa2020cca6ae29d79aafce
+    ./precheck.txt:57 [tok=['90'] ph=[]]   0.2   to1                 59          90       0     184       0       14
+    ./precheck.txt:58 [tok=['98'] ph=[]]   0.2   to2                 33          98       0       0      43       10
+    ./precheck.txt:60 [tok=['89'] ph=[]]   0.4   ans_empty          696         129     373       0       0       89
+    ./precheck.txt:210 [tok=['92', '92', '87'] ph=[]]   p 0.2   10.043 s  o2_hi -205.3, o1_hi +174.5, x8_age_s -141.5, o2_p1_hi -92.5, o2_p1_notified_max -92.5, x2_waited_s +
+    ./precheck.txt:212 [tok=['92', '90'] ph=[]]   p 0.4    6.000 s  o2_hi -140.8, consecutive_poll_timeouts +103.4, o1_p1_present +92.2, polled_peer_present -90.0, peer
+    ./precheck.txt:238 [tok=['81', '82'] ph=[]]   0.2            1046  0.3425           -81.72         0.00       -82.45    9.57
+    ./precheck.txt:255 [tok=['81', '82'] ph=[]]   0.2   0 (the predicted cheapest)      1046   -81.72                -82.45  9.57
+    ./precheck.txt:257 [tok=['88', '91'] ph=[]]   0.2   2 (the predicted dearest)       1034    88.47                 91.57 12.61
+    ./precheck.txt:259 [tok=['99', '94'] ph=[]]   0.4   1 (the middle)                   994   -10.99                -10.34 12.94
+    ./precheck.txt:260 [tok=['92'] ph=[]]   0.4   2 (the predicted dearest)       1039   126.46                127.92 14.61
+    ./precheck.txt:327 [tok=['100', '100'] ph=[]]   port.check_seeds > 100     FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything 
+    ./precheck.txt:360 [tok=['82', '89'] ph=[]]   process 1    p0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283 6288
+    ./precheck.txt:362 [tok=['82', '89'] ph=[]]   process 2    p0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283 6288
+    ./precheck.txt:365 [tok=['82', '89'] ph=[]]   this process p0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283 6288
+    ./precheck.txt:402 [tok=['99'] ph=[]] decisions of the logs, named below.  Medians and p99 in ms, printed beside the
+    ./precheck.txt:403 [tok=['100'] ph=[]] 100 ms tick the node's synchronous round runs on.  NO VERDICT: this is
+    ./precheck.txt:413 [tok=['99'] ph=[]]   part                     calls  median ms     p99 ms     max ms   the tick
+    ./precheck.txt:414 [tok=['100'] ph=[]]   observe.observation       1200     0.0184     0.0260     0.0752      100.0
+    ./precheck.txt:415 [tok=['100'] ph=[]]   features.vector           1200     0.0713     0.0819     0.1089      100.0
+    ./precheck.txt:416 [tok=['100'] ph=[]]   3 values + argmin         1200     0.0064     0.0118     0.0995      100.0
+  ./spec.md                    matching_lines=  64  token_hits=  77  phrase_hits=  37
+    ./spec.md:60 [tok=['81', '100'] ph=['81 to 100']] 4. **M's agreement with ticket 09's labels on seeds 81 to 100**, beside the baseline pre-registered below, with
+    ./spec.md:62 [tok=['100'] ph=[]] 5. **What one decision costs in time on a CPU**, in three parts, beside 100 ms, with no verdict (ticket
+    ./spec.md:64 [tok=['100', '81', '100'] ph=['81 to 100']] 6. **That no seed above 100 is read and that seeds 81 to 100 reach no setting**, by what every script prints and
+    ./spec.md:80 [tok=[] ph=['selection']]    policy's own continuations, which is what the penalty-selection criterion of section 5 reads and the reason
+    ./spec.md:91 [tok=[] ph=['selection']] 7. **Nothing that corrects the selection bias of choosing one of two candidates on the same 20 seeds**, nor the
+    ./spec.md:183 [tok=['82'] ph=[]] もの): 261 cells, name list sha256 `16c2aa02c5738abcb819fa4503067eeaff3a82a3a0fa2020cca6ae29d79aafce`
+    ./spec.md:239 [tok=[] ph=['selection']] of the row **selection**, which reads the decision's own instant alone; it is not arm-independence of the cost
+    ./spec.md:249 [tok=['100'] ph=[]]   the poll's own age, which is at most **2.100 s** over the 6423 logged decisions (`features.txt`,
+    ./spec.md:250 [tok=['100'] ph=[]]   `res_poll_age_s` max 2.100). A period's length is the applied interval less the time this resolution had
+    ./spec.md:251 [tok=['100'] ph=[]]   already taken, plus the next resolution's lag (`charges.txt` part 5), so it is at most 11.0473 + 2.100 =
+    ./spec.md:332 [tok=['82'] ph=[]] p 0.4**, which is 3.57 and 4.82 above the every-owned-period figures, i.e. more than four of those per-run
+    ./spec.md:481 [tok=['89'] ph=[]] `to1`, 10 `to2`, 3 `to3` at p 0.2, and 89 / 6 / 33 / 19 / 13 at p 0.4 (`precheck.txt` part 1, the `last` column).
+    ./spec.md:735 [tok=['92'] ph=[]]    `i, ..., i+n-1` each own a period and carry a `c` and a `tau`. That window is 50 s of the fit window's 92 s,
+    ./spec.md:832 [tok=['100'] ph=[]] cell as `p 0.2, w0, the s6 8-12 s outage shape, seeds 1 to 100, nrep 40`. So a p 0.4 row's poll is priced at the
+    ./spec.md:990 [tok=[] ph=['selection']] ## 9. The two candidates, and reproducibility before any selection score
+    ./spec.md:997 [tok=[] ph=['selection']] Both use the same window (section 2), the same vector, the same equations, the same grid, the same selection
+    ./spec.md:1008 [tok=[] ph=['selection']] **Reproducibility, before any selection score** (the design's item 9, and the failure of ticket 10 it answers):
+    ./spec.md:1030 [tok=['81', '100'] ph=['81 to 100']] ## 10. The evaluation on seeds 81 to 100
+    ./spec.md:1048 [tok=['81', '100'] ph=['81 to 100']] **The streams.** 20 seeds (81 to 100) x 40 replicate streams = **800 runs per decider**, 4800 simulations in all,
+    ./spec.md:1069 [tok=[] ph=['selection', 'selection']] Those are training-seed numbers and the selection rule is mechanical, so that is a weaker leak than a selection
+    ./spec.md:1078 [tok=['95'] ph=[]] 2. **The reported frontier gain**, with a 95 % interval, reusing `../20/predict.py`'s `interp`, `gain`,
+    ./spec.md:1092 [tok=['85', '87'] ph=[]] midpoint **176.220 polls per run** of the two outer arms' step-4 poll counts = 297.0 ms (`../23/ana.py:85-87`,
+    ./spec.md:1098 [tok=['95'] ph=[]] - `|gap| >= 297.0 ms` and the gap lies inside the paired bootstrap's 95 % interval -> **SEPARATED, NOT
+    ./spec.md:1103 [tok=['95'] ph=[]] and not as the rule: the paired bootstrap's 95 % percentile interval of `score(a) - score(b)` over the same 20
+    ./spec.md:1125 [tok=['82', '83'] ph=[]] **seeds 1 and 2, streams 0 and 1** -- ticket 10's own `DRY_SEEDS` and `DRY_REPS` (`../23/eval.py:82-83`), which
+    ./spec.md:1207 [tok=['81', '100'] ph=['81 to 100']] rows of seeds 81 to 100 of the main cell: 3203 rows, of which **2841 carry a label**, whose arm shares are 640 /
+    ./spec.md:1229 [tok=['81', '100'] ph=[]] against `../22/labels.sha256`, parses each line, keeps the rows with `81 <= seed <= 100`, and passes that seed
+    ./spec.md:1230 [tok=['81', '100'] ph=['81 to 100']] list through `port.check_seeds` and through its own guard refusing anything outside 81 to 100. **Threading a
+    ./spec.md:1238 [tok=['99', '100'] ph=[]] written -- times the three parts separately and prints medians, p99 and max **beside 100 ms with no verdict**:
+    ./spec.md:1241 [tok=['99'] ph=[]] coefficient set -- medians 0.0184, 0.0713 and 0.0064 ms, p99 0.0260, 0.0819 and 0.0118 -- so the figure this
+    ./spec.md:1243 [tok=[] ph=['selection']] chosen one** -- worker's choice, because at these costs it removes a dependence of the timing on the selection;
+    ./spec.md:1250 [tok=['81', '100'] ph=['81 to 100']] seeds 81 to 100 before M's scores exist, **built by a script and not from memory**, because ticket 10 miscounted
+    ./spec.md:1252 [tok=['81', '100'] ph=[]] finding 4 found three, the omission being `parity.py`'s stream-0 runs of seeds 81 and 100. How it builds the
+    ./spec.md:1256 [tok=['81', '100'] ph=['81 to 100']]    distinct seeds in 81 to 100, the row count and the deciders those rows name;
+    ./spec.md:1257 [tok=['81', '100'] ph=['81 to 100']] 2. for every `*.txt` and `*.md` of those directories, it prints every line matching a decimal token in 81 to 100
+    ./spec.md:1258 [tok=[] ph=['selection']]    bounded by non-digits, with its line number, and every line matching the role phrases `selection`,
+    ./spec.md:1259 [tok=['81', '100', '81', '100'] ph=['81 to 100', '81-100']]    `81 to 100` and `81-100`;
+    ./spec.md:1262 [tok=['81', '100'] ph=['selection', '81 to 100']]    including of this file**: `spec.md` is a `*.md` of this directory and carries `selection` and `81 to 100`
+    ./spec.md:1264 [tok=['100'] ph=[]]    `precheck.txt`, 24 in `labelsig.txt` and 27 in `RUN.txt` (row-count columns, "refuses one above 100", "the
+    ./spec.md:1265 [tok=['100'] ph=[]]    100 ms tick" and the like), with `spec.md` itself at 58. An assertion that stops deliverable 1 on the
+    ./spec.md:1271 [tok=['81', '100'] ph=[]]    single-stream runs of seeds 81 and 100, and `../23/agree.txt`'s labelled row count and most-frequent-arm
+    ./spec.md:1282 [tok=['81', '100'] ph=[]] (`決まったこと` 8, seed 81〜100 は、もう 9 つの決め方と用意の段の試しに使われている): `../23/spread.txt`'s four
+    ./spec.md:1288 [tok=['100'] ph=[]] ## 14. The proof that no seed above 100 is read, and that the halves stay apart
+    ./spec.md:1294 [tok=['100'] ph=[]] 2. **Passes every seed list it computes through `port.check_seeds(..., "<script>")`**, which refuses above 100,
+    ./spec.md:1296 [tok=['81', '100'] ph=['81 to 100']]    list is a learning list.** `port.check_seeds` lets 81 to 100 through and therefore cannot stand in for the
+    ./spec.md:1297 [tok=[] ph=['selection']]    learning guard: a number computed from a selection seed would make the choice between a and b circular. This
+    ./spec.md:1298 [tok=['93'] ph=[]]    is ticket 10's two-guard structure (`../23/decider.py:93`'s `check_seeds_tuning`) restated, since that module
+    ./spec.md:1300 [tok=['81', '100'] ph=['selection', '81 to 100']] 3. **Prints the sorted seed set of each role** -- fit 1 to 70, held out 71 to 80, selection 81 to 100 -- and
+    ./spec.md:1364 [tok=['81', '88'] ph=[]]    arm the ridge called cheapest is -81.72 score ms against +88.47 for the rows whose arm it called dearest, a
+    ./spec.md:1374 [tok=['85'] ph=[]]    own prior** and the reason is arithmetic: 297.0 ms is 2.85 polls per run at the weight, the two candidates are
+    ./spec.md:1380 [tok=['81', '100'] ph=['81 to 100']] 5. **Agreement with ticket 09's labels on seeds 81 to 100 lies within 0.03 of the 0.5273 baseline**, i.e. in
+    ./spec.md:1427 [tok=[] ph=['selection']] 6. **The author of this plan knew every earlier score on the selection seeds.** Ticket 10's seven deciders'
+    ./spec.md:1429 [tok=['81', '100'] ph=[]]    seeds 81 and 100 were all on record and were read while this file was written; two of them are quoted in
+    ./spec.md:1431 [tok=[] ph=['selection']]    the comparators of this plan are independent of the selection half.** They are pre-registered, which is a
+    ./spec.md:1545 [tok=['100'] ph=[]] | the period ceiling is 14.0 s | 11.0473 + 2.100 = 13.147 s derived, rounded up to the whole second; observed maxima 13.
+    ./spec.md:1553 [tok=[] ph=['selection']] | `Crit`'s rows are the held-out rows with `10000 <= t_rel_ms <= 60000` | read off the decision's own instant alone, so 
+    ./spec.md:1563 [tok=[] ph=['selection']] | the latency is measured for both candidates | at these costs it removes a dependence of the timing on the selection | 
+    ./spec.md:1623 [tok=[] ph=['selection']] scores, which removes even the opportunity for an agreement number or a timing to reach the selection.
+    ./spec.md:1629 [tok=['81', '100'] ph=['81 to 100']] | 2 | `inventory.py` | what has read seeds 81 to 100 before M's scores exist, built by the script (section 13) | the csv
+    ./spec.md:1630 [tok=['81', '100'] ph=['81 to 100']] | 3 | `eval24.py --control` | the 3200 rows of the three fixed arms and F on seeds 81 to 100, compared with `../23/eval.
+    ./spec.md:1639 [tok=['95'] ph=[]] | 11 | `ana24.py` | the selecting score, the a-against-b rule against the 297.0 ms band with its three verdict words, th
+    ./spec.md:1641 [tok=['81', '100'] ph=['81 to 100']] | 13 | `agree24.py` | the label agreement on seeds 81 to 100 against the pre-registered 0.5273 baseline, no verdict | th
+    ./spec.md:1642 [tok=['100'] ph=[]] | 14 | `latency24.py` | one decision in three parts beside 100 ms, both candidates, no verdict | the coefficient files, 
+    ./spec.md:1741 [tok=[] ph=['selection']] 9. **The window's arm-independence claim is narrowed to the row selection, and the residual it cannot remove is
+
+========================================================================
+3  RECONCILIATION OF PREVIOUS EVALUATION COUNTS (FROM PARSED ARCHIVES)
+========================================================================
+../23/eval.csv: 5600 total rows (7 deciders)
+  no-model deciders ['const3.695', 'const6.000', 'const10.043', 'F', 'untuned']: 4000 rows
+  adapter deciders  ['a', 'b']: 1600 rows
+../23/eval_run1.csv: 5600 total rows (7 deciders)
+../23/spread.txt: 4 adapter rows (2 first run, 2 second run; run2 matches eval.csv)
+  distinct deciders on seeds 81-100: 7 (eval.csv) + 2 (spread.txt run1) = 9
+../23/parity.txt: 8 single-stream run(s) on seeds 81-100: [81, 100]
+../23/agree.txt: 1498/2841 = 0.5273 pre-registered baseline
+from ../23/spec.md A2 (unarchived scratch probe): one timing call to label.run_dict(0.2, 81)
+
+========================================================================
+4  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  port.check_seeds > 100         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  empty csv                      FIRES: /home/lab_shared/wt/semindex-ev24/docs/wayfinder/semindex-stage2/evidence/24/.tmp_inv_empty.csv: empty csv
+  agree baseline parse missing   FIRES: /home/lab_shared/wt/semindex-ev24/docs/wayfinder/semindex-stage2/evidence/24/charges.txt: could not parse baseline line
+
+3 of 3 mutations produced a failure
+
+end of inventory.py

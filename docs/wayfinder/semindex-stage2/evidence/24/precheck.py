@@ -176,7 +176,7 @@ def matched_row(found, pair, per, t0, where):
     return row, record
 
 
-def table_of_run(p, seed):
+def table_of_run(p, seed, max_seed=CH.MAX_LOG_SEED):
     """([row dict, ...], the charged run) for one logged run's owned decision periods.
 
     A row dict carries `vec` (the feature vector at the decision), `arm` (the interval it
@@ -186,7 +186,7 @@ def table_of_run(p, seed):
     pair is reached.  `next_pos` is `pos + 1` and is None on the pair's last OWNED period,
     whose next decision is the pair's last and owns no period of its own.
     """
-    events, t0 = CH.load_run(p, seed)
+    events, t0 = CH.load_run(p, seed, max_seed=max_seed)
     terms = CH.SCORE.terms(events, t0)
     tracks = CH.record_tracks(events, t0)
     run = CH.charge_run(events, t0, terms=terms, tracks=tracks)

@@ -1,0 +1,68 @@
+
+========================================================================
+0  MODE, CODE DIGESTS AND SEED ROLE SEPARATION
+========================================================================
+mode            dry
+deciders        ['const3.695', 'const6.000', 'const10.043', 'F', 'a', 'b']
+seeds           1 to 2 (2 distinct) x 2 stream(s) = 4 runs per decider
+script digests (sha256):
+  eval24.py        1a3f6388592932b6a3ddaa65e7d23bf981f519ea4d8144fb0a478e5d43d1b0f4
+  m24.py           f93641cb4022a21437365f2f019d8c705e2cdffc99ba1654b879a4cdcdb79719
+  features.py      437e840b04d10d6e58ff28513f994cb85c63c135bc0baee2b230592b30e7b80e
+  charges.py       39c9b8669488b5e848e49e97781988f285245ecbe728b1526f70a5e41e8c0c40
+  ../22/port.py    5f74617a04b43d71f2a29153e26251e357cd44436925ecb9fa6b596fc53cca07
+  ../22/label.py   3a7b12bbdd95b1ca2eb83bed835f39b08a53e6ae302f6a776b6db321563c54d0
+  ../22/score.py   24743e3547ed877cec0a35c8925f12f20c2ed6941d4d805268701fbd0e0f3e49
+  ../13/replay.py  f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d
+  combined         e06a1087654f13d21f0b20677fbf784be134fabe2f43474ae81b430bc9197185
+seed guards: port.check_seeds (>100 refused) passed; overlap with 121-160: 0
+model a         coef_a.npy  sha256 bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf
+model b         coef_b.npy  sha256 532a43998fa62d21c03efba90478172f8f009fedd13b460edf3de2cbe805f2cb
+  repeat check a  (p0.2 seed 1 first resched): [1172.615656, 849.984901, 1891.158468] -> 6.000 s
+  repeat check b  (p0.2 seed 1 first resched): [857.063728, 380.882041, 797.278983] -> 6.000 s
+
+========================================================================
+1  SIMULATIONS AND CONTROL GATES
+========================================================================
+  const3.695   runs=   4  mean_score=40313.180  fresh_asserted=0  not_stateful=4
+  const6.000   runs=   4  mean_score=39997.068  fresh_asserted=0  not_stateful=4
+  const10.043  runs=   4  mean_score=40300.821  fresh_asserted=0  not_stateful=4
+  F            runs=   4  mean_score=34572.724  fresh_asserted=4  not_stateful=0
+  a            runs=   4  mean_score=37324.657  fresh_asserted=4  not_stateful=0
+  b            runs=   4  mean_score=35929.531  fresh_asserted=4  not_stateful=0
+DRY CONTROL GATE PASSED: 16 rows match ../23/eval_dry.csv byte for byte (except script_sha)
+
+========================================================================
+2  THREAT 7: MIND-CHANGE COUNTS AND PER-PAIR LAG-DRAW COUNTS
+========================================================================
+  const3.695   mind_changes=     0 /   1122 (0.0000)  lag_draws_total=1304
+    per_pair: h0->h1:168, h1->h0:162, h1->h2:161, h2->h1:162, h2->h3:167, h3->h2:166, h3->h4:159, h4->h3:159
+  const6.000   mind_changes=     0 /    702 (0.0000)  lag_draws_total=827
+    per_pair: h0->h1:106, h1->h0:105, h1->h2:101, h2->h1:102, h2->h3:109, h3->h2:107, h3->h4:98, h4->h3:99
+  const10.043  mind_changes=     0 /    417 (0.0000)  lag_draws_total=491
+    per_pair: h0->h1:62, h1->h0:62, h1->h2:60, h2->h1:62, h2->h3:61, h3->h2:62, h3->h4:62, h4->h3:60
+  F            mind_changes=   381 /    770 (0.4948)  lag_draws_total=1308
+    per_pair: h0->h1:166, h1->h0:143, h1->h2:165, h2->h1:162, h2->h3:171, h3->h2:166, h3->h4:165, h4->h3:170
+  a            mind_changes=   312 /    614 (0.5081)  lag_draws_total=1014
+    per_pair: h0->h1:136, h1->h0:119, h1->h2:121, h2->h1:120, h2->h3:133, h3->h2:123, h3->h4:135, h4->h3:127
+  b            mind_changes=   361 /    640 (0.5641)  lag_draws_total=1093
+    per_pair: h0->h1:138, h1->h0:136, h1->h2:127, h2->h1:141, h2->h3:140, h3->h2:137, h3->h4:129, h4->h3:145
+
+========================================================================
+3  DECIDER ARM COUNTS AND TIES (MODEL DECIDERS)
+========================================================================
+  a    reads=   614  ties=    0 (0.0000)  short=   121 (0.1971)  mid=   287 (0.4674)  long=   206 (0.3355)
+  b    reads=   640  ties=    0 (0.0000)  short=   178 (0.2781)  mid=   286 (0.4469)  long=   176 (0.2750)
+
+========================================================================
+4  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  port.check_seeds > 100             FIRES: mut/101: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  label.run_dict > 100               FIRES: label.run_dict: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [121]
+  FirstCallEmpty: dirty F memory     FIRES: mut/dirty: non-empty memory at first call: 1 entry
+  control gate: 1 poll moved         FIRES: mut/ctrl: mismatch at ('const3.695', 1, 0) col polls: mine '259' != ref '258'
+  choices subset refused             FIRES: mut/choices: choices [3.695, 6.0, 10.043] != union_choices [3.695, 5.5424999999999995, 6.0, 8.313749999999999, 9.0, 10.043]
+
+5 of 5 mutations produced a failure
+
+end of eval24.py
