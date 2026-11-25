@@ -1,0 +1,36 @@
+
+========================================================================
+0  SCOPE, DIGESTS AND DETERMINISTIC CHECKS
+========================================================================
+row set         first 1200 distinct decisions of p 0.2 seeds 1 to 8 in log order
+code digests (sha256):
+  latency24.py   f27fe388268f29582e50904d60227ece38b32d3c7c5c9a331d3f364ce9ad6ed2
+  m24.py         f93641cb4022a21437365f2f019d8c705e2cdffc99ba1654b879a4cdcdb79719
+  features.py    437e840b04d10d6e58ff28513f994cb85c63c135bc0baee2b230592b30e7b80e
+  charges.py     39c9b8669488b5e848e49e97781988f285245ecbe728b1526f70a5e41e8c0c40
+opened seeds    [1, 2, 3, 4, 5, 6, 7, 8], kept 1200 decisions
+model a         coef_a.npy  sha256 bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf
+  repeat check a : [1172.615656, 849.984901, 1891.158468] -> 6.000 s
+model b         coef_b.npy  sha256 532a43998fa62d21c03efba90478172f8f009fedd13b460edf3de2cbe805f2cb
+  repeat check b : [857.063728, 380.882041, 797.278983] -> 6.000 s
+
+========================================================================
+1  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  charges.load_run > 20            FIRES: load_run: an emulator seed read by this workflow is a whole number 1 to 20; refused [21.0]
+  port.check_seeds > 100           FIRES: mut/101: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  repeat check mutated             FIRES: mut/rep: two passes differed: (1172.6156562851847, 849.9849011520631, 1891.1584677250003) against (1173.6156562851847, 849.9849011520631, 1891.1584677250003)
+
+3 of 3 mutations produced a failure
+
+========================================================================
+2  CPU TIMINGS IN THREE PARTS (NO VERDICT)
+========================================================================
+>>> TIMINGS BELOW THIS LINE DO NOT REPRODUCE BYTE FOR BYTE <<<
+  part                         calls  median ms     p99 ms     max ms   the tick
+  observe.observation           1200     0.0176     0.0277     0.0350      100.0
+  features.vector               1200     0.0714     0.0915     0.1523      100.0
+  cand a: 3 values+argmin       1200     0.0056     0.0114     0.0828      100.0
+  cand b: 3 values+argmin       1200     0.0056     0.0120     0.0238      100.0
+
+end of latency24.py

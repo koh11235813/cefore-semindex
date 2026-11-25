@@ -804,3 +804,63 @@ Stage 4 artifact sha256 digests:
   agree24.py          597f41a2f061237afb71a1e30d4c3c53f2c9ef3823ca498e0a2d289d26c34acb
   latency24.py        f27fe388268f29582e50904d60227ece38b32d3c7c5c9a331d3f364ce9ad6ed2
   eval24+m24 combined e06a1087654f13d21f0b20677fbf784be134fabe2f43474ae81b430bc9197185
+
+========================================================================
+9  STAGE 5 SELECTION EVALUATION (SEEDS 81 TO 100) ON LOCAL HOST
+========================================================================
+Commit 2 (pre-selection): 5923c62 (created before any real seed 81..100 run)
+Platform:                 local (/home/lab_shared/cefore-semindex/.venv/bin/python3 -B)
+
+Commands executed (PYTHONPATH=/home/lab_shared/wt/semindex-ev24/src):
+  1. eval24.py > eval24.txt
+     4800 replay runs (6 deciders x 20 seeds 81..100 x 40 streams).
+     CONTROL GATE PASSED: 3200 rows match ../23/eval.csv and eval24_control.csv.
+     5 of 5 mutations fire. combined script_sha = e06a1087654f13d21f0b20677fbf784be134fabe2f43474ae81b430bc9197185.
+  2. ana24.py eval24.csv > ana24.txt (verified cmp byte-identical on rerun)
+     REPRODUCE GATE PASSED; 9 of 9 mutations fire.
+  3. versus24.py eval24.csv > versus24.txt (verified cmp byte-identical on rerun)
+     REPRODUCE GATE PASSED; 3 of 3 mutations fire.
+  4. agree24.py > agree24.txt (verified cmp byte-identical on rerun)
+     5 of 5 mutations fire.
+  5. latency24.py > latency24.txt (verified deterministic prefix above >>> TIMINGS BELOW via cmp)
+     3 of 3 mutations fire.
+
+Key Stage 5 results (seeds 81 to 100):
+  - Mean scores (ms, lower is better):
+      a          35858.943  (polls 140.670, delay 21187.630, ties 0/125336)
+      b          35961.509  (polls 148.390, delay 20485.032, ties 0/131512)
+      F          36150.829  (polls 179.731, delay 17405.586)
+      const6.000 37035.920  (polls 159.536, delay 20396.934)
+      const10.043 39855.665 (polls  96.029, delay 29840.255)
+      const3.695 40811.181  (polls 256.491, delay 14060.180)
+  - Frontier gains (95% CI, dropped=0):
+      F: 0.0631 (4.089 % to 8.574 %, seen)
+      a: 0.0546 (3.165 % to 7.680 %, seen)
+      b: 0.0486 (2.474 % to 7.001 %, seen)
+  - Primary gate a vs b (band = 297.000 ms, non-cancelling = 13.013 ms):
+      score(a) - score(b) = -102.566 ms (95% CI -407.071 to 222.470 ms, contains 0: True)
+      VERDICT: CLOSE  |  CHOSEN CANDIDATE: a
+  - Paired comparisons (versus24.txt):
+      a vs F:          -291.886 ms (-822.101 to  274.164, 0 in: yes, a lower 13/20)
+      b vs F:          -189.320 ms (-595.275 to  241.930, 0 in: yes, b lower 13/20)
+      a vs const6.000: -1176.977 ms (-1761.779 to -588.763, 0 in: no, 15/20)
+      b vs const6.000: -1074.411 ms (-1624.671 to -520.670, 0 in: no, 17/20)
+      a vs L_b:        -1351.607 ms (-1941.338 to -780.824, 0 in: no, 16/20)
+      b vs L_b:        -1249.041 ms (-1637.387 to -880.029, 0 in: no, 20/20)
+    Censored runs: a 1/800 (4 records), b 0/800, F 0/800, const10.043 17/800 (156 records).
+  - Label agreement on seeds 81..100 (labelled=2841, ties=362, always 10.043s baseline 0.5273):
+      a: 1074 / 2841 = 0.378036 (answer shares 0.2411 / 0.4301 / 0.3288)
+      b:  989 / 2841 = 0.348117 (answer shares 0.2932 / 0.4118 / 0.2950)
+  - CPU latency (1200 calls over p0.2 seeds 1..8, tick budget 100.0 ms):
+      observe.observation: median 0.0176 ms, p99 0.0277 ms, max 0.0350 ms
+      features.vector:     median 0.0714 ms, p99 0.0915 ms, max 0.1523 ms
+      cand a matvec+argmin: median 0.0056 ms, p99 0.0114 ms, max 0.0828 ms
+      cand b matvec+argmin: median 0.0056 ms, p99 0.0120 ms, max 0.0238 ms
+
+Stage 5 artifact sha256 digests:
+  eval24.csv     873fc8b9e04f0666932228ed7bb5b46d2b00309ecd19c5cd156f296fb32c1af1
+  eval24.txt     fc18c262e8b986b447cd357486712f4a21685a0ce5a3e79400fba31c2d8911a9
+  ana24.txt      65dd7529c7ebfcf1bdbe0688286ae14c992518c91942bd7be42523e0cf6b3d05
+  versus24.txt   960a9ae56e1a004940963d4af4f16186f7a35c5ff4445ac1d4ba5642a2cd6fa9
+  agree24.txt    f7d203983d27502a1dd40d9be66645422080fa6f446d01b3a3ea1f75c21ef8ea
+  latency24.txt  0ecf7017fa41d7bfa46f780cb74eb99019860c9c4a550d8119ccb16998d030b9

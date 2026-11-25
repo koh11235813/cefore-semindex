@@ -1,0 +1,43 @@
+
+========================================================================
+0  PRE-REGISTERED COMPARISONS AND REPRODUCTION GATE
+========================================================================
+REPRODUCE GATE PASSED: ../23/eval.csv a vs b = (617.840, -58.424 to 1357.299)
+OK: 3200 control rows agree in score_ms with eval.csv
+
+========================================================================
+1  SIX PRE-REGISTERED PAIRED COMPARISONS (+ a AGAINST b)
+========================================================================
+  first    second            diff ms         95 % interval ms   0 in first lower
+  a        b                -102.566   -407.071 to    222.470    yes 11 of 20
+  a        F                -291.886   -822.101 to    274.164    yes 13 of 20
+  b        F                -189.320   -595.275 to    241.930    yes 13 of 20
+  a        const6.000      -1176.977  -1761.779 to   -588.763     no 15 of 20
+  b        const6.000      -1074.411  -1624.671 to   -520.670     no 17 of 20
+  a        L_b             -1351.607  -1941.338 to   -780.824     no 16 of 20
+  b        L_b             -1249.041  -1637.387 to   -880.029     no 20 of 20
+OK: a against b matches ana24.txt
+
+========================================================================
+2  ANSWER ARMS, TIES AND CENSORED RUNS
+========================================================================
+  a    decisions=125336  3.695=0.2090  6.0=0.4800  10.043=0.3110  ties=0 (0.0000)
+  b    decisions=131512  3.695=0.2877  6.0=0.4507  10.043=0.2615  ties=0 (0.0000)
+
+  const3.695   censored_runs=  0 / 800   censored_records=0
+  const6.000   censored_runs=  0 / 800   censored_records=0
+  const10.043  censored_runs= 17 / 800   censored_records=156
+  F            censored_runs=  0 / 800   censored_records=0
+  a            censored_runs=  1 / 800   censored_records=4
+  b            censored_runs=  0 / 800   censored_records=0
+
+========================================================================
+3  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  port.check_seeds > 100           FIRES: mut/101: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  ana24 line moved                 FIRES: mut/ana: point -101.566 != ana24 -102.566
+  reproduce gate line moved        FIRES: forced score mismatch
+
+3 of 3 mutations produced a failure
+
+end of versus24.py
