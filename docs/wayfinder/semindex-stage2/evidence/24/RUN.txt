@@ -495,3 +495,233 @@ log written 2026-11-25 01:37 JST (read from `date`); the four scripts were writt
 between 00:12 and 00:51 and their archives were rewritten by the post-fix run at 01:28
 and 01:29 the same night (the files' own mtimes), on the local machine, with no card and
 no network.
+
+========================================================================
+7. THE PLAN FOR M (spec.md), AND THE TWO REVIEWS OF IT
+========================================================================
+  spec.md was written on 2026-11-25 as the frozen plan for M, before any fit on the
+  training half and before any replay score.  Two independent reviewers then read it:
+  one checked its mathematics (the learner's equations, the penalty criterion, the
+  built-in checks, the policy iteration) with its own synthetic code at this plan's own
+  row and unknown scale; the other checked every number against the repository file the
+  plan names for it, and walked the deliverable order for which gate is reached after
+  which number.  Thirty-six findings came back.  Each was reproduced here before
+  anything was changed: the arithmetic ones against the archives of this directory and
+  of ../22 and ../23, the mathematical ones by an independent synthetic harness written
+  for this review (two-state and ten-state semi-Markov chains in which this plan's own
+  system is exactly correct; 7840 fit rows and 1120 held-out rows, 364 unknowns; no
+  repository file was opened by any of it and no real data was read).  Every finding
+  that reproduced is now part of the plan, in the section that carries the design, and
+  every one that changes what a later script will do is listed again in spec.md's own
+  closing section "Changes to the worker's design made in review" (20 items).
+
+  NOTHING IN THIS DIRECTORY'S FOUR ARCHIVES CHANGED.  No script was written, no fit was
+  run, no simulation was run, no emulator log of a seed above 20 and no label row was
+  opened.  Only spec.md was edited; it is still untracked.
+
+  REPRODUCED, AND THE FIX IS NOW PART OF THE PLAN
+  1. The held-out squared one-step residual cannot select the ridge penalty.  Derived:
+     its expectation carries a double-sampling variance term that depends on the
+     weights, hence on the penalty being scored, so shrinking the weights shrinks the
+     criterion's own noise floor.  Measured over 24 independent draws at this plan's row
+     scale: it picked the grid maximum 1.0 in 23 of 24 draws and the true-value optimum
+     in 1 of 24, while on one draw it fell monotonically across the grid as the fitted
+     Q's error against the exact differential Q rose.  Rao-Blackwellising the next-arm
+     draw does not fix it (23 of 24 still at 1.0).  Replaced by a frozen-tail on-policy
+     criterion whose target is built once at a reference penalty fixed in advance, so
+     the target is the same number at every grid value: it picked a penalty at or below
+     1e-1 in 21 of 24 draws and the true optimum in 11 of 24.  spec.md section 5.
+  2. The criterion's row set must be cut by the decision instant and not by whether a
+     row happens to have four further decisions, or the selection is on what the drawn
+     arms reached, which is the bias section 2 exists to remove.  Fixed at
+     10000 <= t_rel_ms <= 60000, about 46 % of the held-out rows.  Section 5.
+  3. The penalty at which each check of section 4.7 is read was not stated, and the rate
+     comparison is a function of the penalty.  Fixed: the penalty is selected first,
+     Check A runs at every penalty and every iteration, the centring gate and the rate
+     diagnostic run at the selected penalty alone, and no failure may be answered by
+     re-selecting.  Section 4.7.
+  4. The rate comparison with the logged rate was a gate the plan's own arithmetic
+     expected to fire for a legitimate reason (about 0.57 score ms/s against an inferred
+     standard error of about 0.45), and its failure was deferred to the user with
+     rho_hat and the whole fit in hand.  Demoted to a printed diagnostic: the gap, the
+     per-block endpoint values, their sign distribution and the gap's run-clustered
+     standard error.  Section 4.7, Deviations 4.
+  5. Check A is blind to three of the five construction errors it was credited with.
+     Measured: tau in milliseconds (gap 1.9e-09, rho_hat scaled by 1/1000), the ridge
+     applied to the three block intercepts as well (gap -9.3e-10) and a normalisation
+     row e_0 instead of u (gap 1.4e-09) all leave the identity exact against a bar of
+     2.46.  Two further measurements sharpen it: the UNTELESCOPED form of the identity
+     holds for any successor array whatever (a randomly permuted successor gave gap
+     0.0e+00), and the telescoped form catches a flipped successor sign (4.3e+03) and an
+     off-by-one successor (-5.5e+02) but NOT a permutation of the successors inside the
+     fitted set nor a roll by a whole block, because both leave the sum of the successor
+     values unchanged.  Fixed: Check A's reach and its blind spots are stated, its
+     endpoint walk must be re-derived from the chain of owned periods and not from the
+     stored regressor array, and direct assertions on the penalty matrix, the
+     normalisation row, tau's range and the successor key replace the claimed catches.
+     Section 4.7.
+  6. Nothing gated a diverging policy iteration.  Measured on a small-row draw of the
+     synthetic harness: rho_k swung to -93.9 and -59.9 score ms/s and the weight norm to
+     31 times its first-iteration value, over 20 iterations that never settled, while
+     the condition number stayed between 2.0e+05 and 9.1e+06 -- three to five decades
+     under this plan's 1e10 bar -- and the u-row identity held to 1e-10 at every one of
+     them.  So neither of the plan's two safeguards can see it.  Fixed: a rate bound
+     (rho_k > 0 and within 0.25 of the fit rows' own logged rate), a weight-norm bound
+     (10 times the first iteration's) and a cycle test against every earlier policy, all
+     with the existing fallback as the single consequence.  Section 4.6.
+     The 0.25 is tight and was chosen knowing that: on two sound draws of the harness
+     the converged rate sat 0.208 and 0.204 away from the logged rate, so the bound has
+     little headroom and the weight norm is the better-separated of the two (1.1 against
+     31 times).  The reviewer's third proposal, asserting the u-row identity at every
+     iteration, was NOT adopted as a divergence bound: the measurement above shows it
+     holds throughout a divergence, and Check A already covers it as a construction
+     check.
+  7. Check B's standard error was given with two incompatible denominators for candidate
+     b, 140 fit runs against each cell's 70, a factor of sqrt(2) in what was then the
+     gate's whole tolerance.  Fixed at each cell's own 70, which is what section 6's
+     per-cell comparison needs.  Section 4.7, section 6.
+  8. Every rate the plan quoted was over EVERY owned period while the fit rows are the
+     in-window subset.  Recomputed from charges.txt part 6's own in-window rows:
+     43.1390 score ms/s at p 0.2 and 54.3352 at p 0.4, against the quoted 39.5698 and
+     49.5153, i.e. 3.57 and 4.82 higher, more than four of the quoted per-run standard
+     errors.  Both figures are arithmetic on part 6's rounded means and the 28 s tail
+     will move them again, so the plan says that and names rows24.py's own print as the
+     number every later line quotes.  Section 3, section 4.7, section 15.
+  9. The window does not make a kept row's COST arm-independent, only the row selection.
+     charges.txt part 4, counting every send of the pair: 10 owned periods at p 0.2 and
+     5 at p 0.4 hold no send and 9 and 3 hold two, by the send-time provisional timer,
+     which no bound in decision time can reach.  Fixed: the claim is narrowed to the
+     selection, the cause is named with those counts, rows24.py prints the 0/1/2
+     in-window-send counts over the fitted rows by arm and cell, and the plan says what
+     a reader may not conclude until that table is read.  Section 2.
+ 10. Pooling changes what candidate b estimates and not only what its rows cost.
+     Measured: the p 0.4 share of the in-window rows is 2751/5507 = 0.4995, and in the
+     synthetic harness the pooled fit's greedy policy for the scored cell disagreed with
+     the cell-only fit's on 0.69 % of that cell's own fit rows, so the shared map moved
+     and not only its level.  The 788-row two-rate system itself verified sound: both
+     rates recovered (47.5407 and 59.4202 against logged 47.5114 and 59.4354), Check A
+     per cell at -1.4e-09 and 4.7e-10 against bars 2.46 and 3.07.  Fixed: the estimand
+     is stated, the share is printed, and the two candidates' coefficient difference and
+     argmin disagreement are printed before any score.  Section 6, Threats 13.
+ 11. The plan's second reason for the logged next-action rule was wrong.  Measured:
+     max |u . z_i| is 1.11e-16 under the 1/3-average rule and the u-row identity closes
+     to 9.3e-10 against a bar of 2.46, so the general identity holds for that rule too;
+     only the telescoped walk does not.  Fixed: the reason is narrowed to the walk, and
+     the variance cost, which the plan called unmeasured, becomes a required print of
+     both rules' rho_hat, block intercepts and held-out mean residual at the selected
+     penalty -- one extra solve.  Section 4.4.
+ 12. inventory.py's assertion that no file of this directory matches its own two seed
+     tests is false of the repository as it stands.  Measured: the token test fires 6
+     times in charges.txt, 8 in features.txt, 16 in precheck.txt, 24 in labelsig.txt, 27
+     in RUN.txt and 58 in spec.md, and the phrase test fires 26 times in spec.md.  So it
+     would have stopped the first script after the freeze.  Struck; only the printed
+     evidence remains, which is what the section's own closing sentence already said it
+     was.  Section 13.
+ 13. The one convention the plan said no check could tie back to L's code can be tied by
+     reading L's source.  Confirmed at ../23/decider.py:65 (SEND_START = ARMS[1]) and
+     :765 (the send branch returning the per-pair memory's default).  Fixed: m24.py
+     parses that file with ast, no import and no execution, asserts both and prints
+     them, and the plan names what the check cannot cover.  Section 8, Deviations 7.
+ 14. The 3200-row control was reached only after the dry run had printed M's scores and
+     a dry a-against-b verdict.  It needs no coefficient file.  Fixed: it is
+     eval24.py --control, its own mode, and it is step 3 of the deliverable order, ahead
+     of learn24.py.  Section 10, section 19.
+ 15. The two-ceiling argument's stop was the replay's own STOP_AT_MS constant, while
+     charges.txt part 0 carries that bound as the SCORE window of the emulator logs and no
+     file of this directory carries the instant of a run's last decision.  Fixed:
+     rows24.py prints the per-pair last-decision instants, min and max over the pairs and
+     the runs, and the arithmetic is read against them.  Section 2.
+ 16. rho's identification needs the instrument block to have full row rank, which is not
+     implied by u^T P = 0.  Measured: rank(A + lambda P) = 362 of 363 and
+     rank[A + lambda P | t] = 363 at both 1e-4 and 1.0, so it holds generically and is a
+     property of the data.  Fixed: learn24.py prints that rank and the two smallest
+     singular values, and the plan says the printed rank is the evidence.  Section 4.2.
+ 17. The centring gate's in-sample counterpart is identically zero by algebra.
+     Measured: the in-sample mean one-step residual is -1.2e-13 at every grid penalty,
+     by the same u-combination as Check A.  Fixed: the plan says so, and pre-registers
+     what the held-out gate can see (tens of score ms per row) and what it cannot (a
+     rate error of the size the rate diagnostic measures, about 3 score ms per row).
+     Section 4.7.
+ 18. Threats 10's claimed precision difference between M's vector and L's text does not
+     exist.  Confirmed in the source: ../22/observe.py:91-92 sets AGE_DECIMALS = 1 and
+     INTERVAL_DECIMALS = 3, :116 rounds every age inside `observation`, :207-208 round
+     every interval and wait, and :297 renders the wait with the same three decimals --
+     all before any vector and any text exists -- and features.txt part 3 measured 18032
+     distinct texts against 18032 distinct vectors with zero collisions in both
+     directions.  Threat 10 is replaced by the three differences that are real, and
+     section 1 cites the bijection instead of the rounding.  Section 1, Threats 10.
+ 19. Four findings about missing threats and one about a prediction.  Added as Threats
+     17 (the five penalties may be inseparable on the criterion that chose one, which is
+     ../23's amendment A5 for this step), 18 (every interval here is a 20-seed interval,
+     about sqrt(2) wider than ../20's, so a comparison containing 0 is not evidence the
+     deciders are alike) and 19 (the cells M leans on drift through a run and nothing
+     separates reading a state from reading the clock).  Prediction 6 now carries one
+     threshold, changed_k = 0 by evaluation 5, where it carried two that one printed
+     iteration index could satisfy and falsify at once.  Section 15, section 16.
+ 20. Ticket 10's open wound: no rule for a wording-only fix to a committed script whose
+     output is archived.  Written as a rule, following ../23/RUN.txt 27.3: the stale
+     sentence stands, the correction is recorded here, and it is applied the next time
+     that script changes for a functional reason, with the archive re-run and
+     re-digested; a functional fix is never deferred that way.  Section 14.
+ 21. The section 14 edit is now a numbered step of the deliverable order, before
+     rows24.py, which cannot read seed 21 without it; and all four archives of this
+     directory are re-run and cmp'd, not only the two whose scripts are edited, because
+     features.py opens every log through charges.load_run (features.py:679,701) and
+     prints that function's refusal message (features.py:1003-1004).  Section 14,
+     section 19.
+ 22. Smaller arithmetic and attribution corrections, each verified against the file it
+     names: the 2-of-10 count is charges.txt part 7's gap/caused against gap/start and
+     only the 5-of-10 is the decision-time filter's comparison; the near-cancellation's
+     spread is the in-window 5.8 % and not the every-period 4.4 %, with p 0.4's 11.0 %
+     named where candidate b is discussed; the dead list holds 20 o3_* cells per origin
+     and 120 in all, not 9 per origin; the nine deciders of the user's decision 8 are
+     ../23/eval.csv's seven plus ../23/spread.txt's two first-run adapters; the penalty
+     grid brackets precheck.py's 0.00327 per row by about one and a half decades below
+     and two and a half above, not two each way; the row-count extrapolation cites
+     charges.txt part 6 and not precheck.txt part 1; the 0.809 % run is seed 19 at p 0.2
+     (0.604 %, seed 6, at p 0.4); the label-stability 0.7577 is over 1366 NON-TIE
+     decisions of seeds 1 to 10 of the main cell; the pseudocode's closing line names
+     only the converged exit; and the five cells are the two fields ADR 0004 line 5
+     permits as they appear in this data, with the answered case split by whether the
+     reply brought anything new, which ADR 0004 line 20 lists separately.
+
+  NOT A DEFECT, OR NOT ADOPTED AS PROPOSED
+ 23. The reviewer's per-iteration u-row assertion (finding 6 above) was not adopted as a
+     divergence bound, with the measurement that refutes it recorded there.
+ 24. The plan's own mathematics verified sound where it was checked, and that is worth
+     recording because most of it was: the square system is the projected fixed point
+     (LSTD-Q) of the average-cost semi-Markov equation; u . z_i = 0 exactly for the
+     logged successor and to 1.1e-16 for the 1/3-average one; u^T P = 0; the logging
+     policy's rate is recovered (47.5325 fitted against a 47.5114 sample rate and a
+     47.5158 population rate at 7840 rows) and Check A's telescoped identity equals the
+     untelescoped one on a correct build at every grid penalty; the 788-row two-rate
+     system of section 6 is square, nonsingular and recovers both rates; the window's
+     terminal-row guarantee and the two-ceiling argument hold; and the five decisions
+     the second reviewer walked for order found no setting whose value could still be
+     chosen after a number is seen, except the two the fixes above removed.
+
+  WHAT IS STILL NOT MEASURED, AFTER THIS REVIEW
+    Three quantities the fixes above turn into required prints rather than answers: the
+    real size of the endpoint term on real rows, the rate of the one-poll misallocation
+    per arm, and the variance cost of the next-action rule on real data.  Two the plan
+    already named: the outage span in decisions for this arm set (outage.py), and the
+    p 0.4 cell's own poll weight (in no file).  And one the review added: whether the
+    frozen-tail criterion's reference penalty is well chosen, which nothing in this step
+    can test, and which Threats 8 now names.
+
+  the review's synthetic harness was written and run under
+  /tmp/.../scratchpad/t24spec-fix on the local machine, with numpy only, no card and no
+  network; it opened no file of this repository and nothing in the worktree changed but
+  spec.md.  spec.md is 1786 lines; no em dash or horizontal bar
+  (grep -P '[\x{2014}\x{2015}\x{2013}\x{2500}-\x{257F}]' empty) and no scratch path or
+  report name appears in it (grep 'res_[0-9]\|scratchpad\|t24' empty).
+
+log written 2026-11-25 02:55 JST (read from `date`), on the local machine.
+
+  2026-11-26 amendment before freeze (per user choice B): learning (`rows24.py` and
+  `learn24.py`) runs on `hpc-debian` under `/home/yamakawa/Development/semindex-learn`
+  (`host`), using filtered `s11a` seeds 1 to 80 logs pushed by `push_inputs24.sh` and
+  an env-override `STORE` default in `charges.py`. Replay scoring, analysis, label
+  agreement and CPU latency run on `local` reading the committed `coef_a.npy` and
+  `coef_b.npy`. spec.md Names, sections 9, 14 and 19 were updated before any script was
+  written and before any seed above 20 was read.
