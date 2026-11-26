@@ -1,0 +1,44 @@
+
+========================================================================
+0  SCOPE, DIGESTS AND THE FIRST OPENING OF results.json
+========================================================================
+stage           s11a, p 0.2 and 0.4, seeds 1 to 20 (20 runs per cell)
+note            this is the first script in evidence/24 to open results.json
+pairing rule    each link_down paired with the next link_up of the same unordered
+                pair, using t0 + actual_at * 1000 ms; overlapping cuts on one pair
+                are refused rather than resolved
+seeds check     CH.check_log_seeds cap 20, PORT.check_seeds cap 100
+
+code digests (sha256):
+  outage.py      a7257ade1c068e9fc6188701a8ab1b34d3f063615b4de122fb69cc24bff9883d
+  charges.py     39c9b8669488b5e848e49e97781988f285245ecbe728b1526f70a5e41e8c0c40
+
+========================================================================
+1  OUTAGE DURATIONS AND DECISIONS PER OUTAGE (SEEDS 1 TO 20)
+========================================================================
+p 0.2: 202 closed outages (22 unclosed at run end) across 20 runs (404 directed-pair intervals)
+  duration (s)     min 0.575  median 9.626  mean 9.467  max 12.000
+  decisions/pair   min 0  median 1.0  mean 1.168  max 3
+  histogram        0:54 (0.134)  1:233 (0.577)  2:112 (0.277)  3:5 (0.012)
+p 0.4: 393 closed outages (30 unclosed at run end) across 20 runs (786 directed-pair intervals)
+  duration (s)     min 0.036  median 9.819  mean 9.621  max 12.000
+  decisions/pair   min 0  median 1.0  mean 1.155  max 3
+  histogram        0:108 (0.137)  1:455 (0.579)  2:216 (0.275)  3:7 (0.009)
+
+seeds opened: min 1 max 20 count 20, disjoint from 121-160: True
+
+========================================================================
+2  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  seed > 20                      FIRES: outage.load_results: an emulator seed read by this workflow is a whole number 1 to 20; refused [21.0]
+  seed 0                         FIRES: outage.load_results: an emulator seed read by this workflow is a whole number 1 to 20; refused [0.0]
+  port.check_seeds > 100         FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  results not a list             FIRES: results.json is dict, expected list
+  self-loop link pair            FIRES: mutated/self-loop: link event pair [0, 0] does not have 2 distinct nodes
+  link_up without link_down      FIRES: mutated/no-down: link_up without preceding link_down on pair ['h0', 'h1'] at 16.820 s
+  overlapping link_down          FIRES: mutated/overlap: overlapping link_down on pair ['h0', 'h1'] at 10.100 s
+  non-positive duration          FIRES: mutated/zero-dur: non-positive outage duration on pair ['h0', 'h1'] (1795317196336.000 <= 1795317196336.000)
+
+8 of 8 mutations produced a failure
+
+end of outage.py

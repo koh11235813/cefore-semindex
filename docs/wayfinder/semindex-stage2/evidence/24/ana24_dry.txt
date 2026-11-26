@@ -1,0 +1,76 @@
+
+========================================================================
+0  WHAT THIS IS, AND ARCHIVE REPRODUCTION GATE
+========================================================================
+DRY RUN on training seeds 1 and 2 (bootstrap degenerate; band verdict not read).
+REPRODUCE GATE PASSED: reproduced 7 means and 4 gains (+95% CI) from ../23/eval.csv
+
+========================================================================
+1  THE CSV, DIGESTS, GRID AND SEED ROLES
+========================================================================
+rows            24
+columns         decider,seed,stream,n4,c4,lat_ms,censored_ms,polls,delay_ms,score_ms,score_dropped_ms,weight_ms_per_poll,reads,sends,ties,n_short,n_mid,n_long,ord_poll,ord_resched,k,script_sha,model_sha
+deciders        const3.695, const6.000, const10.043, F, a, b
+seed column     min 1 max 2, 2 distinct
+stream column   min 0 max 1, 2 distinct
+script digest   e06a1087654f13d21f0b20677fbf784be134fabe2f43474ae81b430bc9197185
+  const3.695      4 rows, model digest none
+  const6.000      4 rows, model digest none
+  const10.043     4 rows, model digest none
+  F               4 rows, model digest none
+  a               4 rows, model digest bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf
+  b               4 rows, model digest 532a43998fa62d21c03efba90478172f8f009fedd13b460edf3de2cbe805f2cb
+OK: weight, score recomputation, grid, completeness, k=1 and seed roles all pass
+
+========================================================================
+2  THE SELECTING STATISTIC: MEAN SCORE OVER RUNS
+========================================================================
+  decider       mean score ms   mean polls/run   mean delay ms   ties / decisions
+  const3.695        40313.180          256.500       13561.267   --
+  const6.000        39997.068          159.500       23361.862   --
+  const10.043       40300.821           95.750       30314.483   --
+  F                 34572.724          176.500       16164.488   --
+  a                 37324.657          137.500       22983.963   0 / 614
+  b                 35929.531          144.000       20910.912   0 / 640
+
+ranked, lower first: F 34572.7, b 35929.5, a 37324.7, const6.000 39997.1, const10.043 40300.8, const3.695 40313.2
+
+========================================================================
+3  THE REPORTED FRONTIER GAIN, WITH ITS 95 % INTERVAL
+========================================================================
+  s10b3p695      delay  13561.267 ms   polls    513.000/seed ( 256.500/run)   censored 0.0000
+  s10b6p0        delay  23361.862 ms   polls    319.000/seed ( 159.500/run)   censored 0.0000
+  s10b10p043     delay  30314.483 ms   polls    191.500/seed (  95.750/run)   censored 0.0000
+
+  decider           gain  95 % interval           half width   dropped  word
+  F               0.2230    13.306 % to   29.375 %     8.034 %         0  seen
+  a               0.0880     3.016 % to   17.224 %     7.104 %         0  seen
+  b               0.1504    11.412 % to   18.724 %     3.656 %         0  seen
+
+========================================================================
+4  HOW THE CHOICE BETWEEN a AND b IS MADE
+========================================================================
+mean score      a 37324.657 ms, b 35929.531 ms
+gap             1395.126 ms, lower being b
+band            297.000 ms (1.685586 x 176.220 = 297.0340 ms)
+non-cancelling  1.685586 x |137.500 - 144.000| = 10.956 ms
+score(a) - score(b): point 1395.126 ms, 95 % interval -1200.955 to 3991.208 ms, contains 0: True
+VERDICT: SEPARATED, NOT RESOLVED
+CHOSEN CANDIDATE: b
+
+========================================================================
+5  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  port.check_seeds > 100           FIRES: mut/101: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  roles/measuring                  FIRES: mut/121: seed set meets 121-160: [121]
+  weight moved                     FIRES: mut/wt: wrong weight 100.0 against 104.29595912307323
+  score recomputation moved        FIRES: mut/sc: const3.695 seed 1 stream 0 score mismatch
+  complete/missing row             FIRES: mut/comp: complete grid mismatch (23 vs 24)
+  grid/missing pair                FIRES: mut/grid: got 3 of 4 grid pairs
+  row order [lat, n, c, polls]     FIRES: mut/ord: row [1000.0, 240.0, 0.0, 100.0] != [240.0, 0.0, 1000.0, 100.0]
+  scale one stage alone            FIRES: mut/scale: gain moved 0.223022706 -> 0.274676295
+  boot/wrong shape                 FIRES: mut/boot: shape (2000, 2) != (2000, 3)
+
+9 of 9 mutations produced a failure
+
+end of ana24.py

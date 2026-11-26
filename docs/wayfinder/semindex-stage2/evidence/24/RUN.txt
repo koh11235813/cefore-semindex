@@ -1,0 +1,1341 @@
+evidence/24 -- what the s11a logs and ticket 09's labels can carry, before M is planned
+2026-11-25.  Four scripts so far, in the order the later ones depend on the earlier:
+features.py (the numeric form of a decision's input), charges.py (the cost of one
+decision), precheck.py (what the logs can carry) and labelsig.py (whether the labels carry
+learnable signal).  NOTHING HERE IS M, nothing here is a score, and no replay simulation
+and no emulator run happened at any point.
+
+WHAT THIS STEP ESTABLISHES
+  1. A fixed-length numeric form of the one shared writing of a decision's input, proved
+     to carry what the rendered text carries by inverting it and rendering the inverse.
+  2. A per-decision cost whose sum over every period of a run is exactly the scorer's own
+     cost, with the censored records' lower bound placed at a hop and nothing left over.
+  3. That the full input vector explains far more of what follows a decision than the five
+     scalar cells ADR 0004 line 5 permits, on seeds the fit never saw, and HOW MUCH of
+     that is backlog and clock position rather than a verdict on an interval.
+  4. That ticket 09's labels do carry learnable signal above their own class prior, that a
+     closed-form linear fit on the same input reaches it, and that the five scalar cells
+     carry label information whose own size is about a tenth of the full vector's and
+     which never moves a three-arm argmax off 10.043 s -- so an argmax read-out of the
+     cells equals the prior exactly, which is not the same statement as "no signal".
+     Their Brier gain is a twentieth (candidate a) to a tenth (candidate b) of the full
+     vector's.
+  5. That the closed-form fits reproduce bit for bit in a second process, which is the
+     check ticket 10's torch fit could not pass.
+
+WHAT IT DOES NOT ESTABLISH
+  Nothing about M as a decider.  No policy is fitted, no arm is recommended, no replay
+  score of anything is computed, and the per-decision agreement between the emulator and
+  the replay stays failed in evidence/13.  No seed above 20 of the emulator logs and no
+  label seed above 80 is read anywhere, so nothing here touches the selection half
+  (81 to 100) or the measuring half (121 to 160).  The time-fair comparison of the three
+  intervals is a property of the LOGGING POLICY's own continuation; the pooled rates do
+  not identify a best arm and charges.py says why.
+
+NAMES
+  E     = docs/wayfinder/semindex-stage2/evidence/24   (in the worktree)
+  S2    = docs/wayfinder/semindex-stage2
+  W     = /home/lab_shared/wt/semindex-ev24            (the only repository touched)
+  local = PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=W/src \
+            /home/lab_shared/cefore-semindex/.venv/bin/python3 -B
+  store = /home/lab_shared/semindex-eval/s11a/p{0.2,0.4}/{1..20}  (read only)
+  labels= /home/lab_shared/semindex-learn/ev22/labels_p0.2.jsonl.gz (read only)
+
+THE FILES, AS THEY STAND
+  file           lines  sha256 (first 16)   archived output  lines
+  features.py    1051  437e840b04d10d6e    features.txt      617
+  charges.py     1317  5db2778a4dc42a3f    charges.txt       404
+  precheck.py    1333  8c2e3070f184877c    precheck.txt      421
+  labelsig.py    1069  445762a24c96a71d    labelsig.txt      366
+  These are the files AFTER the fixes of section 6; the four scripts were re-run in
+  dependency order (charges, features, precheck, labelsig) and every archived output here
+  is that run's stdout.
+  Every `name.txt` IS `name.py`'s stdout, byte for byte.  Three of the four reproduce
+  byte for byte on a second run; precheck.txt's last part carries timings and is the one
+  exception, named in section 3.
+
+========================================================================
+1. features.py -- THE NUMERIC FORM OF ONE DECISION'S INPUT          11 s
+========================================================================
+  RULE: the vector carries every quantity the rendered text carries and nothing else.
+  The road is observe.from_logged_rows -> observe.observation -> vector, which is the
+  road the text-reading decider's own input takes, so the two see the same information
+  and a difference between the two deciders is a difference of learning and not of input.
+  Written by another agent in this workflow; re-run and checked here, not edited.
+
+  cd W/E && local -B features.py > features.txt
+                               exit 0, 10.5 s, nothing on stderr
+    last lines of the real output (features.txt:583, :616-617):
+      "23 of 23 mutations produced a failure"
+      "no check fired on real input; the failures in part 6 are the mutations"
+      "end of features.py"
+
+  WHAT IT MEANS, in the four numbers a later step leans on:
+    vector length 261, name list sha256 16c2aa02c5738abcb819fa4503067eeaff3a82a3a0fa2020
+    cca6ae29d79aafce (features.txt:20-21).
+    round trip render(unvector(vector(r))) == render(r) on 6423 of 6423 logged records and
+    12868 of 12868 label records, and every decoded record passes observe.py's own schema
+    (features.txt:78-80).
+    collisions both ways: 18032 distinct texts and 18032 distinct vectors over 19291
+    records, 0 texts with two vectors and 0 vectors with two texts (features.txt:91-92).
+    150 of the 261 cells are CONSTANT on this data and each one is named
+    (features.txt:371-521), so a later fit that leans on one is readable as leaning on
+    nothing.  5865 distinct vectors against 5 distinct five-cell states over the same 6423
+    rows (features.txt:539-545).
+
+  WHAT WAS NOT DONE
+    No fit, no target and no claim that these features predict anything: the round trip
+    says the vector carries what the text carries and nothing more.  No timing of `vector`
+    (that is section 3's part 9).  The p 0.4 label cell is not read.  The three state
+    fields earlier evidence recorded as never moving are NEARLY constant here -- in_flight
+    departs from 0 on 2 of 6423 rows and the fetch-timeout cells on 9 -- and are named in
+    features.txt:523-531 rather than dropped.
+
+========================================================================
+2. charges.py -- THE COST OF ONE DECISION                            2 s
+========================================================================
+  RULE: the unit is the DECISION PERIOD, from one state_poll_reschedule decision of a pair
+  to that pair's next one, and cost accrues FORWARD only.  The earlier scratch precheck
+  charged send-to-send, which hands a decision about 2 s that had already passed before it
+  was taken; both rules are computed here off one code path so the difference is a measured
+  number.  Written by another agent in this workflow; re-run and checked here, not edited.
+
+  cd W/E && local -B charges.py > charges.txt
+                               exit 0, 1.7 s, nothing on stderr
+    last lines of the real output (charges.txt:381, :403-404):
+      "15 of 15 mutations produced a failure"
+      "no check fired on real input; the failures in part 8 are the mutations"
+      "end of charges.py"
+
+  WHAT IT MEANS
+    THE IDENTITY CLOSES EXACTLY.  (lat + censored) + W x N x polls equals the sum over
+    every period, owned and head and tail, of waiting ms plus W x N per in-window send:
+    difference 0.0e+00 on 40 of 40 runs, asserted to 1e-6 ms per run before any table
+    (charges.txt:31-71).
+    THE CENSORING RESIDUAL IS GONE.  0.000000 ms over 0 records in both cells, with all
+    120 p 0.4 censored records placed at the hop they never crossed
+    (charges.txt:81-82, :91-92).  The earlier precheck had to leave 3.582 % of p 0.4's
+    cost unplaced.
+    COST NO DECISION OWNS: 0.184 % at p 0.2 and 0.228 % at p 0.4, largest in one run
+    0.809 % (charges.txt:77-80, :87-90).
+    THE SPLIT, which is the finding precheck.py builds on: poll cost per second FALLS with
+    the interval (27.4 / 17.2 / 10.4 score ms/s at p 0.2, in-window periods) and waiting
+    cost per second RISES with it (16.2 / 24.3 / 33.5), and the two nearly cancel, so the
+    three arms sit within 4.4 to 11.0 % of each other pooled (charges.txt:351-355, :223,
+    :238).
+    SO NO ARM'S NAME SURVIVES THE CONVENTIONS.  5 of the 10 (p, cell) combinations keep
+    their dearest and cheapest arm across the two units and 5 do not (charges.txt:300-306,
+    :340-342); the per-seed vote splits 7/6/7 at p 0.2 and 8/5/7 at p 0.4
+    (charges.txt:242-243).
+
+  WHAT WAS NOT DONE
+    No standard error, no bootstrap, no separation test: the per-seed counts count seeds.
+    No replay simulation, so nothing says a charge computed in the emulator transfers to
+    where a score is taken.  No discount anywhere.  A one-send-per-owned-period assertion
+    was in the module's first draft and FIRED on real data (15 owned periods hold none and
+    12 hold two, from the send-time provisional timer); it is a printed table
+    (charges.txt:123-149) and not an assertion.
+
+========================================================================
+3. precheck.py -- WHAT THE LOGS CAN CARRY                            9 s
+========================================================================
+  RULE: this measures and chooses nothing.  One row per owned decision period, the feature
+  vector at its left edge, and four questions about it: how much is there, what did a
+  second cost under the logging policy, how much of what FOLLOWED a decision do the inputs
+  explain on seeds the fit never saw, and does the ORDER of the three intervals read off
+  that.  Leave-seeds-out, five folds of four seeds assigned by seed number alone.
+
+  cd W/E && local -B precheck.py > precheck.txt
+                               exit 0, 8.8 s, nothing on stderr
+    last lines of the real output (precheck.txt:329, :395, :418-421):
+      "17 of 17 mutations produced a failure"
+      "no check fired on real input; the failures in part 6 are the mutations"
+      "  the argmin returned 3 distinct value(s) over the 1200 calls, every one of them"
+      "  inside [3.695, 6.0, 10.043]: True"
+      "end of precheck.py"
+
+  WHAT IT MEANS
+    THE TABLE.  3054 owned rows at p 0.2 and 3049 at p 0.4, of 3214 and 3209 decisions;
+    the 320 left out are the 8 pairs' last decisions of each run, which own no period
+    (precheck.txt:35-37).  Row counts per interval and per cell: precheck.txt:39-48.
+    RHO, the logging policy's own cost per second: 39.5698 score ms/s at p 0.2 and 49.5153
+    at p 0.4, per-run SE 0.8402 and 1.5872 over 20 runs (precheck.txt:83-85).  Within each
+    chosen interval 40.0586 / 38.4132 / 40.1021 and 49.0863 / 46.9753 / 51.2642, which
+    reproduces charges.txt part 6 and which the output states is NOT a causal effect of
+    the interval (precheck.txt:97-103).
+    THE FULL VECTOR EXPLAINS MORE THAN THE FIVE CELLS, AT EVERY HORIZON.  Held-out R
+    squared, paired inside each fold (precheck.txt:149-155), unchanged by the fixes:
+      p 0.2  K 1  0.5008 against 0.2117, paired diff 0.2891 +- 0.0117   > 2 SE
+      p 0.2  K 4  0.3835 against 0.0517, paired diff 0.3317 +- 0.0259   > 2 SE
+      p 0.2  K 8  0.3929 against 0.0138, paired diff 0.3791 +- 0.0277   > 2 SE
+      p 0.4  K 1  0.4717 against 0.1833, paired diff 0.2884 +- 0.0226   > 2 SE
+      p 0.4  K 4  0.3126 against 0.0264, paired diff 0.2862 +- 0.0218   > 2 SE
+      p 0.4  K 8  0.2428 against -0.0116, paired diff 0.2544 +- 0.0327  > 2 SE
+    The (cell, interval) mean predictor sits within 0.0004 of the cell-indicator ridge
+    everywhere, which is the five cells' own ceiling and is the quantity the earlier
+    scratch precheck reported as 0.003 to 0.092 under its own charge rule and horizons.
+    WHAT CARRIES IT, AND WHAT THAT COSTS THE READING.  The largest standardised
+    coefficients are the backlog and the exchange history -- o2_hi, o1_hi, x8_age_s,
+    o1_p1_present, consecutive_poll_timeouts (precheck.txt:208-213) -- and the first three
+    move through a run, so part of the R squared is WHERE IN THE RUN the decision sits.
+    Restricted to read-out rows whose whole K-period continuation exists, the full ridge
+    falls to 0.2388 (p 0.2, K 8) and 0.1261 (p 0.4, K 8) while the five cells go NEGATIVE,
+    -0.0761 and -0.0276 (precheck.txt:192-201).  So the gap is not the truncation.
+    THE PERMUTED-TARGET CONTROL.  With the fit folds' targets permuted among their own
+    rows the full ridge explains -0.0698 (p 0.2) and -0.0755 (p 0.4) of the held-out
+    variance (precheck.txt:298-302).  WHAT THAT DOES AND DOES NOT SAY, corrected after
+    a review of this log: it says the R squared above is not an artefact of the
+    ARITHMETIC, because the only thing the permutation removes is the link between a fit
+    row's inputs and its own target.  It does NOT rule out a leaked future value -- such a
+    cell would lose its link under the permutation too -- and it cannot detect a read-out
+    row left in the fit, which would carry a permuted target there.  What rules out a leak
+    is structural: observe.observation builds the record from the state, the resolution
+    and the history as they stand at the decision's own ts_ms and from nothing else, and
+    the coefficient table names what the fit leans on.  check_held_out is what detects a
+    row in both halves and precheck.txt:320 shows it firing.  The negative value's SIZE is
+    a second reading: how much a 261-column ridge over-fits four folds of these rows when
+    there is nothing to find (precheck.txt:281-296 says all of this in the output).
+    THE RANKING READS.  On held-out rows the logged interval equals the ridge's predicted
+    cheapest on 0.3425 of them (p 0.2), and those rows' realised y is -81.72 score ms
+    against 0.00 over all rows, per-run difference -82.45 +- 9.57; at p 0.4 -117.39 +- 9.71
+    (precheck.txt:237-239).  The control says the ORDER carries it and not the row: by the
+    rank the ridge gave the logged interval, y goes -81.72 / -6.17 / +88.47 at p 0.2 and
+    -118.56 / -10.99 / +126.46 at p 0.4, monotone in the rank (precheck.txt:254-260).
+    AND THAT CONTROL IS VALID BY THE STAGE'S OWN DESIGN, which the output now states
+    (precheck.txt:245-253): the logging policy drew the interval uniformly and
+    independently of the state, so a row falls into rank 0, 1 or 2 with probability one
+    third whatever its features are, and the three rank groups are three samples of the
+    SAME state distribution -- which their near-equal counts 1046/974/1034 and
+    1016/994/1039 show.  So the rank 0 against rank 2 gap is the interval and not the
+    row.
+    The output names this for what it is: a one-period, logged-policy-continuation
+    reading that says nothing about any policy's replay score.
+    THE FIT REPRODUCES BIT FOR BIT.  Two fresh interpreters each re-read the 40 runs and
+    re-solved: p 0.2 8ca3d05ca53f852adf6be081f18514f40e6af59c55da58ad1873c5dce65b8f0b and
+    p 0.4 167094e9aa3865a82eb7b1d0d6e1ce37dddc27c8c55b140ea89ea045d7bf6283, 6288 bytes of
+    coefficients each, identical in both processes and in the parent (precheck.txt:359-366).
+    TIME, beside the 100 ms tick, no verdict (precheck.txt:413-416, the archived run):
+      observe.observation  median 0.0184 ms  p99 0.0260 ms  max 0.0752 ms
+      features.vector      median 0.0713 ms  p99 0.0819 ms  max 0.1089 ms
+      3 values + argmin    median 0.0064 ms  p99 0.0118 ms  max 0.0995 ms
+    Each over 1200 distinct logged decisions, timed one call at a time, nothing batched.
+    The decisions come from p 0.2 seeds 1 to 8: the loop ACCUMULATES decisions across
+    seeds until it holds 1200, and the output names the seeds it opened rather than the
+    range it would have read had those eight held fewer than 1200 decisions
+    (precheck.txt:411).
+
+  BYTE IDENTITY, AND THE ONE PART THAT DOES NOT REPRODUCE
+    cd W/E && local -B precheck.py > <scratch>/v_precheck.txt
+    head -400 precheck.txt | cmp - <(head -400 <scratch>/v_precheck.txt)
+                               no output: identical.  Line 400 is the marker
+                               ">>> TIMINGS BELOW THIS LINE DO NOT REPRODUCE BYTE FOR
+                               BYTE <<<", which part 9 opens with.
+    diff of the whole file against the second run names lines 414, 415 and 416 and no
+    others -- the three timing rows.  So a second run differs only in the timings, which
+    is what the marker promises.
+
+  WHAT WAS NOT DONE
+    No policy and no score: nothing here is a decider and no replay simulation is run.
+    The penalty is fixed at 10.0 and is NOT tuned; a penalty chosen against these folds
+    would make them part of the fit.  rho is estimated on all 20 seeds of its cell and
+    used in the read-out rows' target too, so one scalar of out-of-fold information is in
+    those targets; refitting with rho taken from each fold's FIT rows alone moves no
+    held-out R squared by more than 0.0022, which is that bound as a measurement
+    (precheck.txt:163-175).  No model is
+    chosen, no horizon is chosen, no discount is used.  The cost a decision causes at the
+    DOWNSTREAM pair is charged to that pair and appears in no target here.
+
+========================================================================
+4. labelsig.py -- DO TICKET 09'S LABELS CARRY LEARNABLE SIGNAL       20 s
+========================================================================
+  RULE: THIS IS NOT M, and the output says so in its first line.  M learns from the
+  emulator logs; this fits a classifier to the LABEL rows and reads its agreement with
+  those labels.  It exists to separate one question from another: when the language
+  model's agreement stopped at its rows' own class prior, was that the text it had to
+  read, or is there no learnable signal in the labels to find?  No emulator log is read
+  here at all.
+
+  cd W/E && local -B labelsig.py > labelsig.txt
+                               exit 0, 20.2 s, nothing on stderr.  It was 4.7 s before
+                               the two bootstraps and the four permutations of section 6
+    last lines of the real output (labelsig.txt:316, :365-366):
+      "18 of 18 mutations produced a failure"
+      "no check fired on real input; the failures in part 6 are the mutations"
+      "end of labelsig.py"
+
+  WHAT IT MEANS
+    THE ROW SETS REPRODUCE ../23/rows.py's COUNTS AND ARE ASSERTED AGAINST THEM.
+    candidate a 10013 fit rows and 1425 read-out rows, candidate b 4018 and 568, each
+    compared with the number parsed out of ../23/rows.txt and refused if it differs
+    (labelsig.txt:50-52).  rows.py is NOT imported: it makes 61 top-level calls, 49 of
+    which print, so `import rows` would write its own output into this one's -- counted
+    off its source with `ast`, running none of it (labelsig.txt:33-36).  What IS imported
+    is label.paired_t, the statistic candidate b is selected by, and stability.T_BINS,
+    where the bar 3.0 comes from.
+    THE ANSWER: YES, ABOVE THE PRIOR, AND AN ARGMAX READ-OUT OF THE FIVE CELLS IS THE
+    PRIOR EXACTLY (labelsig.txt:102-141):
+      set  predictor      agreement   baseline   diff     SE
+      a    full vector    0.5396      0.5102     0.0298   0.0101    (+0.0295 = 2.9 SE
+                                                                     of 10 seed clusters;
+                                                                     per seed +0.0294,
+                                                                     SE 0.0104, t 2.82 on
+                                                                     9 df, 8/10 positive)
+      a    five cells     0.5102      0.5102     0.0000   0.0000
+      a    the model      0.5312      0.5102     0.0210   --        (../23/tune.txt)
+      b    full vector    0.7254      0.6831     0.0421   0.0107    (+0.0423 = 3.9 SE;
+                                                                     per seed +0.0428,
+                                                                     SE 0.0109, t 3.94 on
+                                                                     9 df, 9/10 positive)
+      b    five cells     0.6831      0.6831     0.0000   0.0000
+      b    the model      0.7148      0.6831     0.0317   --        (../23/tune.txt)
+    The five-cell classifier and the trivial majority answer give the SAME number as the
+    baseline to four decimals, and their 3 x 3 tables fill one column exactly
+    (labelsig.txt:226-274).
+    WHAT THAT DOES AND DOES NOT SAY ABOUT THE ADR 0004 SCALARS, corrected after a review
+    of this log.  Agreement is an argmax, and 10.043 s is the MAJORITY label inside every
+    one of the five cells on both row sets, so a three-arm argmax read-out of the cells
+    answers 10.043 on every row and equals the prior BY CONSTRUCTION.  That is not the
+    same statement as "the cells carry no label signal", and two tables added to the
+    output now say they do carry some (labelsig.txt:148-223):
+      Brier score, lower better, against the prior (the fit rows' class shares):
+        a   full vector 0.5375   five cells 0.6158   prior 0.6201
+            diffs -0.0826 (SE 0.0070) and -0.0042 (SE 0.0016), seed-clustered
+        b   full vector 0.3647   five cells 0.4696   prior 0.4832
+            diffs -0.1185 (SE 0.0127) and -0.0136 (SE 0.0029)
+      label against cell on the read-out rows: chi-square 23.5 (a) and 33.2 (b) on 8
+      degrees of freedom, permutation p 0.0020 and 0.0005 over 2000 shuffles; on the fit
+      rows 139.0 and 155.8, p < 0.0005.
+    So the cells' calibrated gain is real and is a twentieth (a) to a tenth (b) of the
+    full vector's.
+    How much of the full vector's gain lies OUTSIDE the cells is not decomposed anywhere
+    in this directory, and the earlier wording of this log ("carries no label signal",
+    "what the full vector adds is what lies outside it") is withdrawn.
+    THE CLOSED-FORM LINEAR FIT LANDS WITHIN A DOZEN ROWS OF THE LANGUAGE MODEL on these
+    row sets, and the two are not compared.  757/1425 and 406/568 against 769/1425 and
+    412/568, i.e. 12 and 6 rows apart.  A paired per-seed comparison is impossible from
+    the archive: ../23/tune.txt holds one read-out of one adapter with no SE and no
+    per-row answers (only per-epoch answer COUNTS), so there is nothing to pair against
+    and the difference is tested nowhere (labelsig.txt:112-114).
+    NO OVER-FITTING TO SPEAK OF.  Fit-side minus read-out agreement: 0.0002 (a, full
+    vector) and 0.0083 (b, full vector), against 0.0050 and 0.0051 for the baseline
+    itself (labelsig.txt:283-289).
+    AND AGREEMENT IS NOT A SCORE.  Two independent 8-pass labellings of the same decisions
+    agreed on 0.7577 of the 1366 they both labelled, read off ../22/stability.txt, so
+    0.2423 got a DIFFERENT label (labelsig.txt:334-341).  A classifier that matched these
+    labels perfectly would match a teacher that disagrees with itself about a quarter of
+    the time.
+
+  BYTE IDENTITY
+    cd W/E && local -B labelsig.py > <scratch>/lab2.txt && cmp labelsig.txt <scratch>/lab2.txt
+                               no output: identical.  The bootstrap draws from
+                               numpy.random.default_rng(20261125) and the fit is
+                               closed-form, so there is nothing in this output that a
+                               second run can move.
+
+  WHAT WAS NOT DONE
+    No replay simulation and no score: a label is the arm that is best IF the formula rule
+    takes over afterwards, measured inside the replay over 8 passes, and agreement with it
+    is a measure of no policy.  No row-level join between these labels and M's training
+    rows exists and none is attempted: the labels were attached to decisions inside a
+    replay roll-in, so the s11a logged rows carry no label at all.  The p 0.4 label cell is
+    not read.  Seeds 81 to 100 are not read.  The penalty is fixed at 10.0 and not tuned.
+    ../23/decider.py's `pick` is restated and not imported, because that module reads a
+    command-line root at import; the restated rule's answer on a hand-made tie is printed
+    (labelsig.txt:322).
+
+========================================================================
+5. HYGIENE, AND WHAT THE TREE LOOKS LIKE                             5 s
+========================================================================
+  Run after every command above, and again at the end.
+    cd W && uvx ruff@0.17.2 check --no-cache S2/evidence/24
+                               "All checks passed!"
+    find W -name '__pycache__' -o -name '*.pyc' -o -name '.ruff_cache'
+                               no output
+    find /home/lab_shared/semindex-eval/s11a /home/lab_shared/semindex-learn \
+         -newermt '-4 hours'  no output: nothing was written in either store
+    grep -P '[\x{2014}\x{2015}\x{2013}\x{2500}]' S2/evidence/24/*
+                               no output: no em dash and no horizontal bar in any script
+                               or archive of this directory
+    cd W && git status --short
+                               "?? docs/wayfinder/semindex-stage2/evidence/24/" and
+                               nothing else.  No commit, no add, no stash, no branch or
+                               worktree change was made at any point.
+
+  THE SEED DISCIPLINE, AS THE SCRIPTS ENFORCE IT RATHER THAN AS A PROMISE
+    NO SEED-LIMIT LEAK WAS FOUND BY EITHER REVIEW.  Both read every open the four scripts
+    make, under an audit hook in one case, and found only p0.2 and p0.4 seeds 1 to 20 of
+    the emulator store and labels_p0.2.jsonl.gz on the learning side, with no key file,
+    meta.json, results.json or *.experiment.json opened anywhere.
+    emulator logs  charges.load_run refuses any seed that is not a whole number 1 to 20
+                   and calls port.check_seeds, which refuses one above 100; both are
+                   inside the only function of charges.py that opens a file.  Shown
+                   firing in charges.txt:376-379, features.txt:578-579 and
+                   precheck.txt:326-327.
+                   2026-11-25 fix: the bound used to be `> 20` alone, so load_run(0.2,
+                   20.9) passed the guard and then read seed 20, and a seed of 0 or -1
+                   was accepted.  It is two-sided and whole-number now.
+    label rows     features.label_rows parses each line and drops the row if its seed is
+                   above 80, before anything is computed from a row, and calls both
+                   features.check_label_seeds and port.check_seeds.  Shown firing in
+                   features.txt:575-577 and :579, and labelsig.txt:298-299.
+                   2026-11-25 wording fix: this log and the two outputs used to say the
+                   cut happens WHILE the file is read, which overstated it.  The whole
+                   file is hashed (the committed digest covers all of it) and every line
+                   is parsed; a selection-half row is parsed and thrown away, and nothing
+                   is counted, rendered, fitted or summarised from one.  The label-seed
+                   guard is two-sided and whole-number now as well.
+    So seeds 81 to 100 (selection) and 121 to 160 (measuring) are opened, counted,
+    rendered, fitted and summarised nowhere in this directory, and no replay simulation of
+    any seed is run by anything in it.
+
+  WHAT IS STILL MISSING FROM THIS DIRECTORY
+    M itself.  No policy, no candidate, no replay score, no ticket 11 Acceptance line is
+    answered here except the input half of Acceptance 6 (section 3's timings), and that
+    without a verdict.  The plan for M is not frozen by anything above; what is now known
+    is what a fit could stand on.
+
+========================================================================
+6. TWO REVIEWS OF THIS DIRECTORY, AND WHAT EACH FINDING LED TO
+========================================================================
+  Two independent reviewers re-ran all four scripts, recomputed the headline numbers with
+  their own code, fired every refusal arm themselves and audited every file the scripts
+  open.  NEITHER FOUND A SEED-LIMIT LEAK AND NEITHER FOUND A WRONG HEADLINE NUMBER: the
+  identity, the row counts, the held-out R squared, the coefficient digests, the agreement
+  table and the 3 x 3 tables all reproduced digit for digit against two independent
+  implementations.  Thirteen findings came back.  Each was reproduced here before anything
+  was changed; all four scripts were re-run after the fixes, in dependency order, and
+  every number above was re-read off the new archives.
+
+  REPRODUCED AND FIXED IN THE CODE
+  1. labelsig part 3 read "the five cells agree with the prior exactly" as "they add
+     NOTHING" and "carry no label signal".  Reproduced: 10.043 s is the majority label
+     inside all five cells, so the argmax can only answer 10.043, and the label is NOT
+     independent of the cell (chi-square 23.5 and 33.2 on 8 df on the read-out rows).
+     Fixed by adding a calibrated read-out (Brier against the fit rows' class shares) and
+     the label-by-cell cross-tab with a permutation p, and by rewriting the verdict, part
+     4's heading and section 4 of this log.  The five cells beat the prior on Brier by
+     -0.0042 (SE 0.0016) and -0.0136 (SE 0.0029); the full vector by -0.0826 and -0.1185.
+  2. features.check_fill did not cover the two one-cell optional slots, `polled_peer` and
+     `fetch_timeout_age_s`.  Reproduced: 7.0 written into either cell behind a presence
+     flag of 0 passed check_fill and rendered the identical text -- one text, two vectors.
+     Fixed by adding both slots to SLOTS, by asserting at import that every `*_present`
+     name in the layout is a SLOTS key, and by two new mutation rows.  No archived number
+     moved: `cells` always writes FILL there, so no real record was ever affected.
+  3. The two seed guards bounded only from above and truncated a fractional seed, so
+     load_run(0.2, 20.9) read seed 20 and a seed of 0 was accepted.  Fixed in both guards,
+     with three new mutation rows (21, 0, 20.9 / 81, 0, 1.5).
+  4. check_chain's ordering test accepted two decisions of one pair at one ts_ms, which
+     the (pair, ts_ms) key downstream would have merged into one.  Reproduced as absent
+     from this data (0 duplicate stamps over 6423 rows, smallest gap 1364 ms) and fixed by
+     making the test strict, with a hand-built pair shown firing on it.
+  5. Fourteen reachable refusal arms were in no mutation table while each output's heading
+     claimed every check.  All fourteen were fired here and all fourteen are now mutation
+     rows.  22 rows are new in all -- 8 of charges' 15, 5 of features' 23, 3 of
+     precheck's 17, 6 of labelsig's 18 -- because the two tightened seed guards took two
+     extra rows each and the chi-square took one.
+     Every mutation is of an input inside the process -- a hand-built chain, a copied row
+     list, a run dict, a record dict, an archived output's TEXT -- so no copy of a log or
+     of an archive is written and no machine path reaches an output.
+  6. precheck named the five-cell agreement check as one "no input can fail".  Reproduced:
+     a mutated record source makes it fire.  The sentence now says no LOG can fail it and
+     `records/cell crossed` shows it firing.
+  7. Found while fixing 5, not reported by either reviewer: the label-file refusal
+     printed the absolute path of labels.sha256.  Fixed to the
+     basename, because that message is now inside an output that must carry no machine
+     path.
+
+  REPRODUCED AND ANSWERED WITH A NUMBER RATHER THAN A CODE CHANGE
+  8. rho enters the read-out rows' targets from all 20 seeds (the task's own definition of
+     the target).  Refitting with rho from each fold's fit rows alone moves no held-out R
+     squared by more than 0.0022 (precheck.txt:163-175).  The declaration now carries that
+     measurement instead of part 2's spread standing in for it.
+  9. "2.9 SE" / "3.9 SE" carried no degrees of freedom for a ten-cluster bootstrap.  The
+     cluster count is now beside the ratio and the per-seed paired differences, their SE,
+     a t on 9 df and the count of positive seeds are printed.  The verdict survives:
+     t 2.82 (8 of 10 seeds positive) and t 3.94 (9 of 10).
+ 10. "THE LANGUAGE MODEL IS NOT AHEAD OF A CLOSED-FORM LINEAR FIT" rested on 12 rows and
+     6 rows with no test.  ../23/tune.txt archives no per-row answers, only per-epoch
+     answer counts, so a paired comparison is IMPOSSIBLE from the archive; the heading is
+     reworded to what the numbers carry.
+ 11. Two counted mutations (`digest lines differ`, `permuted control`) exercise only a
+     comparator and a bar.  Both are honest tests of those two functions and both stay;
+     the output now says so and points at the real-input line that carries each part.
+ 12. features.label_rows parses the whole label file before the seed cut.  Nothing is
+     computed from a selection-half row and the committed digest needs every byte, so the
+     code is unchanged; the three sentences that said the cut happens WHILE the file is
+     read are now exact (section 5 above, features.txt:9-15, labelsig.txt:19-24).
+
+  NOT A DEFECT IN ANYTHING ARCHIVED HERE
+ 13. Two findings, one per reviewer: both found stale or wrong details in the two REPORT
+     bodies the authors
+     wrote for the main session (features.py and charges.py line counts, which field moves
+     on 9 rows, the omission of o2_missing, the +0.03 s / +0.13 s period-length split, the
+     timing loop accumulating across eight seeds rather than stopping at the first, the
+     two-decimal match against res_1.md, three line pointers off by one or two, and the
+     p 0.4 period ranges).  Every one of those facts is right in the archives and in this
+     log; nothing in E changed for them.
+
+  AFTER THE FIXES
+    byte identity      charges.txt, features.txt and labelsig.txt are byte identical on a
+                       second run (cmp, no output).  precheck.txt is identical through
+                       line 400, the timing marker, and differs at lines 414, 415 and 416
+                       and nowhere else.
+    mutation counts    15 of 15 (charges), 23 of 23 (features), 17 of 17 (precheck) and
+                       18 of 18 (labelsig) mutations produce a failure, and no check fired
+                       on real input in any of the four.
+    the headline table precheck.txt:149-155 is unchanged to the printed digit, and so are
+                       the identity, the row counts, the agreement table, the coefficient
+                       digests and every count in sections 1 to 4 except the mutation
+                       counts and the timings.
+    lint and tree      "All checks passed!"; no __pycache__, *.pyc or .ruff_cache in the
+                       worktree; git status --short still shows only the untracked
+                       evidence/24 directory; nothing written in either store.
+
+log written 2026-11-25 01:37 JST (read from `date`); the four scripts were written
+between 00:12 and 00:51 and their archives were rewritten by the post-fix run at 01:28
+and 01:29 the same night (the files' own mtimes), on the local machine, with no card and
+no network.
+
+========================================================================
+7. THE PLAN FOR M (spec.md), AND THE TWO REVIEWS OF IT
+========================================================================
+  spec.md was written on 2026-11-25 as the frozen plan for M, before any fit on the
+  training half and before any replay score.  Two independent reviewers then read it:
+  one checked its mathematics (the learner's equations, the penalty criterion, the
+  built-in checks, the policy iteration) with its own synthetic code at this plan's own
+  row and unknown scale; the other checked every number against the repository file the
+  plan names for it, and walked the deliverable order for which gate is reached after
+  which number.  Thirty-six findings came back.  Each was reproduced here before
+  anything was changed: the arithmetic ones against the archives of this directory and
+  of ../22 and ../23, the mathematical ones by an independent synthetic harness written
+  for this review (two-state and ten-state semi-Markov chains in which this plan's own
+  system is exactly correct; 7840 fit rows and 1120 held-out rows, 364 unknowns; no
+  repository file was opened by any of it and no real data was read).  Every finding
+  that reproduced is now part of the plan, in the section that carries the design, and
+  every one that changes what a later script will do is listed again in spec.md's own
+  closing section "Changes to the worker's design made in review" (20 items).
+
+  NOTHING IN THIS DIRECTORY'S FOUR ARCHIVES CHANGED.  No script was written, no fit was
+  run, no simulation was run, no emulator log of a seed above 20 and no label row was
+  opened.  Only spec.md was edited; it is still untracked.
+
+  REPRODUCED, AND THE FIX IS NOW PART OF THE PLAN
+  1. The held-out squared one-step residual cannot select the ridge penalty.  Derived:
+     its expectation carries a double-sampling variance term that depends on the
+     weights, hence on the penalty being scored, so shrinking the weights shrinks the
+     criterion's own noise floor.  Measured over 24 independent draws at this plan's row
+     scale: it picked the grid maximum 1.0 in 23 of 24 draws and the true-value optimum
+     in 1 of 24, while on one draw it fell monotonically across the grid as the fitted
+     Q's error against the exact differential Q rose.  Rao-Blackwellising the next-arm
+     draw does not fix it (23 of 24 still at 1.0).  Replaced by a frozen-tail on-policy
+     criterion whose target is built once at a reference penalty fixed in advance, so
+     the target is the same number at every grid value: it picked a penalty at or below
+     1e-1 in 21 of 24 draws and the true optimum in 11 of 24.  spec.md section 5.
+  2. The criterion's row set must be cut by the decision instant and not by whether a
+     row happens to have four further decisions, or the selection is on what the drawn
+     arms reached, which is the bias section 2 exists to remove.  Fixed at
+     10000 <= t_rel_ms <= 60000, about 46 % of the held-out rows.  Section 5.
+  3. The penalty at which each check of section 4.7 is read was not stated, and the rate
+     comparison is a function of the penalty.  Fixed: the penalty is selected first,
+     Check A runs at every penalty and every iteration, the centring gate and the rate
+     diagnostic run at the selected penalty alone, and no failure may be answered by
+     re-selecting.  Section 4.7.
+  4. The rate comparison with the logged rate was a gate the plan's own arithmetic
+     expected to fire for a legitimate reason (about 0.57 score ms/s against an inferred
+     standard error of about 0.45), and its failure was deferred to the user with
+     rho_hat and the whole fit in hand.  Demoted to a printed diagnostic: the gap, the
+     per-block endpoint values, their sign distribution and the gap's run-clustered
+     standard error.  Section 4.7, Deviations 4.
+  5. Check A is blind to three of the five construction errors it was credited with.
+     Measured: tau in milliseconds (gap 1.9e-09, rho_hat scaled by 1/1000), the ridge
+     applied to the three block intercepts as well (gap -9.3e-10) and a normalisation
+     row e_0 instead of u (gap 1.4e-09) all leave the identity exact against a bar of
+     2.46.  Two further measurements sharpen it: the UNTELESCOPED form of the identity
+     holds for any successor array whatever (a randomly permuted successor gave gap
+     0.0e+00), and the telescoped form catches a flipped successor sign (4.3e+03) and an
+     off-by-one successor (-5.5e+02) but NOT a permutation of the successors inside the
+     fitted set nor a roll by a whole block, because both leave the sum of the successor
+     values unchanged.  Fixed: Check A's reach and its blind spots are stated, its
+     endpoint walk must be re-derived from the chain of owned periods and not from the
+     stored regressor array, and direct assertions on the penalty matrix, the
+     normalisation row, tau's range and the successor key replace the claimed catches.
+     Section 4.7.
+  6. Nothing gated a diverging policy iteration.  Measured on a small-row draw of the
+     synthetic harness: rho_k swung to -93.9 and -59.9 score ms/s and the weight norm to
+     31 times its first-iteration value, over 20 iterations that never settled, while
+     the condition number stayed between 2.0e+05 and 9.1e+06 -- three to five decades
+     under this plan's 1e10 bar -- and the u-row identity held to 1e-10 at every one of
+     them.  So neither of the plan's two safeguards can see it.  Fixed: a rate bound
+     (rho_k > 0 and within 0.25 of the fit rows' own logged rate), a weight-norm bound
+     (10 times the first iteration's) and a cycle test against every earlier policy, all
+     with the existing fallback as the single consequence.  Section 4.6.
+     The 0.25 is tight and was chosen knowing that: on two sound draws of the harness
+     the converged rate sat 0.208 and 0.204 away from the logged rate, so the bound has
+     little headroom and the weight norm is the better-separated of the two (1.1 against
+     31 times).  The reviewer's third proposal, asserting the u-row identity at every
+     iteration, was NOT adopted as a divergence bound: the measurement above shows it
+     holds throughout a divergence, and Check A already covers it as a construction
+     check.
+  7. Check B's standard error was given with two incompatible denominators for candidate
+     b, 140 fit runs against each cell's 70, a factor of sqrt(2) in what was then the
+     gate's whole tolerance.  Fixed at each cell's own 70, which is what section 6's
+     per-cell comparison needs.  Section 4.7, section 6.
+  8. Every rate the plan quoted was over EVERY owned period while the fit rows are the
+     in-window subset.  Recomputed from charges.txt part 6's own in-window rows:
+     43.1390 score ms/s at p 0.2 and 54.3352 at p 0.4, against the quoted 39.5698 and
+     49.5153, i.e. 3.57 and 4.82 higher, more than four of the quoted per-run standard
+     errors.  Both figures are arithmetic on part 6's rounded means and the 28 s tail
+     will move them again, so the plan says that and names rows24.py's own print as the
+     number every later line quotes.  Section 3, section 4.7, section 15.
+  9. The window does not make a kept row's COST arm-independent, only the row selection.
+     charges.txt part 4, counting every send of the pair: 10 owned periods at p 0.2 and
+     5 at p 0.4 hold no send and 9 and 3 hold two, by the send-time provisional timer,
+     which no bound in decision time can reach.  Fixed: the claim is narrowed to the
+     selection, the cause is named with those counts, rows24.py prints the 0/1/2
+     in-window-send counts over the fitted rows by arm and cell, and the plan says what
+     a reader may not conclude until that table is read.  Section 2.
+ 10. Pooling changes what candidate b estimates and not only what its rows cost.
+     Measured: the p 0.4 share of the in-window rows is 2751/5507 = 0.4995, and in the
+     synthetic harness the pooled fit's greedy policy for the scored cell disagreed with
+     the cell-only fit's on 0.69 % of that cell's own fit rows, so the shared map moved
+     and not only its level.  The 788-row two-rate system itself verified sound: both
+     rates recovered (47.5407 and 59.4202 against logged 47.5114 and 59.4354), Check A
+     per cell at -1.4e-09 and 4.7e-10 against bars 2.46 and 3.07.  Fixed: the estimand
+     is stated, the share is printed, and the two candidates' coefficient difference and
+     argmin disagreement are printed before any score.  Section 6, Threats 13.
+ 11. The plan's second reason for the logged next-action rule was wrong.  Measured:
+     max |u . z_i| is 1.11e-16 under the 1/3-average rule and the u-row identity closes
+     to 9.3e-10 against a bar of 2.46, so the general identity holds for that rule too;
+     only the telescoped walk does not.  Fixed: the reason is narrowed to the walk, and
+     the variance cost, which the plan called unmeasured, becomes a required print of
+     both rules' rho_hat, block intercepts and held-out mean residual at the selected
+     penalty -- one extra solve.  Section 4.4.
+ 12. inventory.py's assertion that no file of this directory matches its own two seed
+     tests is false of the repository as it stands.  Measured: the token test fires 6
+     times in charges.txt, 8 in features.txt, 16 in precheck.txt, 24 in labelsig.txt, 27
+     in RUN.txt and 58 in spec.md, and the phrase test fires 26 times in spec.md.  So it
+     would have stopped the first script after the freeze.  Struck; only the printed
+     evidence remains, which is what the section's own closing sentence already said it
+     was.  Section 13.
+ 13. The one convention the plan said no check could tie back to L's code can be tied by
+     reading L's source.  Confirmed at ../23/decider.py:65 (SEND_START = ARMS[1]) and
+     :765 (the send branch returning the per-pair memory's default).  Fixed: m24.py
+     parses that file with ast, no import and no execution, asserts both and prints
+     them, and the plan names what the check cannot cover.  Section 8, Deviations 7.
+ 14. The 3200-row control was reached only after the dry run had printed M's scores and
+     a dry a-against-b verdict.  It needs no coefficient file.  Fixed: it is
+     eval24.py --control, its own mode, and it is step 3 of the deliverable order, ahead
+     of learn24.py.  Section 10, section 19.
+ 15. The two-ceiling argument's stop was the replay's own STOP_AT_MS constant, while
+     charges.txt part 0 carries that bound as the SCORE window of the emulator logs and no
+     file of this directory carries the instant of a run's last decision.  Fixed:
+     rows24.py prints the per-pair last-decision instants, min and max over the pairs and
+     the runs, and the arithmetic is read against them.  Section 2.
+ 16. rho's identification needs the instrument block to have full row rank, which is not
+     implied by u^T P = 0.  Measured: rank(A + lambda P) = 362 of 363 and
+     rank[A + lambda P | t] = 363 at both 1e-4 and 1.0, so it holds generically and is a
+     property of the data.  Fixed: learn24.py prints that rank and the two smallest
+     singular values, and the plan says the printed rank is the evidence.  Section 4.2.
+ 17. The centring gate's in-sample counterpart is identically zero by algebra.
+     Measured: the in-sample mean one-step residual is -1.2e-13 at every grid penalty,
+     by the same u-combination as Check A.  Fixed: the plan says so, and pre-registers
+     what the held-out gate can see (tens of score ms per row) and what it cannot (a
+     rate error of the size the rate diagnostic measures, about 3 score ms per row).
+     Section 4.7.
+ 18. Threats 10's claimed precision difference between M's vector and L's text does not
+     exist.  Confirmed in the source: ../22/observe.py:91-92 sets AGE_DECIMALS = 1 and
+     INTERVAL_DECIMALS = 3, :116 rounds every age inside `observation`, :207-208 round
+     every interval and wait, and :297 renders the wait with the same three decimals --
+     all before any vector and any text exists -- and features.txt part 3 measured 18032
+     distinct texts against 18032 distinct vectors with zero collisions in both
+     directions.  Threat 10 is replaced by the three differences that are real, and
+     section 1 cites the bijection instead of the rounding.  Section 1, Threats 10.
+ 19. Four findings about missing threats and one about a prediction.  Added as Threats
+     17 (the five penalties may be inseparable on the criterion that chose one, which is
+     ../23's amendment A5 for this step), 18 (every interval here is a 20-seed interval,
+     about sqrt(2) wider than ../20's, so a comparison containing 0 is not evidence the
+     deciders are alike) and 19 (the cells M leans on drift through a run and nothing
+     separates reading a state from reading the clock).  Prediction 6 now carries one
+     threshold, changed_k = 0 by evaluation 5, where it carried two that one printed
+     iteration index could satisfy and falsify at once.  Section 15, section 16.
+ 20. Ticket 10's open wound: no rule for a wording-only fix to a committed script whose
+     output is archived.  Written as a rule, following ../23/RUN.txt 27.3: the stale
+     sentence stands, the correction is recorded here, and it is applied the next time
+     that script changes for a functional reason, with the archive re-run and
+     re-digested; a functional fix is never deferred that way.  Section 14.
+ 21. The section 14 edit is now a numbered step of the deliverable order, before
+     rows24.py, which cannot read seed 21 without it; and all four archives of this
+     directory are re-run and cmp'd, not only the two whose scripts are edited, because
+     features.py opens every log through charges.load_run (features.py:679,701) and
+     prints that function's refusal message (features.py:1003-1004).  Section 14,
+     section 19.
+ 22. Smaller arithmetic and attribution corrections, each verified against the file it
+     names: the 2-of-10 count is charges.txt part 7's gap/caused against gap/start and
+     only the 5-of-10 is the decision-time filter's comparison; the near-cancellation's
+     spread is the in-window 5.8 % and not the every-period 4.4 %, with p 0.4's 11.0 %
+     named where candidate b is discussed; the dead list holds 20 o3_* cells per origin
+     and 120 in all, not 9 per origin; the nine deciders of the user's decision 8 are
+     ../23/eval.csv's seven plus ../23/spread.txt's two first-run adapters; the penalty
+     grid brackets precheck.py's 0.00327 per row by about one and a half decades below
+     and two and a half above, not two each way; the row-count extrapolation cites
+     charges.txt part 6 and not precheck.txt part 1; the 0.809 % run is seed 19 at p 0.2
+     (0.604 %, seed 6, at p 0.4); the label-stability 0.7577 is over 1366 NON-TIE
+     decisions of seeds 1 to 10 of the main cell; the pseudocode's closing line names
+     only the converged exit; and the five cells are the two fields ADR 0004 line 5
+     permits as they appear in this data, with the answered case split by whether the
+     reply brought anything new, which ADR 0004 line 20 lists separately.
+
+  NOT A DEFECT, OR NOT ADOPTED AS PROPOSED
+ 23. The reviewer's per-iteration u-row assertion (finding 6 above) was not adopted as a
+     divergence bound, with the measurement that refutes it recorded there.
+ 24. The plan's own mathematics verified sound where it was checked, and that is worth
+     recording because most of it was: the square system is the projected fixed point
+     (LSTD-Q) of the average-cost semi-Markov equation; u . z_i = 0 exactly for the
+     logged successor and to 1.1e-16 for the 1/3-average one; u^T P = 0; the logging
+     policy's rate is recovered (47.5325 fitted against a 47.5114 sample rate and a
+     47.5158 population rate at 7840 rows) and Check A's telescoped identity equals the
+     untelescoped one on a correct build at every grid penalty; the 788-row two-rate
+     system of section 6 is square, nonsingular and recovers both rates; the window's
+     terminal-row guarantee and the two-ceiling argument hold; and the five decisions
+     the second reviewer walked for order found no setting whose value could still be
+     chosen after a number is seen, except the two the fixes above removed.
+
+  WHAT IS STILL NOT MEASURED, AFTER THIS REVIEW
+    Three quantities the fixes above turn into required prints rather than answers: the
+    real size of the endpoint term on real rows, the rate of the one-poll misallocation
+    per arm, and the variance cost of the next-action rule on real data.  Two the plan
+    already named: the outage span in decisions for this arm set (outage.py), and the
+    p 0.4 cell's own poll weight (in no file).  And one the review added: whether the
+    frozen-tail criterion's reference penalty is well chosen, which nothing in this step
+    can test, and which Threats 8 now names.
+
+  the review's synthetic harness was written and run under
+  /tmp/.../scratchpad/t24spec-fix on the local machine, with numpy only, no card and no
+  network; it opened no file of this repository and nothing in the worktree changed but
+  spec.md.  spec.md is 1786 lines; no em dash or horizontal bar
+  (grep -P '[\x{2014}\x{2015}\x{2013}\x{2500}-\x{257F}]' empty) and no scratch path or
+  report name appears in it (grep 'res_[0-9]\|scratchpad\|t24' empty).
+
+log written 2026-11-25 02:55 JST (read from `date`), on the local machine.
+
+  2026-11-26 amendment before freeze (per user choice B): learning (`rows24.py` and
+  `learn24.py`) runs on `hpc-debian` under `/home/yamakawa/Development/semindex-learn`
+  (`host`), using filtered `s11a` seeds 1 to 80 logs pushed by `push_inputs24.sh` and
+  an env-override `STORE` default in `charges.py`. Replay scoring, analysis, label
+  agreement and CPU latency run on `local` reading the committed `coef_a.npy` and
+  `coef_b.npy`. spec.md Names, sections 9, 14 and 19 were updated before any script was
+  written and before any seed above 20 was read.
+
+========================================================================
+8  STAGE 4 IMPLEMENTATION, REMOTE LEARNING ON HPC-DEBIAN AND DRY GATES
+========================================================================
+Local worktree: /home/lab_shared/wt/semindex-ev24 (branch docs/stage2-evidence-24)
+Remote host:    hpc-debian (/home/yamakawa/Development/semindex-learn)
+Commit 1:       86e78c6 (freeze plan for decision maker M)
+
+Code changes before any score on seeds 81 to 100:
+  - charges.py (39c9b8669488b5e848e49e97781988f285245ecbe728b1526f70a5e41e8c0c40):
+    added STORE env override and max_seed=MAX_LOG_SEED parameter on check_log_seeds / load_run.
+  - precheck.py (cf7fef699b93ff4c69309c47e54a197bc4d3613c57191481bf188bf4d52212df):
+    forwarded max_seed on table_of_run; verified archived Stage 1-3 scripts stay byte-identical.
+  - New scripts written in evidence/24: m24.py, inventory.py, outage.py, rows24.py,
+    learn24.py, eval24.py, ana24.py, versus24.py, agree24.py, latency24.py, push_inputs24.sh.
+
+Commands run before real seeds 81 to 100 (chronological):
+  1. PYTHONPATH=$W/src $PY $E/inventory.py > $E/inventory.txt
+     Verified byte-identical on rerun (excluding inventory.txt from self-scan).
+  2. PYTHONPATH=$W/src $PY $E/outage.py > $E/outage.txt
+     Verified byte-identical on rerun; 8 of 8 mutations fire.
+     Closed outages: p0.2 n=202 (22 unclosed), median 9.626s; p0.4 n=393 (30 unclosed), median 9.819s.
+  3. PYTHONPATH=$W/src $PY $E/eval24.py --control > $E/eval24_control.txt
+     CONTROL GATE PASSED: 3200 rows match ../23/eval.csv byte for byte (except script_sha).
+     5 of 5 mutations fire. combined script_sha = e06a1087654f13d21f0b20677fbf784be134fabe2f43474ae81b430bc9197185.
+  4. bash $E/push_inputs24.sh (and --code-only after learn24.py Check A mutation cleanup)
+     Verified s11a holds 1280 files (109,391,170 bytes, seeds 1..80 only, 4 allowed kinds)
+     and 284 worktree files agree in sha256 across local and hpc-debian.
+  5. ssh hpc-debian 'STORE=$ROOT/store $RPY $RREPO/rows24.py --out $REV' (verified cmp byte-identical on rerun)
+     Built candidate a (fit=7837, held=1104, crit=599) and b (fit=15633, held=2194, crit=1187).
+     R_fit: p0.2 48.8953 (ratio_SE 0.6317), p0.4 62.1939 (ratio_SE 1.2087); 9 of 9 mutations fire.
+  6. ssh hpc-debian 'STORE=$ROOT/store $RPY $RREPO/learn24.py --out $REV' (twice, cmp identical)
+     scp ev24/{rows24.txt,learn24.txt,coef_a.npy,coef_a.json,coef_b.npy,coef_b.json} -> $E/
+     Both local and remote sha256 verified identical. Two-process sha256 gate passed on hpc-debian.
+     9 of 9 learn24 mutations + 6 of 6 m24.self_check mutations fire (0 DID NOT FIRE).
+  7. Local --dry / pre-selection sanity runs (PYTHONPATH=$W/src $PY):
+     eval24.py --dry > eval24_dry.txt (DRY CONTROL GATE PASSED: 16 rows vs ../23/eval_dry.csv; 5/5 muts)
+     ana24.py eval24_dry.csv --dry > ana24_dry.txt (cmp verified on rerun; REPRODUCE GATE PASSED; 9/9 muts)
+     versus24.py eval24_dry.csv --dry > /tmp/versus24_dry.txt (REPRODUCE GATE PASSED; 3/3 muts)
+     agree24.py --dry > /tmp/agree24_dry.txt (5/5 muts)
+     latency24.py > /tmp/latency24_sanity.txt (3/3 muts; median ~0.0175 + 0.0712 + 0.0063 ms)
+
+Pre-score learning summary (seeds 1 to 80 on hpc-debian, Python 3.13.5, numpy 2.5.4):
+  - Candidate a (single shared rate):
+    lambda* = 0.0001 (Crit = 964002.421 +- 103299.380), cond = 1.0733e+05, rank_inst = 786/786.
+    Centring gate PASSED: mean = -22.9908, 2*SE = 29.1584 (g=10), detectable = 29.16 ms/row (4.32 ms/s).
+    Rate diagnostic: rho_hat = 17.2626 vs R_fit = 48.8953 (CheckA_gap = 3.725e-09).
+    Policy iteration exited at k=1 via pre-registered rate bound (bound_breach_k_1: rho_1=8.8813),
+    shipping fallback pi_greedy(w_0) as specified in spec.md Section 4.6.
+  - Candidate b (per-cell rate, p0.2 and p0.4):
+    lambda* = 0.0001 (Crit = 1504845.030 +- 312915.710), cond = 2.6887e+05, rank_inst = 787/787.
+    Centring gate PASSED: mean = -8.0864, 2*SE = 24.4100 (g=20), detectable = 24.41 ms/row (3.60 ms/s).
+    Rate diagnostic: p0.2 rho_hat=22.2320 (R_fit=48.8953), p0.4 rho_hat=37.2990 (R_fit=62.1939),
+    CheckA_gap = 2.794e-09 on both cells.
+    Policy iteration exited at k=1 via pre-registered rate bound (bound_breach_k_1: rho_1(p0.2)=12.4988),
+    shipping fallback pi_greedy(w_0) as specified in spec.md Section 4.6.
+  - Pre-score comparison a vs b: block L2 diffs 963.64 / 1137.49 / 1173.60; argmin disagreement
+    on cand a fit rows 2659 / 7837 = 0.339288.
+
+Stage 4 artifact sha256 digests:
+  coef_a.npy          bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf
+  coef_b.npy          532a43998fa62d21c03efba90478172f8f009fedd13b460edf3de2cbe805f2cb
+  rows24.txt          bf61c0bf69c9fcd006e99e0cd36662dac69bce85ad79e29db6d7121866641990
+  learn24.txt         11fb85426b65ec1335dfd6f36664c79e27b26739bc38a58c88a6f9a11eb7aa8a
+  outage.txt          5ac1b0e44765a141d28e6d24cd353f8245ccad08c34d68725dbf6f211d4f10e0
+  inventory.txt       50b856af8ad57576cc4c84b6c5a091b35baa67905cc7a7a49873475c60fa015a
+  eval24_control.csv  3014ed4ca73fb6e0f6f7696d1ca617d83cdea3cfce9548976ccd2936d75fd92d
+  eval24_control.txt  991d93fef042bb904c495d5d0de89da6991fbbfcd580d1c567f6520469a4a8d0
+  eval24_dry.csv      45e39b27afe16a5d8115b2d2bda723a8043e11d87d18b8f56eb51b9c52cac77d
+  eval24_dry.txt      0dceb0e8443d42e8528970292c442d83ef4e293006a4b0eb2c1a2142e7ddf718
+  ana24_dry.txt       e5d6b67d0afda49e4fe8b4fff8e5a0a651ba02090d54d50ac9a401cfe3db4af8
+  m24.py              f93641cb4022a21437365f2f019d8c705e2cdffc99ba1654b879a4cdcdb79719
+  learn24.py          a520db4b4a7d55c958fad788608f5d41278fdf4c8bcd403e4f8d5154fbe47547
+  eval24.py           1a3f6388592932b6a3ddaa65e7d23bf981f519ea4d8144fb0a478e5d43d1b0f4
+  ana24.py            2933c29e82f390c4d062366fd58893ef574944c9732f0662d0385597f4515493
+  versus24.py         17b6ade239fe38c4e333b17288ede34d792e84b85a678dd289cc05f889a17948
+  agree24.py          597f41a2f061237afb71a1e30d4c3c53f2c9ef3823ca498e0a2d289d26c34acb
+  latency24.py        f27fe388268f29582e50904d60227ece38b32d3c7c5c9a331d3f364ce9ad6ed2
+  eval24+m24 combined e06a1087654f13d21f0b20677fbf784be134fabe2f43474ae81b430bc9197185
+
+========================================================================
+9  STAGE 5 SELECTION EVALUATION (SEEDS 81 TO 100) ON LOCAL HOST
+========================================================================
+Commit 2 (pre-selection): 5923c62 (created before any real seed 81..100 run)
+Platform:                 local (/home/lab_shared/cefore-semindex/.venv/bin/python3 -B)
+
+Commands executed (PYTHONPATH=/home/lab_shared/wt/semindex-ev24/src):
+  1. eval24.py > eval24.txt
+     4800 replay runs (6 deciders x 20 seeds 81..100 x 40 streams).
+     CONTROL GATE PASSED: 3200 rows match ../23/eval.csv and eval24_control.csv.
+     5 of 5 mutations fire. combined script_sha = e06a1087654f13d21f0b20677fbf784be134fabe2f43474ae81b430bc9197185.
+  2. ana24.py eval24.csv > ana24.txt (verified cmp byte-identical on rerun)
+     REPRODUCE GATE PASSED; 9 of 9 mutations fire.
+  3. versus24.py eval24.csv > versus24.txt (verified cmp byte-identical on rerun)
+     REPRODUCE GATE PASSED; 3 of 3 mutations fire.
+  4. agree24.py > agree24.txt (verified cmp byte-identical on rerun)
+     5 of 5 mutations fire.
+  5. latency24.py > latency24.txt (verified deterministic prefix above >>> TIMINGS BELOW via cmp)
+     3 of 3 mutations fire.
+
+Key Stage 5 results (seeds 81 to 100):
+  - Mean scores (ms, lower is better):
+      a          35858.943  (polls 140.670, delay 21187.630, ties 0/125336)
+      b          35961.509  (polls 148.390, delay 20485.032, ties 0/131512)
+      F          36150.829  (polls 179.731, delay 17405.586)
+      const6.000 37035.920  (polls 159.536, delay 20396.934)
+      const10.043 39855.665 (polls  96.029, delay 29840.255)
+      const3.695 40811.181  (polls 256.491, delay 14060.180)
+  - Frontier gains (95% CI, dropped=0):
+      F: 0.0631 (4.089 % to 8.574 %, seen)
+      a: 0.0546 (3.165 % to 7.680 %, seen)
+      b: 0.0486 (2.474 % to 7.001 %, seen)
+  - Primary gate a vs b (band = 297.000 ms, non-cancelling = 13.013 ms):
+      score(a) - score(b) = -102.566 ms (95% CI -407.071 to 222.470 ms, contains 0: True)
+      VERDICT: CLOSE  |  CHOSEN CANDIDATE: a
+  - Paired comparisons (versus24.txt):
+      a vs F:          -291.886 ms (-822.101 to  274.164, 0 in: yes, a lower 13/20)
+      b vs F:          -189.320 ms (-595.275 to  241.930, 0 in: yes, b lower 13/20)
+      a vs const6.000: -1176.977 ms (-1761.779 to -588.763, 0 in: no, 15/20)
+      b vs const6.000: -1074.411 ms (-1624.671 to -520.670, 0 in: no, 17/20)
+      a vs L_b:        -1351.607 ms (-1941.338 to -780.824, 0 in: no, 16/20)
+      b vs L_b:        -1249.041 ms (-1637.387 to -880.029, 0 in: no, 20/20)
+    Censored runs: a 1/800 (4 records), b 0/800, F 0/800, const10.043 17/800 (156 records).
+  - Label agreement on seeds 81..100 (labelled=2841, ties=362, always 10.043s baseline 0.5273):
+      a: 1074 / 2841 = 0.378036 (answer shares 0.2411 / 0.4301 / 0.3288)
+      b:  989 / 2841 = 0.348117 (answer shares 0.2932 / 0.4118 / 0.2950)
+  - CPU latency (1200 calls over p0.2 seeds 1..8, tick budget 100.0 ms):
+      observe.observation: median 0.0176 ms, p99 0.0277 ms, max 0.0350 ms
+      features.vector:     median 0.0714 ms, p99 0.0915 ms, max 0.1523 ms
+      cand a matvec+argmin: median 0.0056 ms, p99 0.0114 ms, max 0.0828 ms
+      cand b matvec+argmin: median 0.0056 ms, p99 0.0120 ms, max 0.0238 ms
+
+Stage 5 artifact sha256 digests:
+  eval24.csv     873fc8b9e04f0666932228ed7bb5b46d2b00309ecd19c5cd156f296fb32c1af1
+  eval24.txt     fc18c262e8b986b447cd357486712f4a21685a0ce5a3e79400fba31c2d8911a9
+  ana24.txt      65dd7529c7ebfcf1bdbe0688286ae14c992518c91942bd7be42523e0cf6b3d05
+  versus24.txt   960a9ae56e1a004940963d4af4f16186f7a35c5ff4445ac1d4ba5642a2cd6fa9
+  agree24.txt    f7d203983d27502a1dd40d9be66645422080fa6f446d01b3a3ea1f75c21ef8ea
+  latency24.txt  0ecf7017fa41d7bfa46f780cb74eb99019860c9c4a550d8119ccb16998d030b9
+
+========================================================================
+10  POST HOC SENSITIVITY: THE WITHIN-RUN DRIFT, NEUTRALISED (SEEDS 1 TO 20)
+========================================================================
+Not in the frozen plan, written after every score of M was already seen, and selects
+nothing -- recorded as a post hoc sensitivity, per the instruction for this step; the
+ticket's own decision line for it is the parent's to write and is not written here.
+Seeds 1 to 20 are TRAINING seeds candidate a's own fit read, so every number below is an
+IN-SAMPLE comparison, not a generalisation claim.  A cross-verification of the committed
+fit found candidate a's k=0 solve dominated by a within-run drift in decision time, with
+a specific magnitude and cell count attached but no controlled before/after replay
+comparison performed; the 0.5 threshold naming a cell "drifting" is that verifier's own
+after-the-fact choice, restated and not re-tuned here.  This section runs that one
+comparison: neutralise the drifting cells (hold them at their own fit-row mean, in every
+row's vec AND in every entry of that row's own chain -- the two are the same dict object
+by precheck.table_of_run's own construction, so neutralising one without the other
+compares a neutralised current state against an un-neutralised successor), refit
+candidate a's k=0 solve on the neutralised rows at the same penalty (lambda* = 1e-4), and
+replay FOUR deciders through eval24.one_run, unmodified, on seeds 1 to 20 x 40 streams
+(inside the 70 fit seeds, disjoint from the 81-100 selection seeds): the shipped model,
+the neutralised model, the formula rule F, and the fixed 6.0 s arm (F and the fixed arm
+read off eval24.py's own module, not redefined).
+
+Command (PYTHONPATH=/home/lab_shared/wt/semindex-ev24/src, local interpreter):
+  drift24.py > drift24.txt
+  Run twice (2026-11-26); drift24.txt, drift24.csv, coef_a_neutral.npy and
+  coef_a_neutral.json byte-identical on rerun.  12 of 12 mutations fire.
+  uvx ruff@0.17.2 check --no-cache on this directory: "All checks passed!".
+  No __pycache__, *.pyc or .ruff_cache left in the worktree.
+  Last lines of the real output:
+    - Nothing about candidate b, p 0.4, the held or selection seeds, or any further
+      neutralisation threshold.
+
+    end of drift24.py
+
+What changed from the first, uncommitted draft, and why: the reproducibility gate
+(section 2) now actually raises if the shipped coef_a.npy drifts more than 1e-6 from the
+local re-solve or if one greedy answer disagrees -- the first draft printed the numbers
+but never asserted on them.  The 40 drifting cells are now named (section 1), not only
+counted, matching what the module docstring already claimed.  Section 3 also reports the
+within-run slope of the fitted Q of the logged interval on decision time, shipped
+(-38.7759 score ms/s, within-run corr -0.6491) and neutralised (+0.4153 score ms/s,
+corr +0.0274), reproducing the cross-verification's own numbers to the model's own
+reported digits.  The replay now runs F and the fixed 6.0 s arm alongside the two M's,
+reports mean polls, mean delay and censored-run counts for all four, and the mind-change
+share for each.  A per-run archive (drift24.csv, 3200 rows: 4 deciders x 20 seeds x 40
+streams) carries score_ms, polls, delay_ms, c4, the arm-count fields, mind_changes and
+res_decisions (so the mind-change share is also recomputable from the csv, not only from
+this script's own accumulator), and, for the two M's, a per-decile x per-arm resolution
+count, so a verifier can recompute every per-decider mean and every decile share in this
+file from the csv alone.  Section 4 adds the fit rows' own answer shares, overall and by
+decile of decision time, shipped against neutralised.  Section 7 adds the replay's own
+decile table (decision time measured against each run's own t0 from EV24.LBL.run_dict,
+the clock SCORE.terms already uses), read off a RecordingM subclass of m24.M that only
+appends to a log after deferring to m24.M.__call__ unmodified, so no run is simulated
+twice and no score row can differ from a plain m24.M's.  Mutation coverage grew from 8
+to 11 (the two new gate checks, plus rows24.check_learn_seeds(81) showing the 80-seed
+log cap).  None of this moved the headline or any previously-printed number.
+
+A second pass, after an independent verification of the above, fixed four things in
+this uncommitted draft and its archive; none of the five comparison numbers below
+moved.  (1) Section 3's count of neutralised records printed 10684: `neutralise_in_place`
+deduplicated on the id of each record's ORIGINAL vec array, but reassigning a record's
+`vec` can drop the last reference to that original array, and CPython can then reuse
+its freed address for the replacement array, so a record visited through more than one
+chain entry was skipped on its later visits only when the allocator happened to recycle
+that freed address, and counted again when it did not -- a malloc coincidence, not a
+property of the data, which is how the old check printed 10684.  Deduplicating on the
+record dict's own id instead -- a record is never replaced, only mutated -- makes the
+count a property of the data and stable across interpreters: 10683 distinct records.
+The neutralised coefficients are
+unaffected either way, since the replacement was already idempotent.  (2) Section 5's
+two seed-guard lines ("meets 121-160 in 0 seeds" and "every seed is also one of
+candidate a's own 1-70 fit seeds") were typed literals; they now print two computed
+counts, and the fit-seed membership is asserted by a new check, `check_replay_in_fit`,
+with a twelfth mutation (replay seed 71, outside the 1-70 fit range) showing it refused
+-- mutation coverage is 12, up from the 11 above.  (3) The cross-reference corrected
+earlier in this section (Section 3, not Section 1, for the within-run slope of the
+fitted Q) was fixed in this same pass.  (4) The honest note below misquoted its own
+decile spans ("0.80-0.89" and "0.42-0.53") against what section 7's table actually
+prints; both spans are now quoted as printed (0.6162 to 0.8889, and 0.1601 to 0.5330,
+both over deciles 4-9).  The slope/corr pair the note's reading rests on, and that
+reading itself, are unaffected.
+
+One honest note from my own first pass at this section (caught before this archive was
+written, via a second review of the drafted output against its own numbers, not caught
+by any mutation test): my first draft of section 9 asserted that "shipped a's own chosen
+interval moves with decision time while the neutralised model's does not".  Section 7's
+own table contradicts that: a_neutral's 10.043 s share moves from 0.0000 in decile 0 to a
+span of 0.6162 to 0.8889 over deciles 4-9, a bigger move than shipped a's span of 0.1601
+to 0.5330 over the same deciles, and the within-run slope/corr of the chosen interval
+on decision time (added to section 7 for exactly this reason) is +0.012575 s/s (corr
++0.2023) for shipped against +0.036901 s/s
+(corr +0.5689) for neutralised -- the neutralised model's own chosen answer tracks the
+clock MORE, not less.  The typed sentence was wrong and has been removed from both
+drift24.py and this file; section 7 now prints the two slopes as computed and section 9
+says only that the reading is left to whoever compares them, asserting neither
+direction.  This matches the task's own instruction to "report whatever the numbers are
+... and explain nothing beyond what they carry": the one sentence in my first pass that
+did more than that was the one the numbers themselves refuted.
+
+Results (reproducing the cross-verification's numbers independently, from the committed
+rows and the shipped coef_a.npy, not read from its scratch output):
+  - 40 of the 261 cells have |within-run corr(decision time)| > 0.5 (max |corr| 0.9482,
+    cell o1_p1_hi); named in drift24.txt section 1 with their own correlations.
+  - Re-solved locally: rho_0 = 17.2626 (gap vs R_fit 48.8953 = -31.6327), matching
+    coef_a.npy to 2.547e-09 max|w| 1022.52 (gate: within 1e-6, greedy answers identical
+    on all 7837 fit rows).  Neutralised: rho_2 = 53.2585 (gap +4.3633).
+  - Argmin disagreement, shipped vs neutralised, on the 7837 fit rows: 3706 (0.4729).
+  - Replay means, seeds 1-20 x 40 streams (800 runs each): a 35922.496, a_neutral
+    38729.286, F 35958.927, const6.000 37406.042 score ms.
+  - HEADLINE -- score(a_neutral) - score(a), seeds 1 to 20, paired by seed:
+      point +2806.790 ms  (95% interval +2073.957 to +3583.323 ms, 0 excluded)
+      neutralised scores lower (better) on 0 of 20 seeds
+    The neutralised model scores clearly WORSE than the shipped model on the seeds the
+    fit itself was built from.  This is a within-fit sensitivity, not a generalisation
+    claim (seeds 1-20 are inside the 70 fit seeds) and not a re-selection of a or b,
+    which stays fixed at a.  No seed above 70 was fitted on and no seed above 20 was
+    replayed by this step; no seed of 81-100 was touched by anything in this section.
+    drift24.py's own section 8 shows both bounds, the measuring range 121-160, the 80-
+    seed log cap, and the new reproducibility gate, all refused on a mutated input.
+  - Section 7's decile table and its own computed within-run slope/corr of the chosen
+    interval (s) on decision time: shipped +0.012575 s/s (corr +0.2023, 124523 pooled
+    replay resolutions), neutralised +0.036901 s/s (corr +0.5689, 115378 pooled
+    resolutions).  Printed as computed; this is evidence about what the CHOSEN interval
+    does during the replay, not a proof of what either model reads, and this file does
+    not characterise which direction that comparison favours -- see section 9 and the
+    honest note above.
+
+Stage 6 (post hoc sensitivity) artifact sha256 digests:
+  drift24.py          6cde361fea140ff9674c40165ee2bba74528d14e4ece7e0f673af504fb164e07
+  drift24.txt         15466919e7412f5ea2154edc93878604b8594620945ab773e79a5a3f7ca57e17
+  drift24.csv         05e7d5676103d4e0281b758888a7475798631a9715723f8d8614842d13de9227
+  coef_a_neutral.npy  cf5f49d71ebc1c1973fd521373d3b658c602e7457ba7c1552c1f9b66e66a9acc
+  coef_a_neutral.json c02e7fda8f232cefdfcb633616cb4facca1ede71684d058048d6928ea6d31601
+
+What this section does not do: it does not amend ticket 11's 決まったこと, does not
+touch any file above this appended section, and the ticket's own decision line recording
+why this is a post hoc sensitivity that selects nothing is the parent's to write, not
+this appended section's.  It does not simulate, open or summarise any seed outside 1-70
+(fit) and 1-20 (replay); seeds 81-100 and above are untouched.  It does not re-select
+between candidate a and b.  It sends no message to any agent.
+
+========================================================================
+11  THE MAIN SESSION'S VERIFICATION OF SECTIONS 7 TO 9, AND WHAT IT FOUND
+========================================================================
+2026-11-26 18:53 JST.  Sections 7 to 9 (the frozen plan, the fit, the selection
+evaluation; commits 86e78c6, 5923c62, ce0b20b) were carried out by another agent,
+alone, in about ninety minutes, while the main session's usage limit was exhausted.
+The user asked the main session to check them.  Five verifiers were run (every number;
+the order of events; the learner against the plan; what may be claimed; a last sceptic
+who re-derived every blocker and major finding), and the main session recounted the
+scores itself.  No blocker was found.  What reproduced and what did not is below, so
+that a reader of sections 7 to 9 knows which sentences there stand.
+
+  11.1  WHAT REPRODUCED
+  ------------------------------------------------------------------
+  - eval24.csv: 4800 rows, six deciders x seeds 81 to 100 x streams 0 to 39; on every
+    row score_ms equals delay_ms + 104.29595912307323 x polls exactly.  The means, the
+    paired differences with their intervals and seed counts (versus24.txt), the
+    frontier gains (ana24.txt, through ../20/predict.py) and the agreement table
+    (agree24.txt) follow from it; ana24.py, versus24.py and agree24.py re-run byte for
+    byte.
+  - The control: the 3200 rows of the three fixed arms and F equal ../23/eval.csv's in
+    every column but script_sha, and eval24_control.csv's in every column.
+  - Five runs re-simulated by a verifier's own driver (a 81/0, a 93/17, b 100/39,
+    F 87/5, const6.000 95/22) match the csv to the last digit in all 17 numeric columns.
+  - The shipped M is what the frozen plan prescribes for the event that happened (a rate
+    bound breached at the first improvement step, section 4.6: ship the greedy policy
+    of the logging policy's evaluation).  A local refit gives coefficients within
+    2.5e-09 (a) and 3.7e-09 (b) of the shipped files and 0 changed greedy answers on
+    7837 and 15633 fit rows.  The bytes differ across hosts; the decisions do not.
+  - spec.md did not change after 86e78c6 (git diff 86e78c6 ce0b20b -- spec.md is empty).
+    Every Stage-5 output has an mtime after commit 5923c62.
+  - No seed above 100 was opened, listed or simulated.  The hpc-debian store holds seeds
+    1 to 80 only, and ticket 10's directories there were not modified.
+  The main session's own recount (a scratch script that imports nothing from the
+  repository; hand-logged, not in the repository), which also carries the one
+  comparison no archive of this directory prints, M against L's better tuning draw:
+
+      python3 -B -I recount.py 24/eval24.csv 23/eval.csv 23/eval_run1.csv
+    deciders in eval24.csv: ['F', 'a', 'b', 'const10.043', 'const3.695', 'const6.000'] rows 4800
+      a             35858.943
+      b             35961.509
+      F             36150.829
+      const6.000    37035.920
+      const10.043   39855.665
+      const3.695    40811.181
+    fixed arms and F equal ticket 10's rows exactly: True
+    M_a - M_b                      -102.566  95 %   -407.071 to    222.470  first lower on 11 of 20
+    M_a - F                        -291.886  95 %   -822.101 to    274.164  first lower on 13 of 20
+    M_b - F                        -189.320  95 %   -595.275 to    241.930  first lower on 13 of 20
+    M_a - const6.000              -1176.977  95 %  -1761.779 to   -588.763  first lower on 15 of 20
+    M_a - L_b (2nd tuning)        -1351.607  95 %  -1941.338 to   -780.824  first lower on 16 of 20
+    M_a - L_b (1st tuning)         -717.150  95 %  -1262.820 to   -177.835  first lower on 14 of 20
+    M_a - L_a (2nd tuning)        -1969.447  95 %  -2756.247 to  -1182.556  first lower on 18 of 20
+
+  So against the language model the difference is -1351.607 ms for ticket 10's
+  candidate (versus24.txt) and -717.150 ms (-1262.820 to -177.835) for the first tuning
+  run's b, the lowest-scoring adapter on record.  Both intervals exclude 0.
+
+  11.2  WHAT CHANGES HOW THE RESULT MUST BE READ
+  ------------------------------------------------------------------
+  1. THE FITTED VALUES DRIFT ALONG A RUN.  learn24.txt prints, as a non-gating
+     diagnostic, that the evaluation of the LOGGING policy gives a rate of 17.2626
+     against a logged 48.8953 (difference -31.6327, SE 0.6317), with all 560 block
+     endpoints of one sign.  A verifier measured the rest: the fitted Q of the logged
+     interval falls by 38.78 score ms per second of decision time within a run; 40 of
+     the 261 cells have an absolute within-run correlation with the decision time above
+     0.5; with those cells neutralised the rate becomes 53.2585 and 3706 of 7837 of M's
+     own greedy answers change.  spec.md's section 15 set 2.0 score ms per second as the
+     size of a rate gap that would be reported as surprising.  NO OUTPUT OF SECTIONS 8
+     AND 9 SAYS THIS.  Section 10 (drift24.txt) is the measurement taken because of it.
+  2. THE SHIPPED POLICY'S OWN EVALUATION BREACHED THE PLAN'S BOUND.  The plan ships the
+     greedy policy of the logging policy's evaluation as "the one improvement whose own
+     evaluation the logs can test".  The step that stopped the iteration IS that
+     evaluation, and it returned 8.8813 (a) and 12.4988 (b) against 48.8953, outside the
+     band of 12.2238.  The code follows the plan; the plan's justification did not
+     survive its own test.  NOTHING HERE SUPPORTS A CLAIM THAT STEPWISE IMPROVEMENT
+     WORKED: the shipped M is one greedy step over a uniformly random policy.
+  3. THE PREDICTIONS WERE NEVER SCORED.  Against spec.md section 15: 1 held (both
+     candidates below the two outer arms); 2 held (a candidate below the fixed 6.0 s
+     arm); 3 FAILED (F does not stay below both candidates: a 35858.943 against F
+     36150.829); 4 FAILED (the gap 102.566 ms is inside the 297.0 ms band, verdict
+     CLOSE); 5 FAILED (agreement 0.378036 and 0.348117, far below the band around
+     0.5273); 6 FAILED (the iteration did not settle; it stopped on the rate bound).
+     Two items of the plan's "what would be surprising" list occurred (a candidate below
+     F; a rate gap above 2.0) and neither is named in sections 8 and 9.
+  4. THE WINNER IS THE LOWER OF TWO CANDIDATES ON 20 SEEDS THAT NINE DECIDERS HAD
+     ALREADY BEEN SCORED ON, and a is not distinguished from F (-291.886 ms, -822.101 to
+     274.164, a lower on 13 of 20 seeds).  F reached its score choosing among six
+     intervals; M chooses among three.
+  5. M AND F DO NOT SEE THE SAME RANDOM DRAWS.  eval24.txt records the share of
+     resolutions that change the pair's interval: F 0.4769, a 0.5220, b 0.5405, the fixed
+     arms 0.0000, with 266025 lag draws for F against 210240 for a.  A decider that
+     changes its mind draws one more lag than one that does not.
+
+  11.3  DEFECTS OF THE RECORD AND OF ONE SCRIPT, NONE OF WHICH MOVES A NUMBER
+  ------------------------------------------------------------------
+  - learn24.py lines 326 to 327 compare an array with bytes at iterations above 0, so
+    the "changed share is 0" exit of the policy iteration can never be taken.  The
+    shipped M is unaffected (the rate bound stopped the loop first).  NOT FIXED:
+    learn24.py's digest is printed in learn24.txt; to be corrected when the script is
+    next changed for a reason of its own.
+  - Check A above iteration 0 is the row-by-row form and not the telescoped walk the
+    plan names; the near-constant cut "non_mode <= 20" in rows24.py is in no section of
+    spec.md; coef_<c>.json does not list the dead cells the plan says it carries.
+  - inventory.txt was produced before eval24_control.csv and the later outputs existed,
+    so it lists no file of this directory, and section 8's "byte-identical on rerun"
+    does not hold against the committed tree.  inventory_after.txt is the same script
+    run on 2026-11-26 after section 11 was written; it lists eval24.csv (4800 rows of
+    seeds 81 to 100), eval24_control.csv (3200) and the two csvs with none
+    (eval24_dry.csv, drift24.csv).  inventory.txt is left as it was.
+  - The plan's step 1 (the four scripts of sections 1 to 4 re-run and compared after the
+    seed-bound keyword was added to charges.py and precheck.py) has no record in section
+    8.  Done by two verifiers and by the main session: charges.txt, features.txt and
+    labelsig.txt byte-identical; precheck.txt identical through line 400.  One verifier
+    found that precheck.txt's part 7 (the three coefficient digests) changes when the
+    BLAS thread count is pinned to 1, so that identity depends on the thread count.
+  - outage.py was run before push_inputs24.sh and rows24.py, against the plan's order;
+    it reads seeds 1 to 20 and influences no setting.
+  - agree24.py --dry was run before the real evaluation.  It reads out seeds 71 to 80
+    with the shipped coefficients (a verifier re-ran it: a 537/1425 = 0.376842, b
+    492/1425 = 0.345263, baseline 0.5102).  The a-against-b choice is score-only, so
+    this could not move it, but the plan says the agreement runs after the scores.
+  - README.md, the plan's last deliverable, does not exist yet.
+
+  11.4  THE TWO FITS ON HPC-DEBIAN: THE OTHER AGENT'S OWN ACCOUNT
+  ------------------------------------------------------------------
+  A verifier saw on hpc-debian that the coefficient files and learn24.txt were created
+  at 01:04 and overwritten at 01:50, with learn24.py changed at 01:05 in between.  The
+  agent that ran them was asked over agmsg and answered in writing (not in the
+  repository).  ITS ACCOUNT, not independently verifiable because the first run's files
+  no longer exist: the first run completed; the only change was in learn24.py's mutation
+  part, where a leftover line printed "DID NOT FIRE" and was replaced by a real mutation
+  of Check A (8 of 8 became 9 of 9); every number of the first run's sections 1 to 4
+  equals the final learn24.txt; the first run printed the same sha256 for coef_a.npy
+  and coef_b.npy as the final files; nothing that reads the coefficients ran between
+  the two fits; eval24.py ran in its real mode once, at 01:54:04, after commit 5923c62.
+  It also reports a two-line fix to ana24.py at 01:52:34, during the dry run (a function
+  of ../20/predict.py returns three values and two were unpacked).
+  WHAT THE RECORD CORROBORATES: the file times; that the committed learn24.py reproduces
+  learn24.txt on another host; that the fit is deterministic to 1e-9.  What it cannot:
+  what the first run printed.
+
+  11.5  WHAT WAS NOT CHECKED BY ANYONE
+  ------------------------------------------------------------------
+  - spec.md's own review (section 7's 36 findings and their synthetic test harness):
+    not reproducible from the repository.
+  - latency24.txt's timings, which do not reproduce by design; a single per-decision
+    total with its p99 is in no file (the three parts' medians sum to about 0.095 ms).
+  - outage.txt's arithmetic (202 and 393 closed outages; a median of 1.0 and a maximum
+    of 3 decisions of a pair inside one outage): read by every verifier, recomputed by
+    none.
+  - Whether the 28 s the fit window removes at the end of a run changes M's replay score.
+  - Which interpreter ran the fit on hpc-debian beyond what learn24.txt prints
+    (numpy 2.5.4, python 3.13.5).
+
+========================================================================
+12  AN OUTSIDE REVIEW OF THE WHOLE STEP, AND WHAT WAS DONE ABOUT EACH FINDING
+========================================================================
+2026-11-26 22:14 to 22:23 JST, on a detached checkout of commit 6bc1bb9
+(/home/lab_shared/wt/semindex-ev24-review).  README.md did not exist yet and was not
+part of this review; it is reviewed separately when it is written.
+
+  12.1  THE REVIEWER THAT REPORTED
+  ------------------------------------------------------------------
+  cd /home/lab_shared/wt/semindex-ev24-review && pi --no-session --tools read,grep,find,ls \
+      --model opencode-go/glm-5.3 -p @.review/prompt.md "..." </dev/null > .review/pi.md
+  exit 0, stderr 0 bytes, 15431 bytes of report, about 9 minutes.  Its tools are read,
+  grep, find and ls: it could run no code, no git command and no hash, and says so.
+  Its last line begins "VERDICT: no blocker" and names what remains: a dropped limit,
+  a promise of spec.md section 2 that was never carried out, and citation and wording
+  nits.  Eight findings, five minor and three nits.  Each was reproduced against the
+  files before it was answered.  NO REPORTED NUMBER MOVES.
+
+  12.2  THE EIGHT FINDINGS
+  ------------------------------------------------------------------
+  1 (minor, REPRODUCED, FIXED in the ticket).  The ticket's result dropped limits that
+    spec.md section 16 names: threats 17 and 8 (the penalty), 14 (the window), 9 (the
+    cells M is blind to), 13 (candidate b's p 0.4 rows) and 15 (polled_peer).  Threat 17
+    is the one the output bears on.  learn24.txt section 2 prints, for candidate a,
+    Crit 964002.421 +- 103299.380 at lambda 1e-4 and 1153791.762 +- 89748.023 at 0.001;
+    for candidate b 1504845.030 +- 312915.710 and 1792634.198 +- 292152.717.  The
+    differences (189789.341 and 287789.168) are of the size of the printed standard
+    errors.  Those errors are per penalty on the same Crit rows; NO PAIRED STANDARD
+    ERROR OF THE DIFFERENCE IS PRINTED, so this record can say neither that lambda* is
+    separated from its neighbour nor that it is not.  The reviewer's "1.4 SE" and
+    "0.7 SE" treat the two as independent, which they are not; the conclusion a reader
+    may draw is the plan's own: lambda* is not shown to be distinguished from its grid
+    neighbour.  The ticket's open items now carry the five, each with its numbers.
+  2 (minor, REPRODUCED, FIXED in the ticket, and sharpened).  spec.md section 2 says
+    that if any pair's last decision falls before 128294 ms "the plan says so".
+    rows24.txt section 1 prints minima of 117374.0 ms (p 0.2) and 117796.0 ms (p 0.4),
+    and no file said so.  The reviewer reads the guarantee as resting on the direct
+    assertion alone.  It rests on a little more than that, and on a thin margin: a
+    fitted row is decided at or before 102000 ms and rows24.py asserts every fitted
+    period is at most 14.0 s, so its successor falls at or before 116000 ms, which is
+    before every pair's last decision (117374.0 ms at the earliest).  The successor is
+    therefore never a pair's last decision and every fitted row still has two further
+    decisions.  THE MARGIN IS 1374 ms AT p 0.2 AND 1796 ms AT p 0.4 (the earliest last
+    decision less 116000 ms), and it is a margin over the runs read, not a property of
+    the emulator.  The ticket's Acceptance 1 now says this.
+  3 (minor, REPRODUCED, ALREADY ON RECORD, left).  rows24.py's near-constant cut
+    "non_mode <= 20" is fixed nowhere in spec.md, and coef_<c>.json omits the dead-cell
+    names section 9 says it carries.  Section 11.3 above records both.  The cut is
+    print-only; the fit filters nothing.
+  4 (minor, REPRODUCED, FIXED).  The ticket's Acceptance 1 cited rows24.txt section 0
+    for the Crit row counts 599 and 1187; they are printed in section 1.
+  5 (nit, REPRODUCED, left).  learn24.txt prints "--" for changed at k=1, because
+    learn24.py leaves the loop at the rate bound before it computes that share, where
+    spec.md section 4.6 says every iteration's share is printed.  A reader therefore
+    cannot see how often the greedy policy of w_1 disagrees with the shipped one.  The
+    breached quantity itself is printed.  To be put right when learn24.py next changes
+    for a reason of its own, with the defect of section 11.3.
+  6 (nit, REPRODUCED, FIXED above).  Section 10 said "40 of 261 live cells".  The 261
+    are all the cells; 107 of them are live for candidate a (rows24.txt section 4).
+    The line now reads "40 of the 261 cells", as drift24.txt section 1 does.
+  7 (nit, REPRODUCED, left).  spec.md section 8 names the repeat-check row as the first
+    state_poll_reschedule row of p 0.2 seed 1 "in log order".  m24.first_logged_resched_obs
+    takes the first such row of the first node in sorted order, which need not be the
+    earliest in the run.  One fixed row is still read identically in every output
+    (the same two triples in learn24.txt, eval24.txt, agree24.txt, latency24.txt and
+    drift24.txt), which is what the check needs.
+  8 (nit, REPRODUCED, FIXED).  The ticket's Acceptance 2 said the one-value mutation of
+    the repeat check fails "in every script".  Only learn24.py and latency24.py carry
+    it; eval24.py and agree24.py print the check without mutating it.
+
+  12.3  WHAT THE REVIEWER CHECKED AND FOUND CORRECT, IN ITS OWN LIST
+  ------------------------------------------------------------------
+  Every headline number of the ticket's result and of the map entry against its
+  archive; the stop arithmetic and the fallback; that the defects of section 11.3
+  cannot move a shipped coefficient or a reported number (the comparison at
+  learn24.py lines 326 to 327 was never executed in the shipped fits); the learner and
+  M on the port against the plan; the seed gates and the order of the control, the dry
+  run and the scores; the drift measurement and that the record claims no verdict on
+  state against clock; the six predictions; the comparison with L on both tuning runs.
+  It also read the tie counts: versus24.txt section 2 prints ties=0 for both candidates,
+  which answers threat 16 (no decision of M in the replay was the tie rule's).
+
+  12.4  WHAT THE REVIEWER DID NOT CHECK
+  ------------------------------------------------------------------
+  The sha256 digests byte for byte; the rows of the four csv files (it read the archived
+  summaries); the first fit on hpc-debian; the host itself; the sources of earlier
+  tickets under ../22 and ../13; the timings of latency24.txt.  The main session's
+  recount of section 11.1 covers the rows of eval24.csv; nobody has recounted
+  drift24.csv's rows outside the workflow that produced and verified them.
+
+========================================================================
+13  README.md: WHO WROTE IT, HOW IT WAS CHECKED, AND WHAT WAS CORRECTED
+========================================================================
+2026-11-26 23:10 to 23:30 JST.  The user asked that the README, and only the README,
+be written by the other agent (the ticket's decision 12).  It wrote README.md
+(290 lines) from the archives and from sections 10 to 12 above, changed no other file
+and committed nothing (git status showed README.md as the only untracked file of the
+directory).  The main session read it in full, had it checked by five read-only
+readers (four on the numbers, one line range each: 165, 155, 127 and 92 numbers checked
+against the archive each cites; one on the claims, the required content and the writing
+rules), reproduced every finding against the files, and applied the corrections itself.
+The readers sent no message and wrote no file.
+
+  13.1  WHAT THE README'S AUTHOR FOUND: A FALSE SENTENCE IN THE FROZEN PLAN
+  ------------------------------------------------------------------
+  spec.md section 6 and threat 13 say the p 0.4 cell's own poll weight "is in no file
+  of this repository".  THAT IS FALSE.  ../22/weight.txt lines 76 to 96 print it, under
+  the header "p 0.4, the same four steps, for information only; not used for the
+  weight": step 4 gives 139.66810800913194 ms per poll, "1.34 times the main cell's".
+  spec.md is frozen and is left as it is.  Section 7's line "the p 0.4 cell's own poll
+  weight (in no file)" above is wrong in the same way.  The main session copied the
+  sentence into the ticket's open items on the same evening without opening
+  ../22/weight.txt (section 12.2, finding 1); the ticket is corrected.  What it means
+  for the result: candidate b's p 0.4 rows have a poll priced at about 0.75 of that
+  cell's own weight (104.29595912307323 / 139.66810800913194 = 0.7467), so the size of
+  the mispricing is known for information and is not small.  Candidate b was not
+  chosen; no reported number moves.
+
+  13.2  TWO THINGS THE CHECK SHOWED WERE MISSING FROM THE RECORD, NOW COUNTED
+  ------------------------------------------------------------------
+  The README said candidate a is below "every one of L's four adapters, with intervals
+  that all exclude 0" (the main session's own request used those words).  Only three
+  such intervals were on record.  And section 12.4 said nobody had recounted
+  drift24.csv outside the workflow that produced it.  Both were counted by hand:
+    python3 -B -I <scratch>/t24readme/recount2.py eval24.csv ../23/eval.csv \
+        ../23/eval_run1.csv drift24.csv
+  (sha256 872ceb4d754bc10fb0b95d16fafd22ba2a1b5b8923f839582c384ae4dd4eee38; imports
+  nothing from the repository; hand-logged, not in the repository; the same bootstrap
+  as section 11.1: per-seed mean of 40 run scores, default_rng(20261122), 2000 x 20).
+    M_a - L_a (1st tuning)   -1520.931   95 %  -2098.778 to  -931.112   a lower on 18 of 20
+    M_a - L_b (1st tuning)    -717.150   95 %  -1262.820 to  -177.835   a lower on 14 of 20
+    M_a - L_a (2nd tuning)   -1969.447   95 %  -2756.247 to -1182.556   a lower on 18 of 20
+    M_a - L_b (2nd tuning)   -1351.607   95 %  -1941.338 to  -780.824   a lower on 16 of 20
+  The last three equal section 11.1 and versus24.txt; the first is new, and with it the
+  README's sentence stands for all four adapters.  L_a (1st tuning) has a mean of
+  37379.874, as ../23/spread.txt prints.
+    drift24.csv: 3200 rows, deciders F, a, a_neutral, const6.000, seeds 1 to 20
+    means  a 35922.496   F 35958.927   const6.000 37406.042   a_neutral 38729.286
+    a_neutral - a            2806.790   95 %   2073.957 to  3583.323   lower on  0 of 20
+    a - F                     -36.431   95 %   -544.951 to   542.317   lower on 11 of 20
+    a_neutral - const6.000   1323.245   95 %    537.360 to  2174.065   lower on  4 of 20
+  All equal drift24.txt sections 5 and 6.  Section 12.4's last sentence no longer holds.
+
+  13.3  WHAT WAS CORRECTED IN THE README, AND WHY
+  ------------------------------------------------------------------
+  No number read from an archive of this directory was wrong.  Corrected:
+  - Two sentences read ../13/validate.md's Mode A counts (39, 24 and 41 of 42 cells) as
+    the cells that FAIL.  They are the cells that met each line, against a required 42.
+  - The censored runs: the README concluded that the mean score "cannot be said to be
+    an upper bound".  A censored record enters at its lower bound, so the score of a
+    decider with censored runs (candidate a 1 of 800, fixed 10.043 s 17 of 800) is
+    biased LOW.  The sentence now says that.
+  - The four-adapter sentence gets its fourth interval (13.2) and its row in the table.
+  - The fit-window note said one further decision follows a fitted row; the record
+    carries two (section 12.2, finding 2).
+  - The p 0.4 weight was presented as a disagreement between records and attributed to
+    the ticket as well; it is an error of spec.md, and the ticket says so (13.1).
+  - "the largest condition number is 3.825e+05" contradicted the README's own
+    1.095e+07 for the post hoc refit; both are now named, both below 1e8.
+  - "12 to 15 times 2.0" is 12.4 to 15.8.  32219 is the count over both cells' label
+    files.  Citations: learn24.txt section 2 and drift24.txt section 6 added where the
+    numbers come from; the verification is sections 11 to 13, not 8 to 12; the second,
+    code-only run of push_inputs24.sh added to the order table; the hand recount
+    scripts named as not in the repository.
+  - Five loanwords replaced by the words ../23/README.md uses for the same things.
+  One reader's finding was not acted on: that charges.txt part 9 is the wrong citation
+  for the coupling across pairs (it named part 3, which lists the 8 pairs).  Part 9's
+  first item is the statement the README cites it for ("additive across decisions and
+  ... not separable across pairs").
+
+  13.4  WHAT THE CHECK OF THE README DID NOT COVER
+  ------------------------------------------------------------------
+  The readers confirmed numbers against the archived .txt outputs, not against the csv
+  rows (those are covered by sections 11.1 and 13.2 for eval24.csv and drift24.csv
+  only).  The gain intervals of ana24.txt section 3 and the sha256 digests were compared
+  between files that quote them, not recomputed.  The README after correction was not
+  sent to an outside reviewer again.

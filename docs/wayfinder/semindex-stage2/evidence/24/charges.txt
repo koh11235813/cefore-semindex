@@ -1,0 +1,404 @@
+
+==============================================================================
+0  WHAT IS READ
+==============================================================================
+stage            s11a, cells p 0.2 and p 0.4
+seeds            1 to 20 (40 runs in all)
+seed guards      this module refuses an emulator seed that is not a whole
+                 number 1 to 20 -- above it, below it, or fractional -- and
+                 port.check_seeds refuses one above 100; both run inside
+                 load_run, the only function here that opens a file
+files per run    debug/node_dirs/h*/semindex/events.jsonl, and nothing else
+weight           104.29595912307323 ms per poll, read from ../22/weight.json
+window           [t0 + 10000 ms, t0 + 130000 ms]; records created by t0 + 72000 ms
+unit             TOTAL COST in ms = score x N: a poll costs W x N, a waiting
+                 millisecond costs 1 ms.  Score ms = total cost / N.
+runs read        40, every one charged under both period rules, with the
+                 identity and the placement asserted on each one before any
+                 table below
+N per run        [240]
+
+==============================================================================
+1  THE IDENTITY, PER RUN AND SUMMED
+==============================================================================
+left   = (lat + censored) + W x N x polls, which is score.terms' own cost x N
+right  = over every period, owned and head and tail, waiting ms + W x N x sends
+The difference is asserted to 1e-6 ms per run, so a non-zero is a bug.
+
+The score column is `score.py`'s own number for the run, so that a reader can
+hold these runs against any other reading of them without rerunning anything.
+
+  p    seed       score      lat ms     cens ms  polls   wait owned  wait edge   snd  edge     diff
+  0.2     1   35870.405   5179646.0         0.0    137    5179646.0        0.0   136     1  0.0e+00
+  0.2     2   47863.334   8032918.0         0.0    138    8032918.0        0.0   138     0  0.0e+00
+  0.2     3   37863.297   5582847.0         0.0    140    5582847.0        0.0   140     0  0.0e+00
+  0.2     4   35809.398   4889663.0         0.0    148    4889663.0        0.0   148     0  0.0e+00
+  0.2     5   41219.173   6238071.0         0.0    146    6238071.0        0.0   146     0  0.0e+00
+  0.2     6   36576.418   5273996.0         0.0    140    5273996.0        0.0   140     0  0.0e+00
+  0.2     7   39854.543   5960622.0         0.0    144    5960622.0        0.0   144     0  0.0e+00
+  0.2     8   37014.910   5304141.0         0.0    143    5304141.0        0.0   142     1  0.0e+00
+  0.2     9   35546.178   4576180.0         0.0    158    4576180.0        0.0   158     0  0.0e+00
+  0.2    10   45114.451   7273062.0         0.0    142    7273062.0        0.0   140     2  0.0e+00
+  0.2    11   38607.528   5335935.0         0.0    157    5335935.0        0.0   155     2  0.0e+00
+  0.2    12   41393.440   6129709.0         0.0    152    6129709.0        0.0   151     1  0.0e+00
+  0.2    13   44209.607   6730496.0         0.0    155    6730496.0        0.0   155     0  0.0e+00
+  0.2    14   45216.493   7297552.0         0.0    142    7297552.0        0.0   141     1  0.0e+00
+  0.2    15   37128.040   5055951.0         0.0    154    5055951.0        0.0   154     0  0.0e+00
+  0.2    16   38319.239   5617180.0         0.0    143    5617180.0        0.0   142     1  0.0e+00
+  0.2    17   44228.661   6835193.0         0.0    151    6835193.0        0.0   151     0  0.0e+00
+  0.2    18   35901.193   4986787.0         0.0    145    4986787.0        0.0   143     2  0.0e+00
+  0.2    19   38658.573   5623527.0         0.0    146    5623527.0        0.0   143     3  0.0e+00
+  0.2    20   38490.244   5533066.0         0.0    148    5533066.0        0.0   148     0  0.0e+00
+  0.4     1   37642.680   5604992.0         0.0    137    5604992.0        0.0   137     0  0.0e+00
+  0.4     2   45956.538   7600318.0         0.0    137    7600318.0        0.0   137     0  0.0e+00
+  0.4     3   40495.047   6089312.0         0.0    145    6089312.0        0.0   145     0  0.0e+00
+  0.4     4   47297.015   7385736.0    235924.0    149    7621188.0      472.0   148     1  0.0e+00
+  0.4     5   54460.902   9366024.0         0.0    148    9366024.0        0.0   145     3  0.0e+00
+  0.4     6   58296.372   4513610.0   5848020.0    145   10352206.0     9424.0   142     3  0.0e+00
+  0.4     7   62713.797  11421812.0         0.0    145   11421646.0      166.0   144     1  0.0e+00
+  0.4     8   41659.164   6443793.0         0.0    142    6443793.0        0.0   141     1  0.0e+00
+  0.4     9   50947.770   7541546.0    731016.0    158    8260478.0    12084.0   157     1  0.0e+00
+  0.4    10   58053.418  10378414.0         0.0    142   10378414.0        0.0   141     1  0.0e+00
+  0.4    11   40345.094   5828044.0         0.0    154    5828044.0        0.0   153     1  0.0e+00
+  0.4    12   48916.290   7935193.0         0.0    152    7935193.0        0.0   151     1  0.0e+00
+  0.4    13   52558.811   8809398.0         0.0    152    8809398.0        0.0   150     2  0.0e+00
+  0.4    14   45270.105   7310419.0         0.0    142    7310419.0        0.0   140     2  0.0e+00
+  0.4    15   53839.686   9116808.0         0.0    152    9116808.0        0.0   151     1  0.0e+00
+  0.4    16   61781.189  11298110.0         0.0    141   11298110.0        0.0   140     1  0.0e+00
+  0.4    17   47781.082   7587650.0         0.0    155    7587650.0        0.0   155     0  0.0e+00
+  0.4    18   51184.255   8704784.0         0.0    143    8704784.0        0.0   143     0  0.0e+00
+  0.4    19   50934.530   8644850.0         0.0    143    8644734.0      116.0   143     0  0.0e+00
+  0.4    20   48640.531   6249073.0   1770124.0    146    7969609.0    49588.0   146     0  0.0e+00
+
+p 0.2, 20 runs
+  lat                             117456542.0 ms   61.569 %
+  censored lower bounds                   0.0 ms    0.000 %
+  W x N x polls                    73315887.4 ms   38.431 %
+  owned periods                   190421995.0 ms   99.816 %
+  head and tail periods              350434.4 ms    0.184 %
+  total cost                      190772429.4 ms  100.000 %
+  largest head+tail share in one run 0.809 % (seed 19), smallest 0.000 % (seed 2)
+  residual, the waiting no hop could carry: 0.000000 ms over 0 record(s)
+  censored records, every one placed at the hop it never crossed: 0
+p 0.4, 20 runs
+  lat                             157829886.0 ms   65.843 %
+  censored lower bounds             8585084.0 ms    3.582 %
+  W x N x polls                    73290856.4 ms   30.575 %
+  owned periods                   239158386.8 ms   99.772 %
+  head and tail periods              547439.6 ms    0.228 %
+  total cost                      239705826.4 ms  100.000 %
+  largest head+tail share in one run 0.604 % (seed 6), smallest 0.000 % (seed 1)
+  residual, the waiting no hop could carry: 0.000000 ms over 0 record(s)
+  censored records, every one placed at the hop it never crossed: 120
+
+==============================================================================
+2  WHAT THE HEAD AND TAIL PERIODS HOLD
+==============================================================================
+The head runs from the run's first logged instant to the pair's first decision,
+the tail from the pair's last decision to the end of the run.  The last decision
+of a pair owns no period: there is no next decision of that pair to close one.
+
+p 0.2  head+tail waiting 0.0 ms of 117456542.0, in-window sends 14 of 2929
+p 0.4  head+tail waiting 71850.0 ms of 166414970.0, in-window sends 19 of 2928
+
+==============================================================================
+3  PERIODS PER RUN
+==============================================================================
+p 0.2  periods per run min 156 median 166 max 181; owned min 140 median 150 max 165
+p 0.4  periods per run min 157 median 168 max 181; owned min 141 median 152 max 165
+directed pairs    8: h0->h1, h1->h0, h1->h2, h2->h1, h2->h3, h3->h2, h3->h4, h4->h3
+pairs whose whole cost is one head period, because they never decided: 0
+
+==============================================================================
+4  HOW MANY SENDS A PERIOD HOLDS
+==============================================================================
+One decision schedules one send, so an owned period holds one.  Two things break
+that and both are printed: a send that went out BEFORE its predecessor's
+resolution was taken, which is what the send-time provisional timer does and
+which leaves one period with none and the one before it with two; and a send
+outside the scoring window, which the score does not price at all, so the period
+holding it is charged no poll.  The first row set counts every send of the pair,
+the second only the in-window sends, which are the ones the cost uses.
+
+  counting         p     kind    sends in the period   how many periods
+  every send       0.2   head                      1                160
+  every send       0.2   owned                     0                 10
+  every send       0.2   owned                     1               3035
+  every send       0.2   owned                     2                  9
+  every send       0.2   tail                      0                147
+  every send       0.2   tail                      1                 12
+  every send       0.2   tail                      2                  1
+  every send       0.4   head                      1                160
+  every send       0.4   owned                     0                  5
+  every send       0.4   owned                     1               3041
+  every send       0.4   owned                     2                  3
+  every send       0.4   tail                      0                141
+  every send       0.4   tail                      1                 19
+  in-window sends  0.2   head                      0                160
+  in-window sends  0.2   owned                     0                148
+  in-window sends  0.2   owned                     1               2897
+  in-window sends  0.2   owned                     2                  9
+  in-window sends  0.2   tail                      0                147
+  in-window sends  0.2   tail                      1                 12
+  in-window sends  0.2   tail                      2                  1
+  in-window sends  0.4   head                      0                160
+  in-window sends  0.4   owned                     0                143
+  in-window sends  0.4   owned                     1               2903
+  in-window sends  0.4   owned                     2                  3
+  in-window sends  0.4   tail                      0                141
+  in-window sends  0.4   tail                      1                 19
+
+==============================================================================
+5  THE LENGTH OF AN OWNED PERIOD, BY THE INTERVAL ITS DECISION CHOSE
+==============================================================================
+A period runs from one resolution to the next of the same pair.  The send it
+holds is due one applied interval after the PREVIOUS send, so the length is that
+interval less the time the resolution itself had already taken, plus the lag of
+the next resolution.  After an ANSWERED poll the resolution follows its send by
+about a tick, so the length sits just above the interval.  After a TIMED OUT poll
+the resolution comes about 2 s after the send, so the period starts 2 s late and
+the length sits about 2 s BELOW the interval -- unless the next poll times out
+too, which pays the same 2 s back at the far end.  Seconds.
+
+  p    trigger     interval     n      min      q25   median      q75      max     mean
+  0.2  answered       3.695   874    3.327    3.545    3.819    4.022    6.175    3.963
+  0.2  answered       6.000   821    5.426    5.803    6.141    6.533    8.694    6.334
+  0.2  answered      10.043   775    9.050    9.728   10.274   10.973   13.097   10.485
+  0.2  timed_out      3.695   180    1.396    1.917    3.568    3.822    4.170    3.045
+  0.2  timed_out      6.000   204    3.423    4.027    4.545    6.031    6.638    4.981
+  0.2  timed_out     10.043   200    7.052    7.744    8.343    8.925   11.077    8.486
+  0.4  answered       3.695   662    3.321    3.620    3.832    4.055    6.153    4.164
+  0.4  answered       6.000   643    5.424    5.893    6.344    7.740    8.703    6.686
+  0.4  answered      10.043   627    9.054   10.055   10.975   12.085   13.144   11.055
+  0.4  timed_out      3.695   385    1.364    1.913    3.523    3.824    4.132    3.053
+  0.4  timed_out      6.000   379    3.422    3.949    5.431    6.035    6.686    5.041
+  0.4  timed_out     10.043   353    7.038    7.747    8.457    9.443   11.089    8.646
+
+Split by the NEXT decision's trigger as well, which closes that arithmetic:
+  p    own trigger  next trigger  interval     n   median length   interval - median
+  0.2  answered     answered         3.695   740           3.730             -0.035
+  0.2  answered     answered         6.000   671           6.045             -0.045
+  0.2  answered     answered        10.043   579          10.070             -0.027
+  0.2  answered     timed_out        3.695    91           5.733             -2.038
+  0.2  answered     timed_out        6.000   107           8.053             -2.053
+  0.2  answered     timed_out       10.043   149          12.074             -2.031
+  0.2  timed_out    answered         3.695    62           1.816              1.879
+  0.2  timed_out    answered         6.000   106           4.128              1.872
+  0.2  timed_out    answered        10.043   152           8.150              1.893
+  0.2  timed_out    timed_out        3.695   110           3.724             -0.029
+  0.2  timed_out    timed_out        6.000    92           6.134             -0.134
+  0.2  timed_out    timed_out       10.043    35          10.176             -0.133
+  0.4  answered     answered         3.695   497           3.724             -0.029
+  0.4  answered     answered         6.000   424           6.037             -0.037
+  0.4  answered     answered        10.043   319          10.060             -0.017
+  0.4  answered     timed_out        3.695   131           5.752             -2.057
+  0.4  answered     timed_out        6.000   188           8.141             -2.141
+  0.4  answered     timed_out       10.043   278          12.172             -2.129
+  0.4  timed_out    answered         3.695   131           1.775              1.920
+  0.4  timed_out    answered         6.000   177           3.948              2.052
+  0.4  timed_out    answered        10.043   224           8.045              1.998
+  0.4  timed_out    timed_out        3.695   237           3.731             -0.036
+  0.4  timed_out    timed_out        6.000   183           6.036             -0.036
+  0.4  timed_out    timed_out       10.043   100          10.058             -0.015
+
+==============================================================================
+6  THE COST OF AN OWNED PERIOD, PER PERIOD AND PER SECOND
+==============================================================================
+Cost of a period = its waiting ms + W x N per in-window send, divided by N, so
+the numbers are SCORE ms -- the unit the earlier scratch precheck's rate table
+used.  The rate is the pooled sum of cost over the pooled sum of seconds and not
+a mean of per-period rates, so one short period cannot dominate it.  Two row
+sets: every owned period, and the ones whose period STARTS inside the scoring
+window.  The second filter reads the decision's own instant only, so it cannot
+keep one arm more often than another for having landed its send in the window,
+which is what a caused-send filter does and the reason none is used here.
+The cost is split into its poll half and its waiting half, because the two move
+in opposite directions with the interval and the split is the whole mechanism.
+
+  every owned period
+    p    interval      n  mean cost ms  mean length s  per second  poll  waiting
+    0.2     3.695   1054       152.466          3.806      40.059  25.4     14.7
+    0.2     6.000   1025       232.972          6.065      38.413  16.3     22.1
+    0.2    10.043    975       404.030         10.075      40.102  10.3     29.8
+    p 0.2: dearest 10.043 s at 40.102 ms/s, cheapest 6.000 s at 38.413 ms/s, spread 4.4 %
+    0.4     3.695   1047       184.347          3.756      49.086  25.8     23.3
+    0.4     6.000   1022       285.417          6.076      46.975  16.2     30.8
+    0.4    10.043    980       522.231         10.187      51.264  10.2     41.1
+    p 0.4: dearest 10.043 s at 51.264 ms/s, cheapest 6.000 s at 46.975 ms/s, spread 9.1 %
+
+  owned periods starting inside the window
+    p    interval      n  mean cost ms  mean length s  per second  poll  waiting
+    0.2     3.695    952       165.954          3.803      43.636  27.4     16.2
+    0.2     6.000    936       250.966          6.041      41.545  17.2     24.3
+    0.2    10.043    868       440.349         10.015      43.968  10.4     33.5
+    p 0.2: dearest 10.043 s at 43.968 ms/s, cheapest 6.000 s at 41.545 ms/s, spread 5.8 %
+    0.4     3.695    944       201.583          3.742      53.868  27.9     26.0
+    0.4     6.000    933       308.546          6.047      51.023  17.2     33.8
+    0.4    10.043    874       571.981         10.099      56.635  10.3     46.3
+    p 0.4: dearest 10.043 s at 56.635 ms/s, cheapest 6.000 s at 51.023 ms/s, spread 11.0 %
+
+Per seed, so the pooled rate is not one run talking: of the 20 seeds, how many
+have each arm as their dearest per second, over every owned period
+  p 0.2  3.695 s in 7 seed(s)   6.000 s in 6 seed(s)   10.043 s in 7 seed(s)
+  p 0.4  3.695 s in 8 seed(s)   6.000 s in 5 seed(s)   10.043 s in 7 seed(s)
+
+==============================================================================
+7  THE TWO UNITS SIDE BY SIDE, AND WHAT THE EARLIER PRECHECK READ
+==============================================================================
+The earlier scratch precheck charged SEND-TO-SEND: a decision's gap ran from the
+send it resolved to the pair's next send.  That gap starts before the decision
+was taken and books the time the resolution itself had already spent, about 2 s
+of it after a timeout.  This module charges DECISION-TO-DECISION.  Both rules are
+computed here, off one code path and one set of record tracks, so the difference
+below is a measured number and not a figure copied out of an older output.
+Both rules tile the run and both satisfy the identity on all 40 runs, asserted
+above; a decision's cost differs between them only in which period owns which
+millisecond.  Score ms per second of period, by cell.  Three row sets:
+  gap/caused   the earlier precheck's own rows: its gap, and its own filter --
+               the gap's closing send is a real send inside the window, with no
+               condition on where the gap STARTS
+  gap/start    its gap, filtered instead on the decision's resolved send being
+               inside the window, which is a condition no arm can move
+  period       this module's rule, filtered on the decision's own instant
+
+  p    cell          rows            3.695     6.000    10.043  dear  cheap     n
+  0.2  ans_empty     gap/caused      36.832    29.345    27.958 3.695 10.043  1464
+  0.2  ans_empty     gap/start       36.536    28.780    29.770 3.695  6.000  1424
+  0.2  ans_empty     period          36.449    30.424    32.580 3.695  6.000  1295
+  0.2  ans_content   gap/caused      34.965    32.220    33.197 3.695  6.000   877
+  0.2  ans_content   gap/start       34.965    32.220    33.197 3.695  6.000   877
+  0.2  ans_content   period          33.988    32.747    34.087 10.043  6.000   877
+  0.2  to1           gap/caused      65.332    63.454    61.943 3.695 10.043   351
+  0.2  to1           gap/start       63.589    62.136    58.742 3.695 10.043   369
+  0.2  to1           period          77.009    75.678    69.535 3.695 10.043   347
+  0.2  to2           gap/caused      96.070    88.010   107.336 10.043  6.000   184
+  0.2  to2           gap/start       96.070    86.069   103.367 10.043  6.000   191
+  0.2  to2           period         110.537    97.925   117.158 10.043  6.000   184
+  0.2  to3           gap/caused     110.911   137.357    99.790 6.000 10.043    53
+  0.2  to3           gap/start      110.911   131.000    98.446 6.000 10.043    55
+  0.2  to3           period         154.944   144.495   107.063 3.695 10.043    53
+  0.4  ans_empty     gap/caused      36.227    27.941    30.409 3.695  6.000  1156
+  0.4  ans_empty     gap/start       35.855    28.111    34.523 3.695  6.000  1082
+  0.4  ans_empty     period          35.099    29.325    38.461 10.043  6.000   989
+  0.4  ans_content   gap/caused      37.845    31.172    30.236 3.695 10.043   646
+  0.4  ans_content   gap/start       37.796    31.036    30.236 3.695 10.043   649
+  0.4  ans_content   period          36.128    31.275    32.153 3.695  6.000   645
+  0.4  to1           gap/caused      62.231    68.335    68.508 10.043  3.695   604
+  0.4  to1           gap/start       61.695    67.120    64.186 6.000  3.695   632
+  0.4  to1           period          73.562    77.371    77.270 6.000  3.695   597
+  0.4  to2           gap/caused      91.883    81.885    96.679 10.043  6.000   326
+  0.4  to2           gap/start       91.112    80.048    93.474 10.043  6.000   340
+  0.4  to2           period         109.358    93.310   105.378 3.695  6.000   324
+  0.4  to3           gap/caused     119.072   127.371   129.770 10.043  3.695   196
+  0.4  to3           gap/start      117.306   122.447   123.423 10.043  3.695   208
+  0.4  to3           period         128.191   132.695   136.221 10.043  3.695   196
+
+gap/caused against gap/start, over the 10 (p, cell) combinations:
+  the dearest and the cheapest arm both agree in 8, and differ in 2:
+  p 0.2 ans_empty    gap/caused dear 3.695 cheap 10.043 | gap/start dear 3.695 cheap 6.000
+  p 0.4 to1          gap/caused dear 10.043 cheap 3.695 | gap/start dear 6.000 cheap 3.695
+gap/start against period, over the 10 (p, cell) combinations:
+  the dearest and the cheapest arm both agree in 5, and differ in 5:
+  p 0.2 ans_content  gap/start  dear 3.695 cheap 6.000 | period dear 10.043 cheap 6.000
+  p 0.2 to3          gap/start  dear 6.000 cheap 10.043 | period dear 3.695 cheap 10.043
+  p 0.4 ans_content  gap/start  dear 3.695 cheap 10.043 | period dear 3.695 cheap 6.000
+  p 0.4 ans_empty    gap/start  dear 3.695 cheap 6.000 | period dear 10.043 cheap 6.000
+  p 0.4 to2          gap/start  dear 10.043 cheap 6.000 | period dear 3.695 cheap 6.000
+
+So the earlier precheck's own rows are the first set, and the two moves away
+from them are separable.
+- Its FILTER moves the long arm's rate the most, because that filter keeps a
+  pre-window decision -- one poll charge over a gap holding almost no record
+  time -- far more often for the long arm, which is the defect the earlier
+  verification named.  The move is visible in the ans_empty rows, where the early
+  decisions of a run sit.
+- The UNIT raises every timeout cell's level, because a period then holds the
+  next poll's own 2 s of waiting instead of handing it to the next decision.
+- At p 0.2 nothing is censored (part 1), so the gap/caused rows there are the
+  earlier precheck's quantity exactly.  At p 0.4 the earlier precheck could not
+  place 3.582 % of the cost (its censored residual, part 1), so its rates there
+  are lower than these by construction and the two are not the same quantity.
+
+So, reading by reading:
+- The residual.  The earlier precheck left a censored record's lower bound
+  unplaced, which was its whole residual.  Here that record waits at the hop it
+  never crossed and part 1's residual is 0 ms in both cells under both rules.
+  What is non-zero instead is the head and tail share of part 1, which the
+  earlier gap partition did not have: its gaps began at a send, so the time
+  before a pair's first decision sat inside its first gap.
+- The decision-counted reading.  The earlier precheck found 3.695 s cheapest per
+  DECISION in all five cells.  Part 6's mean-cost-per-period column reproduces
+  that ordering, and it is the same artefact: a period pays one poll whatever
+  interval it chose, so counting by decisions prices 3.695 s over 3.7 s the same
+  as 10.043 s over 10 s.
+- The time-fair reading per cell.  The earlier precheck's headline was that what
+  separates is always that 3.695 s is the DEAREST per second.  Of the 10
+  (p, cell) combinations, the number in which 3.695 s is the dearest:
+    gap/caused   5
+    gap/start    5
+    period       5
+  So the reading is not a property of the data alone: 5 of the 10 combinations
+  keep their dearest and cheapest arm across the two units and 5 do not, and
+  the list above says which.
+- The time-fair reading does NOT survive pooling the cells.  Pooled (part 6) the
+  three arms sit within 4.4 to 11.0 % of each other; the dearest per second is
+  10.043 s at p 0.2, 10.043 s at p 0.4; and the per-seed count splits
+  the dearest arm across all three arms.  The pooled rate is a quantity the
+  earlier precheck never computed, and
+  it is a worse statistic than the per-cell one for exactly the reason the cells
+  exist: an arm spends a different share of its seconds in the expensive timeout
+  cells, so the pooled rate mixes the cost of a cell with the cost of an arm.
+- What both units agree on is the SPLIT in part 6.  At p 0.2, over the in-window
+  periods, the poll cost per second falls with the interval (27.4 / 17.2 / 10.4
+  score ms/s) while the waiting cost per second rises with it (16.2 / 24.3 / 33.5),
+  and the two nearly cancel.  That near-cancellation is the finding to carry
+  forward, not either arm's name.
+
+==============================================================================
+8  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+==============================================================================
+The mutation is of the INPUT, inside this process.  Where a mutation moves the
+scorer's own terms as well as the periods', the UNMUTATED terms are handed to
+charge_run: recomputing both halves of the identity from one mutated log would
+move them together and the check would pass on a log that had lost a record.
+
+  load_run/two t0 values     FIRES: one node's t0 moved by 1 ms: 2 distinct t0_ms over the agent_start rows
+  chain/one send twice       FIRES: two decisions on one send: h0->h1 has two decisions resolving one send
+  chain/one instant twice    FIRES: two decisions at one instant: h0->h1 has a decision at or before its predecessor's own ts_ms (0.100 s then 0.100 s after the pair's first send), so its periods would not run forwards
+  tiling/span not covered    FIRES: a span the periods do not cover: h0->h1 starts 0.001 s into the run and ends 0.000 s before its end, instead of covering the whole span
+  tiling/a hole              FIRES: a hole between two periods: h0->h1 leaves a hole of 10.000 ms between period 0 and 1
+  placed/a send off the span FIRES: one in-window send outside every period: 1 in-window send(s) fell outside every period
+  placed/record_stored       FIRES: one record_stored removed: 0.000000 ms of waiting fell outside every period and 1 record(s) could not be placed -- h0 seq 1: the segments hold 116967.000000 ms of the 32215.000000 ms the scorer charges
+  chain/send out of window   FIRES: one send moved out of the window: h0->h1 resolved a poll sent 1.567 s after its first, which is not a send instant of that pair
+  chain/decision dropped     FIRES: one decision row dropped: h0->h1 sent 1 poll(s) before its last decision that no decision resolved, e.g. the one 56.361 s after its first send
+  tiling/overlap             FIRES: two periods overlapping: h0->h1 period 9 ends 1.000 ms before it starts, so it overlaps its neighbour
+  identity/a period short    FIRES: one period's waiting time lost: the periods hold 8608896.135967 ms, the scorer charges 8608897.135967 ms (difference -1.000000 ms)
+  log seeds > 20             FIRES: load_run: an emulator seed read by this workflow is a whole number 1 to 20; refused [21.0]
+  a log seed of 0            FIRES: load_run: an emulator seed read by this workflow is a whole number 1 to 20; refused [0.0]
+  a fractional log seed      FIRES: load_run: an emulator seed read by this workflow is a whole number 1 to 20; refused [20.9]
+  port.check_seeds > 100     FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+
+15 of 15 mutations produced a failure
+
+==============================================================================
+9  WHAT THIS MODULE DOES NOT SHOW
+==============================================================================
+- Nothing about which interval is better.  Part 6 is the cost that FOLLOWED a
+  decision over one period; the same decision also moves where a record arrives
+  inside the DOWNSTREAM pair's periods, and that cost is charged to the
+  downstream pair.  The partition is additive across decisions and is not
+  separable across pairs.
+- Nothing about the replay, where a score is taken.  Every number here is read
+  off the emulator log; the per-decision agreement between the two worlds is
+  recorded as failed in evidence/13 and no simulation is run here.
+- Nothing about any seed above 20, and nothing about the label files.
+- No standard error anywhere.  The per-seed count in part 6 counts seeds; it is
+  not an interval, and the pooled rate carries no spread.
+- The head and tail share is a cost no decision owns UNDER THIS PERIOD RULE.  It
+  is not a measurement error and it does not shrink by being charged to the
+  nearest decision: it would move onto that decision, which is the convention
+  the earlier precheck used and the reason its gaps began at a send.
+- Nothing about a discount.  Every number is undiscounted, as the score is.
+
+no check fired on real input; the failures in part 8 are the mutations
+end of charges.py

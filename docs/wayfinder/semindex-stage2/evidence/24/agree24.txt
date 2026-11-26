@@ -1,0 +1,57 @@
+
+========================================================================
+0  SCOPE AND CODE DIGESTS
+========================================================================
+mode            real (seeds 81 to 100, no verdict)
+  agree24.py     597f41a2f061237afb71a1e30d4c3c53f2c9ef3823ca498e0a2d289d26c34acb
+  m24.py         f93641cb4022a21437365f2f019d8c705e2cdffc99ba1654b879a4cdcdb79719
+  features.py    437e840b04d10d6e58ff28513f994cb85c63c135bc0baee2b230592b30e7b80e
+  charges.py     39c9b8669488b5e848e49e97781988f285245ecbe728b1526f70a5e41e8c0c40
+
+========================================================================
+1  SLICE, LABEL COUNTS AND BASELINE
+========================================================================
+label file      labels_p0.2.jsonl.gz (sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67)
+all rows        16071, seeds 1 to 100 (100 distinct)
+slice rows      3203 (seeds 81 to 100, 20 distinct), labelled=2841, ties=362
+  label  3.695 s:   640 (0.2253)
+  label  6.000 s:   703 (0.2474)
+  label 10.043 s:  1498 (0.5273)
+always 10.043 s baseline: 1498 / 2841 = 0.5273
+
+========================================================================
+2  CANDIDATES A AND B ON THE LABELLED SLICE
+========================================================================
+-- candidate a (coef sha256 bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf) --
+  repeat check (p0.2 seed 1 first resched): [1172.615656, 849.984901, 1891.158468] -> 6.000 s
+  agreement: 1074 / 2841 = 0.378036 (no pass or fail attached)
+  exact ties resolved by first-minimum rule: 0 / 2841
+  label \ answer        3.695    6.000   10.043 |   total per class
+  3.695                 177      316      147 |     640 0.2766
+  6.000                 195      309      199 |     703 0.4395
+  10.043                313      597      588 |    1498 0.3925
+  answers               685     1222      934 |    2841
+  answer shares      0.2411   0.4301   0.3288
+-- candidate b (coef sha256 532a43998fa62d21c03efba90478172f8f009fedd13b460edf3de2cbe805f2cb) --
+  repeat check (p0.2 seed 1 first resched): [857.063728, 380.882041, 797.278983] -> 6.000 s
+  agreement: 989 / 2841 = 0.348117 (no pass or fail attached)
+  exact ties resolved by first-minimum rule: 0 / 2841
+  label \ answer        3.695    6.000   10.043 |   total per class
+  3.695                 188      296      156 |     640 0.2938
+  6.000                 182      320      201 |     703 0.4552
+  10.043                463      554      481 |    1498 0.3211
+  answers               833     1170      838 |    2841
+  answer shares      0.2932   0.4118   0.2950
+
+========================================================================
+3  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  port.check_seeds > 100           FIRES: mut/101: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  slice guard outside range        FIRES: mut/slice: seeds outside 81..100: [80.0]
+  label file sha256 mismatch       FIRES: labels_p0.2.jsonl.gz sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67 != 0000000000000000000000000000000000000000000000000000000000000000
+  baseline count mismatch          FIRES: mut/base: top_count 1499 != 1498
+  table sum mismatch               FIRES: mut/tab: table sum 1 != 2841
+
+5 of 5 mutations produced a failure
+
+end of agree24.py

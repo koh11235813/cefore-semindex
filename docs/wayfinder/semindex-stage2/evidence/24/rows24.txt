@@ -1,0 +1,93 @@
+
+========================================================================
+0  SCOPE, DIGESTS AND SEED ROLE SEPARATION
+========================================================================
+stage            s11a, p 0.2 and 0.4, seeds 1 to 80
+charges default  MAX_LOG_SEED = 20 (this caller passes cap 80)
+window           10000.0 <= t_rel_ms <= 102000.0 (crit upper 60000.0)
+code digests (sha256):
+  rows24.py      5f4b3c8ba1a854aa7d3aef6fceb03b80c4c7d92390e7aa1640ab847673a34c88
+  m24.py         f93641cb4022a21437365f2f019d8c705e2cdffc99ba1654b879a4cdcdb79719
+  charges.py     39c9b8669488b5e848e49e97781988f285245ecbe728b1526f70a5e41e8c0c40
+  precheck.py    cf7fef699b93ff4c69309c47e54a197bc4d3613c57191481bf188bf4d52212df
+  features.py    437e840b04d10d6e58ff28513f994cb85c63c135bc0baee2b230592b30e7b80e
+
+seed roles:
+  fit      70 seeds (1 to 70)
+  held out 10 seeds (71 to 80)
+  disjoint from 121-160: True, fit & held disjoint: True
+  data files read: 160 runs, seed min 1 max 80 count 80
+
+========================================================================
+1  LAST-DECISION INSTANTS AND CANDIDATE ROW COUNTS
+========================================================================
+  p 0.2: decisions=12837  owned=12197  tail=640  last_decision_rel_ms min=117374.0 max=129999.0 (n=640 pairs*runs)
+  p 0.4: decisions=12824  owned=12184  tail=640  last_decision_rel_ms min=117796.0 max=129994.0 (n=640 pairs*runs)
+
+  candidate a: total_owned=12197  fit=7837  held=1104  crit=599
+  candidate b: total_owned=24381  fit=15633  held=2194  crit=1187
+  candidate b fit p0.4 share: 7796 / (7837 + 7796) = 0.498689
+
+========================================================================
+2  FITTED ROWS: IN-WINDOW SEND COUNTS BY CELL AND ARM (SPEC SECTION 2)
+========================================================================
+p 0.2 (fit rows = 7837):
+  arm         0_sends   1_send  2_sends >2_sends    total
+  3.695             9     2584        6        0     2599
+  6.000             5     2682        6        0     2693
+  10.043            7     2531        7        0     2545
+  by scalar state cell:
+    ans_empty        10     3084        8        0     3102
+    ans_content       7     2980       11        0     2998
+    to1               3     1040        0        0     1043
+    to2               1      524        0        0      525
+    to3               0      169        0        0      169
+p 0.4 (fit rows = 7796):
+  arm         0_sends   1_send  2_sends >2_sends    total
+  3.695             3     2602        5        0     2610
+  6.000             5     2620        4        0     2629
+  10.043            3     2550        4        0     2557
+  by scalar state cell:
+    ans_empty         4     2499        9        0     2512
+    ans_content       3     2137        4        0     2144
+    to1               3     1656        0        0     1659
+    to2               1      895        0        0      896
+    to3               0      585        0        0      585
+
+========================================================================
+3  FITTED ROWS' LOGGED RATE R_FIT AND RUN-CLUSTERED SE (SEEDS 1 TO 70)
+========================================================================
+  p 0.2 (70 runs, 7837 fit rows): R_fit = 48.8953  ratio_SE = 0.6317  per_run_mean = 48.8937  per_run_SE = 0.6325
+  p 0.4 (70 runs, 7796 fit rows): R_fit = 62.1939  ratio_SE = 1.2087  per_run_mean = 62.2293  per_run_SE = 1.2129
+
+========================================================================
+4  DEAD AND NEAR-CONSTANT CELLS ON THE FIT ROWS
+========================================================================
+candidate a: 154 dead cells, 107 live cells (3*(1+107)+1 = 325 unknowns, 24.11 fit rows/live unknown)
+  dead (154): res_present, in_flight, last_poll_status_none, last_poll_status_pending, fetch_timeout_present, fetch_timeout_age_s, origins_omitted, o1_advertisers_omitted, o1_p3_present, o1_p3_peer, o1_p3_hi, o1_p3_notified_max, o1_p4_present, o1_p4_peer, o1_p4_hi, o1_p4_notified_max, o2_advertisers_omitted, o2_p3_present, o2_p3_peer, o2_p3_hi, o2_p3_notified_max, o2_p4_present, o2_p4_peer, o2_p4_hi, o2_p4_notified_max, o3_present, o3_hi, o3_missing, o3_advertisers_omitted, o3_p1_present, o3_p1_peer, o3_p1_hi, o3_p1_notified_max, o3_p2_present, o3_p2_peer, o3_p2_hi, o3_p2_notified_max, o3_p3_present, o3_p3_peer, o3_p3_hi, o3_p3_notified_max, o3_p4_present, o3_p4_peer, o3_p4_hi, o3_p4_notified_max, o4_present, o4_hi, o4_missing, o4_advertisers_omitted, o4_p1_present, o4_p1_peer, o4_p1_hi, o4_p1_notified_max, o4_p2_present, o4_p2_peer, o4_p2_hi, o4_p2_notified_max, o4_p3_present, o4_p3_peer, o4_p3_hi, o4_p3_notified_max, o4_p4_present, o4_p4_peer, o4_p4_hi, o4_p4_notified_max, o5_present, o5_hi, o5_missing, o5_advertisers_omitted, o5_p1_present, o5_p1_peer, o5_p1_hi, o5_p1_notified_max, o5_p2_present, o5_p2_peer, o5_p2_hi, o5_p2_notified_max, o5_p3_present, o5_p3_peer, o5_p3_hi, o5_p3_notified_max, o5_p4_present, o5_p4_peer, o5_p4_hi, o5_p4_notified_max, o6_present, o6_hi, o6_missing, o6_advertisers_omitted, o6_p1_present, o6_p1_peer, o6_p1_hi, o6_p1_notified_max, o6_p2_present, o6_p2_peer, o6_p2_hi, o6_p2_notified_max, o6_p3_present, o6_p3_peer, o6_p3_hi, o6_p3_notified_max, o6_p4_present, o6_p4_peer, o6_p4_hi, o6_p4_notified_max, o7_present, o7_hi, o7_missing, o7_advertisers_omitted, o7_p1_present, o7_p1_peer, o7_p1_hi, o7_p1_notified_max, o7_p2_present, o7_p2_peer, o7_p2_hi, o7_p2_notified_max, o7_p3_present, o7_p3_peer, o7_p3_hi, o7_p3_notified_max, o7_p4_present, o7_p4_peer, o7_p4_hi, o7_p4_notified_max, o8_present, o8_hi, o8_missing, o8_advertisers_omitted, o8_p1_present, o8_p1_peer, o8_p1_hi, o8_p1_notified_max, o8_p2_present, o8_p2_peer, o8_p2_hi, o8_p2_notified_max, o8_p3_present, o8_p3_peer, o8_p3_hi, o8_p3_notified_max, o8_p4_present, o8_p4_peer, o8_p4_hi, o8_p4_notified_max, x1_present, x1_clamped, x2_clamped, x3_clamped, x4_clamped, x5_clamped, x6_clamped, x7_clamped, x8_clamped
+  near-constant (0 < non-mode <= 20):
+    o2_missing                   7 / 7837
+candidate b: 151 dead cells, 110 live cells (3*(1+110)+2 = 335 unknowns, 46.67 fit rows/live unknown)
+  dead (151): res_present, last_poll_status_none, last_poll_status_pending, origins_omitted, o1_advertisers_omitted, o1_p3_present, o1_p3_peer, o1_p3_hi, o1_p3_notified_max, o1_p4_present, o1_p4_peer, o1_p4_hi, o1_p4_notified_max, o2_advertisers_omitted, o2_p3_present, o2_p3_peer, o2_p3_hi, o2_p3_notified_max, o2_p4_present, o2_p4_peer, o2_p4_hi, o2_p4_notified_max, o3_present, o3_hi, o3_missing, o3_advertisers_omitted, o3_p1_present, o3_p1_peer, o3_p1_hi, o3_p1_notified_max, o3_p2_present, o3_p2_peer, o3_p2_hi, o3_p2_notified_max, o3_p3_present, o3_p3_peer, o3_p3_hi, o3_p3_notified_max, o3_p4_present, o3_p4_peer, o3_p4_hi, o3_p4_notified_max, o4_present, o4_hi, o4_missing, o4_advertisers_omitted, o4_p1_present, o4_p1_peer, o4_p1_hi, o4_p1_notified_max, o4_p2_present, o4_p2_peer, o4_p2_hi, o4_p2_notified_max, o4_p3_present, o4_p3_peer, o4_p3_hi, o4_p3_notified_max, o4_p4_present, o4_p4_peer, o4_p4_hi, o4_p4_notified_max, o5_present, o5_hi, o5_missing, o5_advertisers_omitted, o5_p1_present, o5_p1_peer, o5_p1_hi, o5_p1_notified_max, o5_p2_present, o5_p2_peer, o5_p2_hi, o5_p2_notified_max, o5_p3_present, o5_p3_peer, o5_p3_hi, o5_p3_notified_max, o5_p4_present, o5_p4_peer, o5_p4_hi, o5_p4_notified_max, o6_present, o6_hi, o6_missing, o6_advertisers_omitted, o6_p1_present, o6_p1_peer, o6_p1_hi, o6_p1_notified_max, o6_p2_present, o6_p2_peer, o6_p2_hi, o6_p2_notified_max, o6_p3_present, o6_p3_peer, o6_p3_hi, o6_p3_notified_max, o6_p4_present, o6_p4_peer, o6_p4_hi, o6_p4_notified_max, o7_present, o7_hi, o7_missing, o7_advertisers_omitted, o7_p1_present, o7_p1_peer, o7_p1_hi, o7_p1_notified_max, o7_p2_present, o7_p2_peer, o7_p2_hi, o7_p2_notified_max, o7_p3_present, o7_p3_peer, o7_p3_hi, o7_p3_notified_max, o7_p4_present, o7_p4_peer, o7_p4_hi, o7_p4_notified_max, o8_present, o8_hi, o8_missing, o8_advertisers_omitted, o8_p1_present, o8_p1_peer, o8_p1_hi, o8_p1_notified_max, o8_p2_present, o8_p2_peer, o8_p2_hi, o8_p2_notified_max, o8_p3_present, o8_p3_peer, o8_p3_hi, o8_p3_notified_max, o8_p4_present, o8_p4_peer, o8_p4_hi, o8_p4_notified_max, x1_present, x1_clamped, x2_clamped, x3_clamped, x4_clamped, x5_clamped, x6_clamped, x7_clamped, x8_clamped
+  near-constant (0 < non-mode <= 20):
+    in_flight                    2 / 15633
+    fetch_timeout_present        4 / 15633
+    fetch_timeout_age_s          4 / 15633
+    o2_missing                   12 / 15633
+
+========================================================================
+5  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  learn seed > 80                  FIRES: mut/81: learning seeds must be whole numbers 1 to 80; refused [81.0]
+  learn seed 0                     FIRES: mut/0: learning seeds must be whole numbers 1 to 80; refused [0.0]
+  learn seed fractional            FIRES: mut/frac: learning seeds must be whole numbers 1 to 80; refused [1.5]
+  charges.load_run cap 80 > 80     FIRES: load_run: an emulator seed read by this workflow is a whole number 1 to 80; refused [81.0]
+  port.check_seeds > 100           FIRES: mut/101: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  action_prob != 1/3               FIRES: mut/ap: 1 row(s) with action_prob != 1/3, first 0.5
+  terminal row in fit window       FIRES: mut/term: fitted row p0.2 seed 1 ('h0', 'h1') pos 1 is terminal
+  tau > 14.0                       FIRES: mut/tau: 1 tau(s) outside [1.0, 14.0], e.g. 14.1000
+  successor wrong seed             FIRES: mut/succ-seed: successor key ('0.2', 999, ('h0', 'h1')) != row key ('0.2', 1, ('h0', 'h1'))
+
+9 of 9 mutations produced a failure
+
+end of rows24.py

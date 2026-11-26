@@ -1,0 +1,366 @@
+THIS IS NOT M.
+
+M is the decision maker learned from the s11a EMULATOR logs and scored in the
+replay.  This file touches neither.  It fits a small classifier to ticket 09's
+LABEL rows and reports its agreement with those labels on seeds 71 to 80.
+A label is the arm that is best IF the formula rule takes over afterwards,
+measured inside the replay over 8 passes, so agreement with it is a measure of
+neither arm and of no policy.  Nothing below is M's number, nothing below is a
+score, and no replay simulation and no emulator log is read here at all.
+The question it answers is narrower: is there learnable signal in these labels?
+
+==============================================================================
+0  THE FILE, AND THE SEEDS
+==============================================================================
+label cell       labels_p0.2.jsonl.gz, the main cell; p 0.4's labels are not read
+sha256           fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67
+                 == ../22/labels.sha256, checked before any row was parsed
+rows kept        12868, of seeds 1 to 80 (80 distinct)
+the cut          features.label_rows parses each line of the file and drops the
+                 row if its seed is above 80, so nothing of the selection half
+                 (81 to 100) is counted, rendered, fitted or summarised anywhere
+                 here.  The cut is before anything is computed from a row, not
+                 before the line is parsed: the seed is a field of the row, and
+                 the committed digest covers the whole file either way
+seed guards      features.check_label_seeds refuses a label seed above 80 and
+                 port.check_seeds refuses one above 100; part 6 shows both firing
+the split        seeds 1 to 70 fit, 71 to 80 read out, which is the split ticket
+                 10 tuned the language model under
+
+==============================================================================
+1  THE TWO ROW SETS, AND WHY rows.py IS NOT IMPORTED
+==============================================================================
+../23/rows.py fixed the two candidates and counted them.  It is not imported:
+it makes 61 call(s) at top level, 49 of which print, so `import rows` would run
+its whole analysis and write its own output -- machine paths included -- into
+this one's.  Counted off its source with `ast`, running none of it.
+
+What IS imported, so that no definition is written twice:
+  ../22/label.py       2 top-level call(s), none of which print
+  ../22/stability.py   1 top-level call(s), none of which print
+  label.paired_t       the statistic candidate b is selected by
+  stability.T_BINS     the last bin's lower edge, which is the bar 3.0
+
+Candidate a   every kept row that carries a label.
+Candidate b   the rows of a with t >= 3.0 - 1e-06, or sd = 0 and labelled.
+              The tolerance is there because the t of a row is a mass point at
+              3.0 and a bare float comparison splits that clump by the order
+              the sums ran in.
+
+  candidate     fit rows   read-out    rows.txt fit   rows.txt out  equal
+  a                10013       1425           10013           1425  True
+  b                 4018        568            4018            568  True
+
+  the five scalar cells of the read-out rows, to show the five names exhaust
+  them and that the cell-only classifier has something to read
+  candidate    ans_empty ans_content     to1     to2     to3      all
+  a                  746         436     151      71      21     1425
+  b                  307         130      79      36      16      568
+
+  the label each read-out row carries, per arm
+  candidate       3.695 s    6.000 s   10.043 s always-top arm
+  a                   341        357        727   10.043 s 0.5102
+  b                    89         91        388   10.043 s 0.6831
+
+==============================================================================
+2  THE THREE PREDICTORS
+==============================================================================
+All three are fitted on seeds 1 to 70 of their own row set and read out on 71 to
+80.  No read-out row's seed is in any fit (asserted in part 1).
+
+  full vector  closed-form ridge from the 261-cell feature vector to the three
+               one-hot targets, penalty 10.0 on features standardised on the fit
+               rows, the answer being the largest of the three outputs
+  five cells   the same arithmetic on the five scalar-cell indicators alone,
+               which is what ADR 0004 line 5 permits a policy to read
+  majority     always the fit rows' most frequent arm, which reads no input
+
+The feature vector is built from each row's own observation through
+features.record_from_label_row, which is observe.observation on the row's
+`state`, `resolved`, `history`, `ts_ms` and `neighbor` -- the same five fields,
+in the same call, that the language model's text was rendered from.  A tie among
+the three outputs goes to the first arm in the order
+[3.695, 6.0, 10.043], which is the rule the language model's three words
+were picked by.
+
+==============================================================================
+3  THE READ-OUT, SEEDS 71 TO 80
+==============================================================================
+Agreement is the share of read-out rows whose answer is the row's label.  The
+baseline is the always-10.043 s answer on THOSE rows, which is also the most
+frequent arm there.  The difference is paired inside a bootstrap of 2000 resamples
+of the TEN read-out seeds with replacement (numpy.random.default_rng(20261125)),
+so the SE carries the between-run spread and not a between-row one.  The `diff`
+column is that bootstrap's own mean of the paired difference, which sits a few
+ten-thousandths off the plain difference because a resample reweights the seeds;
+the plain difference is the one the verdict below the table divides by the SE.
+
+The language model's own agreement on the SAME rows is the last column, read off
+../23/tune.txt's own part 4: its kept epoch's held-out agreement.  It is the
+number this module exists to stand beside.
+
+  set   predictor       rows     agreed  agreement    baseline     diff      SE    the model
+  a     full vector     1425        769     0.5396      0.5102   0.0298  0.0101     757/1425
+  a     five cells      1425        727     0.5102      0.5102   0.0000  0.0000             
+  a     majority        1425        727     0.5102      0.5102   0.0000  0.0000             
+  a     the model       1425        757     0.5312      0.5102   0.0210              epoch 2
+  b     full vector      568        412     0.7254      0.6831   0.0421  0.0107      406/568
+  b     five cells       568        388     0.6831      0.6831   0.0000  0.0000             
+  b     majority         568        388     0.6831      0.6831   0.0000  0.0000             
+  b     the model        568        406     0.7148      0.6831   0.0317              epoch 3
+
+  The model's own row carries tune.txt's single archived number and no SE: it
+  is one read-out of one adapter, so the two `diff` columns are not two draws of
+  one quantity and their difference is not tested anywhere.
+
+  THE ANSWER TO THE QUESTION, in the numbers above:
+  candidate a: the full vector agrees 0.5396 against the always-10.043 baseline
+    0.5102, which is +0.0295, or 2.9 times the bootstrap SE 0.0101 of 10 read-out
+    SEED clusters.  Read per seed instead: the paired difference is +0.0294
+    with SE 0.0104, t 2.82 on 9 degrees of freedom, and 8 of the 10 seeds
+    positive.  With ten clusters that ratio is not a normal z, which is why
+    the count is beside it.
+    The five cells' ARGMAX agrees 0.5102, the baseline to 0.0000: it never leaves
+    the majority arm 10.043, so an argmax read-out of them is the prior by
+    construction.  What the cells do carry is the next two tables, not this
+    one.
+  candidate b: the full vector agrees 0.7254 against the always-10.043 baseline
+    0.6831, which is +0.0423, or 3.9 times the bootstrap SE 0.0107 of 10 read-out
+    SEED clusters.  Read per seed instead: the paired difference is +0.0428
+    with SE 0.0109, t 3.94 on 9 degrees of freedom, and 9 of the 10 seeds
+    positive.  With ten clusters that ratio is not a normal z, which is why
+    the count is beside it.
+    The five cells' ARGMAX agrees 0.6831, the baseline to 0.0000: it never leaves
+    the majority arm 10.043, so an argmax read-out of them is the prior by
+    construction.  What the cells do carry is the next two tables, not this
+    one.
+
+  the per-seed paired differences of the full vector, so the ten clusters the SE
+  is taken over are visible and not only their spread
+  candidate a   +0.035 -0.007 +0.064 +0.049 +0.031 +0.047 +0.048 +0.045 +0.029 -0.048
+  candidate b   +0.062 +0.038 +0.051 +0.054 +0.078 +0.063 +0.018 +0.079 +0.017 -0.033
+
+  ties among the three outputs, which would mean the answer came from the arm
+  order and not from the data
+  candidate a   full vector 0, five cells 0, of 1425 read-out rows
+  candidate b   full vector 0, five cells 0, of 568 read-out rows
+
+  A CALIBRATED READ-OUT OF THE SAME THREE PREDICTORS, because agreement is an
+  argmax and an argmax cannot tell a predictor that carries nothing from one
+  that carries something it never reorders.  The Brier score is the mean squared
+  distance from a row's three outputs to its one-hot label, lower being better,
+  and the prior row is the fit rows' own class shares handed to every read-out
+  row.  The SE column is the same seed bootstrap as above, on the paired
+  difference from the prior, so a negative `diff` is a predictor that beats the
+  prior on all three outputs and not only at its argmax.
+
+  set   predictor         Brier      prior       diff       SE
+  a     full vector      0.5375     0.6201    -0.0826   0.0070
+  a     five cells       0.6158     0.6201    -0.0042   0.0016
+  a     majority         0.6201     0.6201     0.0000   0.0000
+  b     full vector      0.3647     0.4832    -0.1185   0.0127
+  b     five cells       0.4696     0.4832    -0.0136   0.0029
+  b     majority         0.4832     0.4832     0.0000   0.0000
+
+
+  THE CORRECTED READING OF THE FIVE CELLS, in those two columns: their Brier
+  score is BELOW the prior's on both row sets, by a few times its own seed-
+  clustered SE, so they do carry label information -- what they never do is move
+  the largest of the three outputs off 10.043, which is why the argmax table above
+  reads as the prior exactly.  The full vector's Brier gain is an order of
+  magnitude larger than theirs on both sets.  2026-11-25: the first version of
+  this part read the equality of the argmax numbers as `the cells add nothing`,
+  which the two tables here contradict.
+
+  WHAT THE FIVE CELLS CARRY, as the label against the cell on the SAME rows.
+  The counts are the read-out rows; the share columns are P(label | cell).  If
+  the cells carried no label information these five rows would be one
+  distribution.  The statistic is the chi-square of independence with its degrees
+  of freedom, and the p is the share of 2000 label PERMUTATIONS of the same rows
+  whose statistic reached the real one (a permutation and not a table lookup, so
+  it is a number this module computed).  Note what it does NOT overturn: 10.043
+  is the majority label inside every one of the five cells, which is why the
+  argmax read-out above equals the prior exactly.
+
+  candidate a, read-out rows, seeds 71 to 80
+    cell            rows   P(3.695)   P(6.000)  P(10.043)   majority
+    ans_empty        746     0.2118     0.2426     0.5456     10.043
+    ans_content      436     0.2798     0.2821     0.4381     10.043
+    to1              151     0.2119     0.2119     0.5762     10.043
+    to2               71     0.3521     0.1831     0.4648     10.043
+    to3               21     0.1905     0.3810     0.4286     10.043
+    every row       1425     0.2393     0.2505     0.5102     10.043
+    chi-square 23.5 on 8 degrees of freedom, permutation p 0.0020
+
+  candidate b, read-out rows, seeds 71 to 80
+    cell            rows   P(3.695)   P(6.000)  P(10.043)   majority
+    ans_empty        307     0.1173     0.1433     0.7394     10.043
+    ans_content      130     0.1923     0.2385     0.5692     10.043
+    to1               79     0.1392     0.0886     0.7722     10.043
+    to2               36     0.3889     0.1389     0.4722     10.043
+    to3               16     0.1875     0.2500     0.5625     10.043
+    every row        568     0.1567     0.1602     0.6831     10.043
+    chi-square 33.2 on 8 degrees of freedom, permutation p 0.0005
+
+  candidate a, fit rows, seeds 1 to 70
+    cell            rows   P(3.695)   P(6.000)  P(10.043)   majority
+    ans_empty       5069     0.1900     0.2673     0.5427     10.043
+    ans_content     2970     0.2697     0.2747     0.4556     10.043
+    to1             1225     0.2098     0.2016     0.5886     10.043
+    to2              567     0.2857     0.2610     0.4533     10.043
+    to3              182     0.3132     0.2692     0.4176     10.043
+    every row      10013     0.2237     0.2612     0.5151     10.043
+    chi-square 139.0 on 8 degrees of freedom, permutation p < 0.0005
+
+  candidate b, fit rows, seeds 1 to 70
+    cell            rows   P(3.695)   P(6.000)  P(10.043)   majority
+    ans_empty       2090     0.1163     0.1440     0.7397     10.043
+    ans_content      939     0.2055     0.2066     0.5879     10.043
+    to1              622     0.1286     0.1093     0.7621     10.043
+    to2              267     0.2809     0.1760     0.5431     10.043
+    to3              100     0.3400     0.1800     0.4800     10.043
+    every row       4018     0.1556     0.1563     0.6882     10.043
+    chi-square 155.8 on 8 degrees of freedom, permutation p < 0.0005
+
+==============================================================================
+4  THE 3 x 3 TABLE OF ANSWERS AGAINST LABELS
+==============================================================================
+Rows are the label the file carries, columns the answer.  A predictor whose
+argmax never leaves the majority arm fills one column: that is what the five-cell
+classifier and the majority both do below, and it is NOT the same statement as
+`the cells carry no label information` -- the cross-tab above shows they do.  One
+column means the information never reorders the three outputs, nothing more.
+
+  candidate a, full vector
+    label        answer 3.695 answer 6.000 answer 10.043       rows
+    3.695                90         63        188        341
+    6.000                76         75        206        357
+    10.043               55         68        604        727
+    answers             221        206        998       1425
+
+  candidate a, five cells
+    label        answer 3.695 answer 6.000 answer 10.043       rows
+    3.695                 0          0        341        341
+    6.000                 0          0        357        357
+    10.043                0          0        727        727
+    answers               0          0       1425       1425
+
+  candidate a, majority
+    label        answer 3.695 answer 6.000 answer 10.043       rows
+    3.695                 0          0        341        341
+    6.000                 0          0        357        357
+    10.043                0          0        727        727
+    answers               0          0       1425       1425
+
+  candidate b, full vector
+    label        answer 3.695 answer 6.000 answer 10.043       rows
+    3.695                26         13         50         89
+    6.000                17         14         60         91
+    10.043               10          6        372        388
+    answers              53         33        482        568
+
+  candidate b, five cells
+    label        answer 3.695 answer 6.000 answer 10.043       rows
+    3.695                 0          0         89         89
+    6.000                 0          0         91         91
+    10.043                0          0        388        388
+    answers               0          0        568        568
+
+  candidate b, majority
+    label        answer 3.695 answer 6.000 answer 10.043       rows
+    3.695                 0          0         89         89
+    6.000                 0          0         91         91
+    10.043                0          0        388        388
+    answers               0          0        568        568
+
+==============================================================================
+5  THE FIT SIDE, SO OVER-FITTING IS VISIBLE
+==============================================================================
+The same three predictors' agreement on the rows they were fitted on, seeds 1 to
+70.  A full-vector fit that sat far above its read-out number would be reading
+its own fit rows; the gap below is what says how much of that there is.
+
+  set   predictor    fit rows on the fit   read out        gap
+  a     full vector     10013     0.5399     0.5396     0.0002
+  a     five cells      10013     0.5151     0.5102     0.0050
+  a     majority        10013     0.5151     0.5102     0.0050
+  b     full vector      4018     0.7337     0.7254     0.0083
+  b     five cells       4018     0.6882     0.6831     0.0051
+  b     majority         4018     0.6882     0.6831     0.0051
+
+==============================================================================
+6  EVERY CHECK, SHOWN FAILING ON A MUTATED INPUT
+==============================================================================
+The mutation is of the INPUT, inside this process: a row list, a count, a set of
+outputs or a file name made wrong on purpose.
+
+  label file digest          FIRES: labels_p0.2.jsonl.gz has sha256 fe194e3c43d40e70b5f95bc8af5b20134b342c531f401a51249001bab04c2f67, and labels.sha256 says deadbeef
+  label seeds > 80           FIRES: mutated: a label seed read here is a whole number 1 to 80, the tuning half; refused [81.0]
+  port.check_seeds > 100     FIRES: mutated: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  counts against rows.txt    FIRES: one row too many: this module counts (10013, 1426) and rows.txt archives (10013, 1425)
+  fit and read-out split     FIRES: the fit read out on itself: 70 seed(s) are in the fit and in the read-out, e.g. [1, 2, 3, 4]
+  seed outside 1 to 80       FIRES: a selection-half row: 1 seed(s) outside 1 to 80, e.g. [81]
+  every row resolved         FIRES: a send-time row: 1 row(s) carry no resolution, the first at index 0
+  cell without a resolution  FIRES: a record with no resolution has no cell
+  the 3 x 3 table closes     FIRES: an empty table: the table holds 0 of the 1 read-out row(s), with 1 answer(s)
+  agreement over no row      FIRES: agreement over no row
+  a regex that finds nothing FIRES: mutated: nothing matches 'no such line anywhere'
+  a module prints at import  FIRES: mutated: rows.py makes 49 top-level call(s) that print, e.g. head()
+  rows.txt, a split unpaired FIRES: rows.txt names 3 candidate split line(s) and 2 baseline line(s)
+  rows.txt, another split    FIRES: rows.txt splits candidate c at seeds 1-60 and 61-80, this module at 1-70 and 71-80
+  tune.txt, one candidate    FIRES: tune.txt part 4 names the candidates ['b'], not a and b
+  tune.txt, other rows       FIRES: tune.txt read candidate a out on 1426 rows and this module on 1425
+  tune.txt, another baseline FIRES: tune.txt's baseline for candidate a is 0.5000 and this module's is 0.600000
+  a chi-square of nothing    FIRES: a chi-square over an empty table
+
+18 of 18 mutations produced a failure
+
+Two checks no input mutation can fail, named rather than left out:
+- that a tie goes to the first arm.  `pick` scans for a STRICTLY greater output,
+  so the first maximum is kept by construction and no input can change that.
+  What can be shown is the rule's answer on a hand-made tie, which is next.
+  pick([1.0, 1.0, 1.0]) returns index 0 (3.695 s) and reports the tie: True
+- that the feature vector carries what the rendered text carries.  That is
+  features.py's own round trip, shown failing on mutated records in its part 6,
+  and nothing here can make it fail again.
+
+==============================================================================
+7  WHAT THIS RESULT CAN AND CANNOT MEAN
+==============================================================================
+- A LABEL IS NOT A VERDICT ON AN ARM.  It is the arm that is best IF the formula
+  rule takes over afterwards, measured inside the replay over 8 passes.  So a
+  high agreement means a classifier matched that quantity, not that it would
+  lower a score, and a low one does not say the arm was wrong.
+- THE LABELS DISAGREE WITH THEMSELVES.  Two independent 8-pass labellings of the
+  same decisions agreed on 0.7577 of the 1366 decisions they both labelled
+  (../22/stability.txt, seeds 1 to 10 of this cell, read off that file and not
+  typed here).  So 0.2423 of them got a DIFFERENT label, and a classifier that
+  matched these labels perfectly would be matching a teacher that disagrees with
+  itself about a quarter of the time.
+  That share is an upper bound on the labels that are pass noise, not an
+  estimate of it: one disagreement needs only one of the two sides to be wrong.
+- AN ARGMAX AND A SIGNAL ARE NOT THE SAME QUESTION.  The five cells' argmax equals
+  the prior exactly, and their Brier score and the cross-tab both say they carry
+  label information.  So nothing here says the ADR 0004 scalars carry no signal;
+  what it says is that a three-arm argmax read-out of them cannot express the
+  signal they have, because 10.043 is the majority inside all five cells.  How
+  much of the full vector's own gain lies OUTSIDE the cells is not decomposed
+  here: its Brier gain is the larger of the two on both row sets, and no number
+  in this file splits it into a part the cells reach and a part they do not.
+- AGREEMENT IS NOT A SCORE.  No replay simulation is run here and no score is
+  computed.  The choice between any two deciders is made on replay scores of the
+  selection seeds, which this file does not read.
+- THE ROW SETS ARE NOT A SAMPLE OF DECISIONS.  Candidate a drops the ties and
+  candidate b keeps about four tenths of a, selected by the paired t of the very
+  passes that produced the label, so b's rows are the ones the labelling was
+  most sure of and its baseline is higher for that reason.
+- NOTHING HERE IS ABOUT M.  M reads emulator logs, not label rows, and the rows
+  it learns from carry no label at all: the labels were attached to decisions
+  inside a replay roll-in, so there is no row-level join between the two.
+- Nothing about the p 0.4 label cell, which is not read, and nothing about seeds
+  81 to 100, which are the selection half.
+- The penalty 10.0 is fixed and not tuned; nothing here says it is the best one,
+  and a penalty chosen against the read-out rows would make them part of the fit.
+
+no check fired on real input; the failures in part 6 are the mutations
+end of labelsig.py
