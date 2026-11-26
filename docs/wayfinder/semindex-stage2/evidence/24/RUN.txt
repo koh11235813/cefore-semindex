@@ -967,7 +967,7 @@ did more than that was the one the numbers themselves refuted.
 
 Results (reproducing the cross-verification's numbers independently, from the committed
 rows and the shipped coef_a.npy, not read from its scratch output):
-  - 40 of 261 live cells have |within-run corr(decision time)| > 0.5 (max |corr| 0.9482,
+  - 40 of the 261 cells have |within-run corr(decision time)| > 0.5 (max |corr| 0.9482,
     cell o1_p1_hi); named in drift24.txt section 1 with their own correlations.
   - Re-solved locally: rho_0 = 17.2626 (gap vs R_fit 48.8953 = -31.6327), matching
     coef_a.npy to 2.547e-09 max|w| 1022.52 (gate: within 1e-6, greedy answers identical
@@ -1161,3 +1161,93 @@ that a reader of sections 7 to 9 knows which sentences there stand.
   - Whether the 28 s the fit window removes at the end of a run changes M's replay score.
   - Which interpreter ran the fit on hpc-debian beyond what learn24.txt prints
     (numpy 2.5.4, python 3.13.5).
+
+========================================================================
+12  AN OUTSIDE REVIEW OF THE WHOLE STEP, AND WHAT WAS DONE ABOUT EACH FINDING
+========================================================================
+2026-11-26 22:14 to 22:23 JST, on a detached checkout of commit 6bc1bb9
+(/home/lab_shared/wt/semindex-ev24-review).  README.md did not exist yet and was not
+part of this review; it is reviewed separately when it is written.
+
+  12.1  THE REVIEWER THAT REPORTED
+  ------------------------------------------------------------------
+  cd /home/lab_shared/wt/semindex-ev24-review && pi --no-session --tools read,grep,find,ls \
+      --model opencode-go/glm-5.3 -p @.review/prompt.md "..." </dev/null > .review/pi.md
+  exit 0, stderr 0 bytes, 15431 bytes of report, about 9 minutes.  Its tools are read,
+  grep, find and ls: it could run no code, no git command and no hash, and says so.
+  Its last line begins "VERDICT: no blocker" and names what remains: a dropped limit,
+  a promise of spec.md section 2 that was never carried out, and citation and wording
+  nits.  Eight findings, five minor and three nits.  Each was reproduced against the
+  files before it was answered.  NO REPORTED NUMBER MOVES.
+
+  12.2  THE EIGHT FINDINGS
+  ------------------------------------------------------------------
+  1 (minor, REPRODUCED, FIXED in the ticket).  The ticket's result dropped limits that
+    spec.md section 16 names: threats 17 and 8 (the penalty), 14 (the window), 9 (the
+    cells M is blind to), 13 (candidate b's p 0.4 rows) and 15 (polled_peer).  Threat 17
+    is the one the output bears on.  learn24.txt section 2 prints, for candidate a,
+    Crit 964002.421 +- 103299.380 at lambda 1e-4 and 1153791.762 +- 89748.023 at 0.001;
+    for candidate b 1504845.030 +- 312915.710 and 1792634.198 +- 292152.717.  The
+    differences (189789.341 and 287789.168) are of the size of the printed standard
+    errors.  Those errors are per penalty on the same Crit rows; NO PAIRED STANDARD
+    ERROR OF THE DIFFERENCE IS PRINTED, so this record can say neither that lambda* is
+    separated from its neighbour nor that it is not.  The reviewer's "1.4 SE" and
+    "0.7 SE" treat the two as independent, which they are not; the conclusion a reader
+    may draw is the plan's own: lambda* is not shown to be distinguished from its grid
+    neighbour.  The ticket's open items now carry the five, each with its numbers.
+  2 (minor, REPRODUCED, FIXED in the ticket, and sharpened).  spec.md section 2 says
+    that if any pair's last decision falls before 128294 ms "the plan says so".
+    rows24.txt section 1 prints minima of 117374.0 ms (p 0.2) and 117796.0 ms (p 0.4),
+    and no file said so.  The reviewer reads the guarantee as resting on the direct
+    assertion alone.  It rests on a little more than that, and on a thin margin: a
+    fitted row is decided at or before 102000 ms and rows24.py asserts every fitted
+    period is at most 14.0 s, so its successor falls at or before 116000 ms, which is
+    before every pair's last decision (117374.0 ms at the earliest).  The successor is
+    therefore never a pair's last decision and every fitted row still has two further
+    decisions.  THE MARGIN IS 1374 ms AT p 0.2 AND 1796 ms AT p 0.4 (the earliest last
+    decision less 116000 ms), and it is a margin over the runs read, not a property of
+    the emulator.  The ticket's Acceptance 1 now says this.
+  3 (minor, REPRODUCED, ALREADY ON RECORD, left).  rows24.py's near-constant cut
+    "non_mode <= 20" is fixed nowhere in spec.md, and coef_<c>.json omits the dead-cell
+    names section 9 says it carries.  Section 11.3 above records both.  The cut is
+    print-only; the fit filters nothing.
+  4 (minor, REPRODUCED, FIXED).  The ticket's Acceptance 1 cited rows24.txt section 0
+    for the Crit row counts 599 and 1187; they are printed in section 1.
+  5 (nit, REPRODUCED, left).  learn24.txt prints "--" for changed at k=1, because
+    learn24.py leaves the loop at the rate bound before it computes that share, where
+    spec.md section 4.6 says every iteration's share is printed.  A reader therefore
+    cannot see how often the greedy policy of w_1 disagrees with the shipped one.  The
+    breached quantity itself is printed.  To be put right when learn24.py next changes
+    for a reason of its own, with the defect of section 11.3.
+  6 (nit, REPRODUCED, FIXED above).  Section 10 said "40 of 261 live cells".  The 261
+    are all the cells; 107 of them are live for candidate a (rows24.txt section 4).
+    The line now reads "40 of the 261 cells", as drift24.txt section 1 does.
+  7 (nit, REPRODUCED, left).  spec.md section 8 names the repeat-check row as the first
+    state_poll_reschedule row of p 0.2 seed 1 "in log order".  m24.first_logged_resched_obs
+    takes the first such row of the first node in sorted order, which need not be the
+    earliest in the run.  One fixed row is still read identically in every output
+    (the same two triples in learn24.txt, eval24.txt, agree24.txt, latency24.txt and
+    drift24.txt), which is what the check needs.
+  8 (nit, REPRODUCED, FIXED).  The ticket's Acceptance 2 said the one-value mutation of
+    the repeat check fails "in every script".  Only learn24.py and latency24.py carry
+    it; eval24.py and agree24.py print the check without mutating it.
+
+  12.3  WHAT THE REVIEWER CHECKED AND FOUND CORRECT, IN ITS OWN LIST
+  ------------------------------------------------------------------
+  Every headline number of the ticket's result and of the map entry against its
+  archive; the stop arithmetic and the fallback; that the defects of section 11.3
+  cannot move a shipped coefficient or a reported number (the comparison at
+  learn24.py lines 326 to 327 was never executed in the shipped fits); the learner and
+  M on the port against the plan; the seed gates and the order of the control, the dry
+  run and the scores; the drift measurement and that the record claims no verdict on
+  state against clock; the six predictions; the comparison with L on both tuning runs.
+  It also read the tie counts: versus24.txt section 2 prints ties=0 for both candidates,
+  which answers threat 16 (no decision of M in the replay was the tie rule's).
+
+  12.4  WHAT THE REVIEWER DID NOT CHECK
+  ------------------------------------------------------------------
+  The sha256 digests byte for byte; the rows of the four csv files (it read the archived
+  summaries); the first fit on hpc-debian; the host itself; the sources of earlier
+  tickets under ../22 and ../13; the timings of latency24.txt.  The main session's
+  recount of section 11.1 covers the rows of eval24.csv; nobody has recounted
+  drift24.csv's rows outside the workflow that produced and verified them.
