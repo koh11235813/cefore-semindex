@@ -1251,3 +1251,91 @@ part of this review; it is reviewed separately when it is written.
   tickets under ../22 and ../13; the timings of latency24.txt.  The main session's
   recount of section 11.1 covers the rows of eval24.csv; nobody has recounted
   drift24.csv's rows outside the workflow that produced and verified them.
+
+========================================================================
+13  README.md: WHO WROTE IT, HOW IT WAS CHECKED, AND WHAT WAS CORRECTED
+========================================================================
+2026-11-26 23:10 to 23:30 JST.  The user asked that the README, and only the README,
+be written by the other agent (the ticket's decision 12).  It wrote README.md
+(290 lines) from the archives and from sections 10 to 12 above, changed no other file
+and committed nothing (git status showed README.md as the only untracked file of the
+directory).  The main session read it in full, had it checked by five read-only
+readers (four on the numbers, one line range each: 165, 155, 127 and 92 numbers checked
+against the archive each cites; one on the claims, the required content and the writing
+rules), reproduced every finding against the files, and applied the corrections itself.
+The readers sent no message and wrote no file.
+
+  13.1  WHAT THE README'S AUTHOR FOUND: A FALSE SENTENCE IN THE FROZEN PLAN
+  ------------------------------------------------------------------
+  spec.md section 6 and threat 13 say the p 0.4 cell's own poll weight "is in no file
+  of this repository".  THAT IS FALSE.  ../22/weight.txt lines 76 to 96 print it, under
+  the header "p 0.4, the same four steps, for information only; not used for the
+  weight": step 4 gives 139.66810800913194 ms per poll, "1.34 times the main cell's".
+  spec.md is frozen and is left as it is.  Section 7's line "the p 0.4 cell's own poll
+  weight (in no file)" above is wrong in the same way.  The main session copied the
+  sentence into the ticket's open items on the same evening without opening
+  ../22/weight.txt (section 12.2, finding 1); the ticket is corrected.  What it means
+  for the result: candidate b's p 0.4 rows have a poll priced at about 0.75 of that
+  cell's own weight (104.29595912307323 / 139.66810800913194 = 0.7467), so the size of
+  the mispricing is known for information and is not small.  Candidate b was not
+  chosen; no reported number moves.
+
+  13.2  TWO THINGS THE CHECK SHOWED WERE MISSING FROM THE RECORD, NOW COUNTED
+  ------------------------------------------------------------------
+  The README said candidate a is below "every one of L's four adapters, with intervals
+  that all exclude 0" (the main session's own request used those words).  Only three
+  such intervals were on record.  And section 12.4 said nobody had recounted
+  drift24.csv outside the workflow that produced it.  Both were counted by hand:
+    python3 -B -I <scratch>/t24readme/recount2.py eval24.csv ../23/eval.csv \
+        ../23/eval_run1.csv drift24.csv
+  (sha256 872ceb4d754bc10fb0b95d16fafd22ba2a1b5b8923f839582c384ae4dd4eee38; imports
+  nothing from the repository; hand-logged, not in the repository; the same bootstrap
+  as section 11.1: per-seed mean of 40 run scores, default_rng(20261122), 2000 x 20).
+    M_a - L_a (1st tuning)   -1520.931   95 %  -2098.778 to  -931.112   a lower on 18 of 20
+    M_a - L_b (1st tuning)    -717.150   95 %  -1262.820 to  -177.835   a lower on 14 of 20
+    M_a - L_a (2nd tuning)   -1969.447   95 %  -2756.247 to -1182.556   a lower on 18 of 20
+    M_a - L_b (2nd tuning)   -1351.607   95 %  -1941.338 to  -780.824   a lower on 16 of 20
+  The last three equal section 11.1 and versus24.txt; the first is new, and with it the
+  README's sentence stands for all four adapters.  L_a (1st tuning) has a mean of
+  37379.874, as ../23/spread.txt prints.
+    drift24.csv: 3200 rows, deciders F, a, a_neutral, const6.000, seeds 1 to 20
+    means  a 35922.496   F 35958.927   const6.000 37406.042   a_neutral 38729.286
+    a_neutral - a            2806.790   95 %   2073.957 to  3583.323   lower on  0 of 20
+    a - F                     -36.431   95 %   -544.951 to   542.317   lower on 11 of 20
+    a_neutral - const6.000   1323.245   95 %    537.360 to  2174.065   lower on  4 of 20
+  All equal drift24.txt sections 5 and 6.  Section 12.4's last sentence no longer holds.
+
+  13.3  WHAT WAS CORRECTED IN THE README, AND WHY
+  ------------------------------------------------------------------
+  No number read from an archive of this directory was wrong.  Corrected:
+  - Two sentences read ../13/validate.md's Mode A counts (39, 24 and 41 of 42 cells) as
+    the cells that FAIL.  They are the cells that met each line, against a required 42.
+  - The censored runs: the README concluded that the mean score "cannot be said to be
+    an upper bound".  A censored record enters at its lower bound, so the score of a
+    decider with censored runs (candidate a 1 of 800, fixed 10.043 s 17 of 800) is
+    biased LOW.  The sentence now says that.
+  - The four-adapter sentence gets its fourth interval (13.2) and its row in the table.
+  - The fit-window note said one further decision follows a fitted row; the record
+    carries two (section 12.2, finding 2).
+  - The p 0.4 weight was presented as a disagreement between records and attributed to
+    the ticket as well; it is an error of spec.md, and the ticket says so (13.1).
+  - "the largest condition number is 3.825e+05" contradicted the README's own
+    1.095e+07 for the post hoc refit; both are now named, both below 1e8.
+  - "12 to 15 times 2.0" is 12.4 to 15.8.  32219 is the count over both cells' label
+    files.  Citations: learn24.txt section 2 and drift24.txt section 6 added where the
+    numbers come from; the verification is sections 11 to 13, not 8 to 12; the second,
+    code-only run of push_inputs24.sh added to the order table; the hand recount
+    scripts named as not in the repository.
+  - Five loanwords replaced by the words ../23/README.md uses for the same things.
+  One reader's finding was not acted on: that charges.txt part 9 is the wrong citation
+  for the coupling across pairs (it named part 3, which lists the 8 pairs).  Part 9's
+  first item is the statement the README cites it for ("additive across decisions and
+  ... not separable across pairs").
+
+  13.4  WHAT THE CHECK OF THE README DID NOT COVER
+  ------------------------------------------------------------------
+  The readers confirmed numbers against the archived .txt outputs, not against the csv
+  rows (those are covered by sections 11.1 and 13.2 for eval24.csv and drift24.csv
+  only).  The gain intervals of ana24.txt section 3 and the sha256 digests were compared
+  between files that quote them, not recomputed.  The README after correction was not
+  sent to an outside reviewer again.
