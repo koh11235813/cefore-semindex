@@ -24,6 +24,7 @@ Run as:
         [--poll-policy '{"intervals_s": [10.043, 3.695], "jitter_frac": [0.1, 0.1]}'] \
         [--poll-rule '{"i_min_s": 3.695, "factor": 2, "i_max_s": 10.043, "jitter_frac": 0.1, "on_timeout": "reset"}'] \
         [--choice-redecide] \
+        [--poll-decider '{"path": "/abs/d.py", "sha256": "...", "factory": "build", "args": {}}'] \
         [--disconnect-duration-s 8 12]
 
 `--k`, `--interval-choices`, `--choice-jitter`, `--max-in-flight`,
@@ -31,11 +32,13 @@ Run as:
 (2026-11-03, the failure-reactive state-poll table; not with choices or j) and
 `--poll-rule` (2026-11-18, the per-neighbor state-poll interval rule; not with
 the table, choices or j) and `--choice-redecide` (2026-11-22, re-draw the
-choices interval when a poll resolves; only with choices) go
+choices interval when a poll resolves; only with choices) and `--poll-decider`
+(2026-11-27, the spec of an external decider object; requires choices and
+`--choice-redecide`, not with the table or the rule) go
 straight to semindex.evalgen and are recorded in each run's meta.json. They are
 not part of the store path, so a sweep with different values -- a different
-`--max-in-flight`, `--store-synchronous`, `--poll-policy`, `--poll-rule` or
-`--choice-redecide`
+`--max-in-flight`, `--store-synchronous`, `--poll-policy`, `--poll-rule`,
+`--choice-redecide` or `--poll-decider`
 included -- needs its own `--stage` label. Resuming a stage checks only each run's DONE marker,
 never these settings, so that label is the one thing keeping two settings apart.
 `--disconnect-duration-s LO HI` (2026-11-11, stage-2 map "ほかの切断の形")
@@ -591,6 +594,7 @@ def _build_meta(
     state_poll_policy: dict | None,
     state_poll_rule: dict | None = None,
     state_poll_choice_redecide: bool | None = None,
+    state_poll_decider: dict | None = None,
     workload: str = evalgen.DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None,
     recefore: str,
@@ -610,6 +614,8 @@ def _build_meta(
     set, so the agents ran stage 1's or the choices' poll scheduling) and
     `state_poll_rule` (None = not set, likewise) and
     `state_poll_choice_redecide` (written only when the knob was on, see below) and
+    `state_poll_decider` (None = not set, recorded as given like the table and the
+    rule, not write-only-when-on like the redecide knob) and
     `workload` (the
     record-creation shape, "w0" when the sweep did not ask for another) and
     `disconnect_duration_s` (None = the 5 s slot model) are the
@@ -643,6 +649,10 @@ def _build_meta(
         # 2026-11-18: recorded as given, null included, for the same reason as the
         # table; null is what every run made before this key could be set records.
         "state_poll_rule": state_poll_rule,
+        # 2026-11-27: recorded as given, null included, the table's and the rule's own
+        # rule and not the redecide knob's: a decider spec is a payload (which file,
+        # which digest), not a bare knob a stage label already tells apart.
+        "state_poll_decider": state_poll_decider,
         # 2026-11-19: always a name, never null -- every run has a load, and a
         # run made before this key existed had the default one. The aggregate
         # still reads a missing key as "not recorded" rather than as "w0",
@@ -707,6 +717,7 @@ def run_one(
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
     state_poll_choice_redecide: bool | None = None,
+    state_poll_decider: dict | None = None,
     workload: str = evalgen.DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> RunOutcome:
@@ -755,6 +766,7 @@ def run_one(
             state_poll_policy=state_poll_policy,
             state_poll_rule=state_poll_rule,
             state_poll_choice_redecide=state_poll_choice_redecide,
+            state_poll_decider=state_poll_decider,
             workload=workload,
             disconnect_duration_s=disconnect_duration_s,
         )
@@ -835,6 +847,7 @@ def run_one(
             state_poll_policy=state_poll_policy,
             state_poll_rule=state_poll_rule,
             state_poll_choice_redecide=state_poll_choice_redecide,
+            state_poll_decider=state_poll_decider,
             workload=workload,
             disconnect_duration_s=disconnect_duration_s,
             recefore=recefore,
@@ -920,6 +933,7 @@ def run_all(
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
     state_poll_choice_redecide: bool | None = None,
+    state_poll_decider: dict | None = None,
     workload: str = evalgen.DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[RunOutcome]:
@@ -965,6 +979,7 @@ def run_all(
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
         state_poll_choice_redecide=state_poll_choice_redecide,
+        state_poll_decider=state_poll_decider,
         workload=workload,
     )
     # 2026-11-11: same reasoning for the down-period range and the p < 1 rule
@@ -1023,6 +1038,7 @@ def run_all(
                 state_poll_policy=state_poll_policy,
                 state_poll_rule=state_poll_rule,
                 state_poll_choice_redecide=state_poll_choice_redecide,
+                state_poll_decider=state_poll_decider,
                 workload=workload,
                 disconnect_duration_s=disconnect_duration_s,
             )
@@ -1110,6 +1126,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="re-draw the interval when a poll is answered or times out; only with --interval-choices",
     )
     parser.add_argument(
+        "--poll-decider",
+        default=None,
+        dest="poll_decider",
+        help='external decider spec as JSON, e.g. \'{"path": "/abs/d.py", "sha256": "...", '
+        '"factory": "build", "args": {}}\'; requires --interval-choices and --choice-redecide, '
+        "not with --poll-policy/--poll-rule",
+    )
+    parser.add_argument(
         "--workload",
         choices=evalgen.WORKLOADS,
         default=evalgen.DEFAULT_WORKLOAD,
@@ -1153,6 +1177,7 @@ def main(argv: list[str] | None = None) -> int:
             state_poll_policy=evalgen.parse_poll_policy_arg(args.poll_policy),
             state_poll_rule=evalgen.parse_poll_rule_arg(args.poll_rule),
             state_poll_choice_redecide=args.choice_redecide,
+            state_poll_decider=evalgen.parse_poll_decider_arg(args.poll_decider),
             workload=args.workload,
             disconnect_duration_s=evalgen.parse_disconnect_duration_arg(args.disconnect_duration_s),
         )

@@ -35,6 +35,7 @@ from typing import Callable
 
 from semindex import schema
 from semindex.cefpyco_transport import DEFAULT_RECEIVE_TIMEOUT_MS, CefpycoHandle, CefpycoTransport
+from semindex.decider import load_poll_decider
 from semindex.engine import StatePollPolicy, StatePollRule, SyncConfig, SyncEngine
 from semindex.store import DEFAULT_STORE_SYNCHRONOUS, STORE_SYNCHRONOUS_MODES, Store
 
@@ -82,7 +83,7 @@ class AgentConfig:
     schedule: tuple[ScheduledRecord, ...]
     probes: tuple[ScheduledProbe, ...]
     fault_drop_rec: dict[tuple[str, int], int]
-    sync_overrides: dict[str, float | int | bool | tuple[float, ...] | StatePollPolicy | StatePollRule]
+    sync_overrides: dict[str, float | int | bool | tuple[float, ...] | StatePollPolicy | StatePollRule | dict]
     receive_timeout_ms: int
     chunk_lifetime_ms: int
     # t0-relative seconds; None means never stop early (run until SIGTERM/SIGINT).
@@ -148,6 +149,7 @@ _ALLOWED_KEYS = (
         "state_poll_choice_redecide",
         "state_poll_policy",
         "state_poll_rule",
+        "state_poll_decider",
         # A Store setting, not a SyncConfig field, so it is not in
         # _SYNC_OVERRIDE_KEYS; nor is it numeric, so not in _AGENT_NUMERIC_KEYS.
         "store_synchronous",
@@ -393,6 +395,80 @@ def _validate_choice_redecide(raw, *, have_choices: bool) -> bool | None:
     return value
 
 
+def _validate_poll_decider(
+    raw,
+    *,
+    have_policy: bool,
+    have_rule: bool,
+    have_choices: bool,
+    have_redecide: bool,
+    choices: tuple[float, ...] | None,
+    choice_jitter_frac: float,
+    interest_lifetime_ms: int,
+    receive_timeout_ms: int,
+) -> dict | None:
+    """Validate the optional `state_poll_decider` (2026-11-27): the spec of an external
+    object SyncEngine asks for each poll's next interval, loaded by semindex.decider
+    from the file this spec names (see build_agent).
+
+    Checked in the port's own order -- exclusivity before sufficiency, so a decider set
+    beside a rule is reported as the combination and not as "nothing to pick from" (the
+    rule already silences the choices one frame up, so by the time a decider beside a
+    rule reached "requires choices" that would be the wrong diagnosis): combined with a
+    policy or a rule; requires choices; requires redecide (present and true -- a decider
+    never asked at a resolution could not be the thing polling); the spec's own shape
+    (`path`, `sha256`, `factory`, `args`, nothing else); and the bound every poll a
+    decider drives must clear, so that a `last_poll_status` the decider reads means on
+    this emulator what it means on the port this run is compared against: the choice
+    set's smallest applied interval must still exceed the poll's own timeout plus one
+    tick, or a poll can be superseded before it resolves and the two sides report
+    different statuses with no test failing.
+
+    `have_policy`/`have_rule` are checked here rather than by editing the policy's or
+    the rule's own combination lists (_validate_poll_policy, _validate_poll_rule): those
+    lists name only the keys that existed when each was written, and a decider set
+    beside either is still refused, here, under this key's own name -- the same reason
+    the policy's list was never taught about the rule.
+    """
+    if "state_poll_decider" not in raw:
+        return None
+    if have_policy:
+        raise ConfigError("state_poll_decider cannot be combined with state_poll_policy")
+    if have_rule:
+        raise ConfigError("state_poll_decider cannot be combined with state_poll_rule")
+    if not have_choices:
+        raise ConfigError("state_poll_decider requires state_poll_interval_choices_s")
+    if not have_redecide:
+        raise ConfigError("state_poll_decider requires state_poll_choice_redecide")
+    value = raw["state_poll_decider"]
+    if not isinstance(value, dict) or set(value) != {"path", "sha256", "factory", "args"}:
+        raise ConfigError("state_poll_decider must be an object with keys path, sha256, factory and args")
+    path = value["path"]
+    if not isinstance(path, str) or not path or not os.path.isabs(path):
+        raise ConfigError("state_poll_decider.path must be a non-empty absolute path")
+    sha256 = value["sha256"]
+    if not isinstance(sha256, str) or len(sha256) != 64 or any(c not in "0123456789abcdef" for c in sha256):
+        raise ConfigError("state_poll_decider.sha256 must be 64 lower-case hex characters")
+    factory = value["factory"]
+    if not isinstance(factory, str) or not factory.isidentifier():
+        raise ConfigError("state_poll_decider.factory must be a Python identifier")
+    args = value["args"]
+    if not isinstance(args, dict):
+        raise ConfigError("state_poll_decider.args must be an object")
+    # The port's own bound: a poll this
+    # decider drives must not be superseded by the pair's own next poll before it
+    # resolves, or last_poll_status and consecutive_poll_timeouts stop meaning what the
+    # port's equivalent fields mean. Named fields, not literals, so a change to either
+    # default moves this bound with it.
+    smallest_applied_ms = min(choices) * (1 - choice_jitter_frac) * 1000
+    if not smallest_applied_ms > interest_lifetime_ms + receive_timeout_ms:
+        raise ConfigError(
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms"
+        )
+    return {"path": path, "sha256": sha256, "factory": factory, "args": dict(args)}
+
+
 def _validate_poll_policy(raw) -> StatePollPolicy | None:
     """Validate the optional `state_poll_policy` table (ADR 0004): an object with
     `intervals_s` and `jitter_frac`, equal-length lists of 1 to 4 numbers, row k
@@ -606,7 +682,7 @@ def validate_config(raw) -> AgentConfig:
 
     counters_snapshot_at_s = _validate_counters_snapshot_at_s(raw)
 
-    sync_overrides: dict[str, float | int | bool | tuple[float, ...] | StatePollPolicy | StatePollRule] = {}
+    sync_overrides: dict[str, float | int | bool | tuple[float, ...] | StatePollPolicy | StatePollRule | dict] = {}
     for key, kind in _SYNC_OVERRIDE_KEYS.items():
         if key in raw:
             _check_numeric(key, raw[key], kind, positive=key in _POSITIVE_NUMERIC_KEYS)
@@ -640,6 +716,22 @@ def validate_config(raw) -> AgentConfig:
     choice_redecide = _validate_choice_redecide(raw, have_choices=poll_interval_choices is not None)
     if choice_redecide is not None:
         sync_overrides["state_poll_choice_redecide"] = choice_redecide
+    # 2026-11-27: after the redecide knob, whose presence (and truth) it requires.
+    poll_decider = _validate_poll_decider(
+        raw,
+        have_policy=poll_policy is not None,
+        have_rule=poll_rule is not None,
+        have_choices=poll_interval_choices is not None,
+        have_redecide=choice_redecide is True,
+        choices=poll_interval_choices,
+        choice_jitter_frac=(
+            choice_jitter_frac if choice_jitter_frac is not None else SyncConfig.state_poll_choice_jitter_frac
+        ),
+        interest_lifetime_ms=sync_overrides.get("interest_lifetime_ms", SyncConfig.interest_lifetime_ms),
+        receive_timeout_ms=raw.get("receive_timeout_ms", DEFAULT_RECEIVE_TIMEOUT_MS),
+    )
+    if poll_decider is not None:
+        sync_overrides["state_poll_decider"] = poll_decider
     if poll_policy is not None:
         seed_required_by = "state_poll_policy"
     elif poll_rule is not None:
@@ -814,6 +906,7 @@ class Agent:
         store: Store,
         transport: CefpycoTransport,
         events: EventWriter,
+        poll_decider: object | None = None,
     ) -> None:
         """Wire the four already-constructed pieces together; schedule/probe entries are consumed in time order.
 
@@ -825,12 +918,17 @@ class Agent:
         events. Both fixes below skip exactly the entries a prior life
         already ran, using progress durably persisted in `store` (which
         outlives this process) rather than anything held only in memory.
+
+        `poll_decider` (2026-11-27), when given, is the same object `engine` itself
+        holds (build_agent loads it once and passes it to both); this Agent's only use
+        of its own reference is to close it at shutdown, which is not the engine's job.
         """
         self._config = config
         self._engine = engine
         self._store = store
         self._transport = transport
         self._events = events
+        self._poll_decider = poll_decider
 
         # 2026-10-23: records this life's own t0_ms directly, as the very
         # first thing this life ever writes -- a later measurement tool
@@ -1213,11 +1311,19 @@ class Agent:
         a fetch has its probe_retrieved before this life's `counters` line.
         A fetch that had already finished but was not yet written keeps its
         own result.
+
+        2026-11-27: a poll decider is closed here, after the engine's own events are
+        drained and before the `counters` line, so a `close()` that raises leaves no
+        `counters` line and this life is flagged (evalvalid's counters_count/
+        last_line_not_counters) rather than averaged in, the same reasoning
+        SyncEngine._decide's own exceptions are left uncaught for.
         """
         self._transport.abort_fetch()
         self._settle_probe_fetch()
         self._emit_pending_snapshots()
         self._drain_engine_events()
+        if self._poll_decider is not None:
+            self._poll_decider.close()
         self._events.write(
             {
                 "event": "counters",
@@ -1259,12 +1365,21 @@ def build_agent(config: AgentConfig, handle: CefpycoHandle, *, clock: Callable[[
             "poll_choice_jitter_rng": _poll_choice_jitter_rng(config.seed, config.node),
         }
     )
+    # 2026-11-27: loaded only when validate_config carried the key, so a run that asked
+    # for no decider never imports the decider file (or whatever it in turn depends on).
+    decider_spec = config.sync_overrides.get("state_poll_decider")
+    poll_decider = None if decider_spec is None else load_poll_decider(decider_spec, node=config.node)
     engine = SyncEngine(
-        build_sync_config(config), store, transport, poll_jitter_rng=_poll_jitter_rng(config.node), **choice_rng
+        build_sync_config(config),
+        store,
+        transport,
+        poll_jitter_rng=_poll_jitter_rng(config.node),
+        poll_decider=poll_decider,
+        **choice_rng,
     )
     transport.engine = engine
     events = EventWriter(os.path.join(config.state_dir, "events.jsonl"), clock=clock)
-    agent = Agent(config, engine, store, transport, events)
+    agent = Agent(config, engine, store, transport, events, poll_decider=poll_decider)
     # Same construction-order reason as transport.engine above: the Agent
     # that owns the real stop flag (and the counters_snapshot/stop_at_s
     # boundary check that now lives alongside it, _on_receive_boundary) can

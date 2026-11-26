@@ -335,6 +335,16 @@ def parse_poll_rule_arg(text: str | None) -> dict | None:
     return _parse_json_arg(text, "--poll-rule")
 
 
+def parse_poll_decider_arg(text: str | None) -> dict | None:
+    """Parse the `--poll-decider` CLI string as JSON, or None when the flag was not given.
+
+    The same split as the policy's and the rule's: only the JSON itself here, the shape
+    (an object with path, sha256, factory and args) left to gen.parse_state_poll_decider,
+    reached through validate_settings.
+    """
+    return _parse_json_arg(text, "--poll-decider")
+
+
 def parse_disconnect_duration_arg(values: list[float] | None) -> tuple[float, float] | None:
     """The `--disconnect-duration-s LO HI` pair as the (lo, hi) tuple the kwarg takes,
     or None when the flag was not given. Range checks are `validate_disconnect_duration`'s."""
@@ -350,16 +360,17 @@ def validate_settings(
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
     state_poll_choice_redecide: bool | None = None,
+    state_poll_decider: dict | None = None,
     workload: str = DEFAULT_WORKLOAD,
 ) -> None:
     """Reject a records-per-generation count that is not an integer >= 1, a workload
     name that is not one of WORKLOADS, or interval
     choices / a choice jitter / a poll policy table / a per-neighbor poll rule /
-    a per-neighbor in-flight cap /
+    a poll decider spec / a per-neighbor in-flight cap /
     a store synchronous mode semindex.gen would refuse (see
     gen.parse_state_poll_interval_choices_s, gen.parse_state_poll_choice_jitter_frac,
     gen.parse_state_poll_policy, gen.parse_state_poll_rule,
-    gen.parse_state_poll_choice_redecide,
+    gen.parse_state_poll_choice_redecide, gen.parse_state_poll_decider,
     gen.parse_max_in_flight_per_neighbor and
     gen.parse_store_synchronous), a poll policy or rule given together with choices or j
     included.
@@ -397,6 +408,17 @@ def validate_settings(
     # without them reports its own "requires choices" and never a stale combination.
     gen.parse_state_poll_choice_redecide(
         state_poll_choice_redecide, have_choices=state_poll_interval_choices_s is not None
+    )
+    # 2026-11-27: after the redecide knob, gen.parse_experiment's order again, so the
+    # decider without them reports its own "requires" and never a stale combination.
+    gen.parse_state_poll_decider(
+        state_poll_decider,
+        have_policy=state_poll_policy is not None,
+        have_rule=state_poll_rule is not None,
+        have_choices=state_poll_interval_choices_s is not None,
+        have_redecide=state_poll_choice_redecide is True,
+        choices=state_poll_interval_choices_s,
+        choice_jitter_frac=state_poll_choice_jitter_frac,
     )
     gen.parse_max_in_flight_per_neighbor(max_in_flight_per_neighbor)
     gen.parse_store_synchronous(store_synchronous)
@@ -731,6 +753,7 @@ def build_experiment(
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
     state_poll_choice_redecide: bool | None = None,
+    state_poll_decider: dict | None = None,
     workload: str = DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> dict:
@@ -767,6 +790,10 @@ def build_experiment(
     `state_poll_choice_redecide` (2026-11-22) makes a resolved poll re-draw the
     choices interval; it is written only when True, requires choices, and None or
     False writes nothing.
+    `state_poll_decider` (2026-11-27), the spec of an external decider object
+    {"path": ..., "sha256": ..., "factory": ..., "args": {...}}, is passed through as
+    given; it rides the choices and the redecide knob (requires both) and cannot be
+    combined with the policy or the rule, and None writes nothing.
     `workload` (2026-11-19) is the record-creation shape: "w0", the default,
     is the 30 generation times 2 s apart this module has always used, and "wo"
     and "wv" switch generation on and off per origin (see `_onoff_ticks`). It
@@ -797,6 +824,7 @@ def build_experiment(
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
         state_poll_choice_redecide=state_poll_choice_redecide,
+        state_poll_decider=state_poll_decider,
         workload=workload,
     )
     name = f"{stage}_p{_format_p_fixed(p)}_seed{seed}"
@@ -855,6 +883,11 @@ def build_experiment(
     # before the key existed.
     if state_poll_choice_redecide:
         raw["state_poll_choice_redecide"] = True
+    # Same reasoning (2026-11-27): absent, the files stay what they were before the
+    # key, so every earlier choices/redecide stage re-collected on this code generates
+    # its bytes.
+    if state_poll_decider is not None:
+        raw["state_poll_decider"] = state_poll_decider
     return raw
 
 
@@ -872,6 +905,7 @@ def generate_run(
     state_poll_policy: dict | None = None,
     state_poll_rule: dict | None = None,
     state_poll_choice_redecide: bool | None = None,
+    state_poll_decider: dict | None = None,
     workload: str = DEFAULT_WORKLOAD,
     disconnect_duration_s: tuple[float, float] | None = None,
 ) -> list[str]:
@@ -897,8 +931,8 @@ def generate_run(
 
     `k`, `state_poll_interval_choices_s`, `state_poll_choice_jitter_frac`,
     `max_in_flight_per_neighbor`, `store_synchronous`, `state_poll_policy`,
-    `state_poll_rule`, `state_poll_choice_redecide`, `workload` and
-    `disconnect_duration_s` are passed straight to `build_experiment`.
+    `state_poll_rule`, `state_poll_choice_redecide`, `state_poll_decider`,
+    `workload` and `disconnect_duration_s` are passed straight to `build_experiment`.
 
     Returns every path written, experiment description first.
     """
@@ -915,6 +949,7 @@ def generate_run(
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
         state_poll_choice_redecide=state_poll_choice_redecide,
+        state_poll_decider=state_poll_decider,
         workload=workload,
         disconnect_duration_s=disconnect_duration_s,
     )
@@ -1001,6 +1036,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="re-draw the interval when a poll is answered or times out; only with --interval-choices",
     )
     parser.add_argument(
+        "--poll-decider",
+        default=None,
+        dest="poll_decider",
+        help='external decider spec as JSON, e.g. \'{"path": "/abs/d.py", "sha256": "...", '
+        '"factory": "build", "args": {}}\'; requires --interval-choices and --choice-redecide, '
+        "not with --poll-policy/--poll-rule",
+    )
+    parser.add_argument(
         "--workload",
         choices=WORKLOADS,
         default=DEFAULT_WORKLOAD,
@@ -1037,6 +1080,7 @@ def main(argv: list[str] | None = None) -> int:
             state_poll_policy=parse_poll_policy_arg(args.poll_policy),
             state_poll_rule=parse_poll_rule_arg(args.poll_rule),
             state_poll_choice_redecide=args.choice_redecide,
+            state_poll_decider=parse_poll_decider_arg(args.poll_decider),
             workload=args.workload,
             disconnect_duration_s=parse_disconnect_duration_arg(args.disconnect_duration_s),
         )

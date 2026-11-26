@@ -739,6 +739,96 @@ class _Cycle:
         return value
 
 
+class _ConstDecider:
+    """A poll_decider that always answers `value`, synchronously (`decide` never
+    returns None): the simplest thing that satisfies the protocol, for tests that
+    only need a decider which never fails and never defers."""
+
+    def __init__(self, value: float) -> None:
+        """Remember the one value every decide() call returns."""
+        self.value = value
+
+    def decide(self, obs: dict) -> float:
+        """Always answer `value`, synchronously."""
+        return self.value
+
+    def collect(self) -> list:
+        """Nothing is ever deferred, so nothing is ever collected."""
+        return []
+
+    def close(self) -> None:
+        """Nothing to release."""
+
+
+class _RecordingDecider:
+    """A poll_decider that records every `obs` it is handed, in call order, and
+    answers from `values` cycling like `_Cycle` -- so a test can both drive a
+    specific sequence of intervals and inspect exactly what each call was given."""
+
+    def __init__(self, *values: float) -> None:
+        """Remember the values to cycle through; nothing has been asked yet."""
+        self._values = values
+        self.calls: list[dict] = []
+
+    def decide(self, obs: dict) -> float:
+        """Record `obs`, then answer the next value in the cycle."""
+        value = self._values[len(self.calls) % len(self._values)]
+        self.calls.append(obs)
+        return value
+
+    def collect(self) -> list:
+        """Nothing is ever deferred, so nothing is ever collected."""
+        return []
+
+    def close(self) -> None:
+        """Nothing to release."""
+
+
+class _MutatingDecider:
+    """A poll_decider that mutates every `obs` it is handed -- its own state dict and
+    its own history list -- then answers a constant. Pins the mutation contract: a
+    decider that corrupts what it was given corrupts only its own row and nothing a
+    later decision reads (engine.py's `_decide` docstring)."""
+
+    def __init__(self, value: float) -> None:
+        """Remember the one value every decide() call returns."""
+        self.value = value
+
+    def decide(self, obs: dict) -> float:
+        """Poison the state dict and the history list this call was handed, then
+        answer the constant anyway."""
+        obs["state"]["in_flight"] = "corrupted"
+        obs["history"].append({"corrupted": True})
+        return self.value
+
+    def collect(self) -> list:
+        """Nothing is ever deferred, so nothing is ever collected."""
+        return []
+
+    def close(self) -> None:
+        """Nothing to release."""
+
+
+class _RaisingDecider:
+    """A poll_decider whose decide() always raises, for the refusal that an
+    exception inside a decider call is not caught anywhere in the engine."""
+
+    def __init__(self, exc: Exception) -> None:
+        """Remember the exception every decide() call raises."""
+        self._exc = exc
+
+    def decide(self, obs: dict):
+        """Raise the remembered exception instead of answering."""
+        raise self._exc
+
+    def collect(self) -> list:
+        """Never called by a test that never lets decide() return."""
+        return []
+
+    def close(self) -> None:
+        """Nothing to release."""
+
+
 def _poll_decisions(engine: SyncEngine, ticks: list[float]) -> list[tuple[float, dict, float]]:
     """Tick `engine` at each time in `ticks` and return (ts, action, action_prob) of
     every state_poll decision -- not the whole line, so these tests pin only the
@@ -1631,6 +1721,12 @@ def test_without_a_policy_nothing_new_runs(tmp_path: Path, monkeypatch, mode: st
         assert (jitter.calls, choice.calls, choice_jitter.calls) == (polls, 0, 0)
     else:
         assert (jitter.calls, choice.calls, choice_jitter.calls) == (0, polls, polls)
+    # 2026-11-27: decider mode off (no poll_decider given, the default) draws these
+    # same rngs the same number of times -- the guard decider mode adds to the send
+    # branch and to the resolution branch is a no-op without a decider -- and keeps
+    # no per-neighbor history at all.
+    assert engine._poll_decider is None
+    assert engine._poll_hist == {}
 
 
 def test_policy_logging_adds_no_behaviour(tmp_path: Path):
@@ -2289,3 +2385,440 @@ def test_redecide_draws_once_per_resolution_with_logging_off_as_well(tmp_path: P
     # both, the jitter stream only at send.
     assert (choice_on, jitter_on) == (11, 6)
     assert len(sent_on) == 6
+
+
+# -- the synchronous decider path (poll_decider) ---------------------------------------
+
+# An opaque placeholder: the engine never reads a key of this value, it only ever
+# asks whether it is None (see SyncConfig.state_poll_decider's own comment).
+_A_DECIDER_SPEC = {"path": "/dev/null", "sha256": "0" * 64, "factory": "build", "args": {}}
+
+
+def _decider_engine(
+    tmp_path: Path,
+    decider,
+    choice_jitter: "_Cycle",
+    *,
+    choices: tuple[float, ...] = _REDECIDE_CHOICES,
+    neighbors: tuple[str, ...] = ("h1",),
+    **overrides,
+) -> tuple[SyncEngine, RecordingTransport, _Cycle]:
+    """A decider-mode engine over `choices` with j = 0.1 holding seq 1 of its own
+    origin, its poll_decider `decider`, drawing its jitter from `choice_jitter`; the
+    returned spy is the choice-index stream, which a decider must never draw (the
+    decider replaces that draw, not the jitter one)."""
+    store = Store(tmp_path / "h0.db")
+    transport = RecordingTransport()
+    choice_spy = _Cycle(0.2)
+    config = SyncConfig(
+        group="g",
+        node="h0",
+        neighbors=neighbors,
+        state_poll_interval_choices_s=choices,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        state_poll_decider=_A_DECIDER_SPEC,
+        **overrides,
+    )
+    engine = SyncEngine(
+        config,
+        store,
+        transport,
+        poll_choice_rng=choice_spy,
+        poll_choice_jitter_rng=choice_jitter,
+        poll_decider=decider,
+    )
+    engine.create_record(content_name="c", zone="zone1", disaster="flood", media="image", observed_at=1)
+    engine.drain_events()
+    return engine, transport, choice_spy
+
+
+@pytest.mark.parametrize("interval", [0.5, 3.695])
+def test_a_constant_decider_polls_exactly_like_the_same_single_choice(tmp_path: Path, interval: float):
+    """A constant decider's answer is the same value every time choices mode would
+    draw with a single choice, so over a FakeNetwork run with replies, a partition
+    and a heal a decider engine (three choices, redecide on, a constant decider
+    answering `interval`) sends the same Interests at the same times as a choices
+    engine with the one choice `interval` (redecide on) -- the pattern of
+    test_a_one_row_policy_polls_exactly_like_the_same_single_choice. They must be
+    equal, because the two draw the same jitter stream and the choice-index stream a
+    decider never draws cannot be the reason the two differ, for an arm shorter and
+    one longer than the lifetime."""
+    from fakes import FakeNetwork
+
+    class _Tap:
+        """Record every Interest name an engine sends, then pass it on."""
+
+        def __init__(self, inner) -> None:
+            """Wrap `inner`, a FakeNetwork node transport."""
+            self.inner = inner
+            self.sent: list[str] = []
+
+        def register(self, prefix: str) -> None:
+            """Pass through."""
+            self.inner.register(prefix)
+
+        def send_interest(self, name: str, lifetime_ms: int) -> None:
+            """Record and pass through."""
+            self.sent.append(name)
+            self.inner.send_interest(name, lifetime_ms)
+
+    def _run(label: str, *, poll_decider=None, **policy) -> list[str]:
+        """Run h0 polling h1 for 40 s, h1 unreachable over [10, 20); return h0's sends."""
+        network = FakeNetwork()
+        tap = _Tap(network.transport_for("h0"))
+        h0 = SyncEngine(
+            SyncConfig(group="g", node="h0", neighbors=("h1",), **policy),
+            Store(tmp_path / f"{label}-h0.db"),
+            tap,
+            poll_choice_rng=_Cycle(0.3, 0.9),
+            poll_choice_jitter_rng=_Cycle(0.1, 0.9, 0.35, 0.6),
+            poll_decider=poll_decider,
+        )
+        h1 = SyncEngine(SyncConfig(group="g", node="h1", neighbors=()), Store(tmp_path / f"{label}-h1.db"), network.transport_for("h1"))
+        network.add_node("h0", h0)
+        network.add_node("h1", h1)
+        for i in range(800):
+            now = i * 0.05
+            if i == 200:
+                network.partition("h0", "h1")
+            if i == 400:
+                network.heal("h0", "h1")
+            network.pump(now)
+            h0.on_tick(now)
+            h0.drain_events()
+        return tap.sent
+
+    sent_decider = _run(
+        "decider",
+        poll_decider=_ConstDecider(interval),
+        state_poll_interval_choices_s=(interval, interval * 2, interval * 4),
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        state_poll_decider=_A_DECIDER_SPEC,
+    )
+    sent_choice = _run(
+        "choice",
+        state_poll_interval_choices_s=(interval,),
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+    )
+    assert sent_decider == sent_choice
+    assert len(sent_decider) > 40 / (interval * 1.1)
+
+
+def test_a_decider_is_handed_the_port_s_own_state_fields_at_a_send_and_at_a_resolution(tmp_path: Path):
+    """A recording fake receives, at both call sites, the six state keys in order,
+    `resolved`'s three fields (None at a send) and `where`'s four keys, with no
+    `ordinal` -- the engine-side twin of
+    test_redecide_row_carries_exactly_the_send_time_row_s_state_fields."""
+    decider = _RecordingDecider(1.0, 2.0)
+    jitter = _Cycle(0.75)
+    engine, _, choice_spy = _decider_engine(tmp_path, decider, jitter)
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    engine.drain_events()
+    # The decider replaces the choice draw and the choice draw only: one jitter draw
+    # for the one poll sent, none for its resolution, and the choice-index stream
+    # (which a decider never draws) stays at 0.
+    assert (choice_spy.calls, jitter.calls) == (0, 1)
+    assert len(decider.calls) == 2
+    send_obs, res_obs = decider.calls
+    assert list(send_obs["state"]) == [
+        "in_flight",
+        "last_timeout_s",
+        "truncated",
+        "origins",
+        "last_poll_status",
+        "consecutive_poll_timeouts",
+    ]
+    assert list(res_obs["state"]) == list(send_obs["state"])
+    assert send_obs["resolved"] is None
+    assert list(res_obs["resolved"]) == ["poll_epoch_ms", "trigger", "empty"]
+    assert res_obs["resolved"] == {"poll_epoch_ms": 0, "trigger": "answered", "empty": True}
+    assert list(send_obs["where"]) == ["node", "neighbor", "kind", "ts_ms"]
+    assert send_obs["where"] == {"node": "h0", "neighbor": "h1", "kind": "state_poll", "ts_ms": 0}
+    assert res_obs["where"] == {"node": "h0", "neighbor": "h1", "kind": "state_poll_reschedule", "ts_ms": 50}
+    assert "ordinal" not in send_obs["where"]
+    assert "ordinal" not in res_obs["where"]
+
+
+def test_a_decider_row_carries_action_prob_one_and_the_synchronous_row_s_own_keys(tmp_path: Path):
+    """The decider's own twin of test_redecide_draws_a_new_choice_on_an_answered_poll:
+    a constant decider answering 1.0 resolves the poll at 0 to the same row shape,
+    with action_prob 1.0 -- not 1/len, since the decider's answer is not a uniform
+    draw over the choices -- and the two extra keys a decider row carries beside it:
+    `decided_at_ms` equal to `ts_ms` and `late` False, since this phase never defers.
+    Contrast with a redecide-mode row under any of the five existing policies, which
+    gains neither key."""
+    decider = _ConstDecider(1.0)
+    jitter = _Cycle(0.75)
+    engine, _, _ = _decider_engine(tmp_path, decider, jitter)
+    events = _drive(engine, [("tick", 0.0)])
+    [sent] = _decisions(events, "state_poll")
+    assert sent["action"] == {"neighbor": "h1", "interval_s": 1.0, "applied_interval_s": 1.0 * _J_UP}
+    assert sent["action_prob"] == 1.0
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    assert _decisions(engine.drain_events(), "state_poll_reschedule") == [
+        {
+            "event": "decision",
+            "ts_ms": 50,
+            "kind": "state_poll_reschedule",
+            "state": {
+                "in_flight": 0,
+                "last_timeout_s": None,
+                "truncated": False,
+                "origins": {"h0": {"hi": 1, "missing": 0, "advertised": {"h1": {"hi": 1, "notified_max": 1}}}},
+                "last_poll_status": "answered",
+                "consecutive_poll_timeouts": 0,
+            },
+            "action": {
+                "neighbor": "h1",
+                "poll_epoch_ms": 0,
+                "trigger": "answered",
+                "interval_s": 1.0,
+                "applied_interval_s": 1.0 * _J_UP,
+                "clamped": False,
+                "empty": True,
+                "decided_at_ms": 50,
+                "late": False,
+            },
+            "action_prob": 1.0,
+        }
+    ]
+
+
+def test_the_decider_s_history_is_the_pair_s_last_eight_resolutions_oldest_first(tmp_path: Path):
+    """Over twelve resolutions to h1, the kept history is capped at 8, oldest first,
+    each row carries the seven fields a resolution logs (ts_ms, poll_epoch_ms,
+    trigger, empty, interval_s, applied_interval_s, clamped), and the decision just
+    asked is never in its own history: the 12th resolution's own decide() call sees
+    only the 8 before it. The kept history is not merely 8 long -- it is the pair's
+    *last* 8, which a decider dropping the newest instead of the oldest would still
+    satisfy on length and ordering alone."""
+    decider = _RecordingDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.5))
+    due = 0.0
+    all_ts_ms: list[int] = []
+    for _ in range(12):
+        due = engine._next_state_poll.get("h1", due)
+        engine.on_tick(due)
+        engine.drain_events()
+        res_now = due + 0.05
+        engine.on_state("h1", _NOTHING_NEW, res_now, poll_epoch_ms=round(due * 1000))
+        engine.drain_events()
+        all_ts_ms.append(round(res_now * 1000))
+    history = list(engine._poll_hist["h1"])
+    assert len(history) == 8
+    assert [row["ts_ms"] for row in history] == all_ts_ms[-8:]
+    for row in history:
+        assert set(row) == {
+            "ts_ms",
+            "poll_epoch_ms",
+            "trigger",
+            "empty",
+            "interval_s",
+            "applied_interval_s",
+            "clamped",
+        }
+    last_history = decider.calls[-1]["history"]
+    assert [row["ts_ms"] for row in last_history] == all_ts_ms[3:11]
+    assert all_ts_ms[-1] not in [row["ts_ms"] for row in last_history]
+
+
+def test_the_decider_s_history_is_kept_per_pair(tmp_path: Path):
+    """Two neighbors resolved once each keep two separate histories: h2's resolution
+    row never appears in h1's history, and vice versa."""
+    decider = _RecordingDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.5), neighbors=("h1", "h2"))
+    engine.on_tick(0.0)
+    engine.drain_events()
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    engine.drain_events()
+    engine.on_state("h2", _NOTHING_NEW, 0.07, poll_epoch_ms=0)
+    engine.drain_events()
+    [h1_row] = list(engine._poll_hist["h1"])
+    [h2_row] = list(engine._poll_hist["h2"])
+    assert h1_row["ts_ms"] == 50
+    assert h2_row["ts_ms"] == 70
+
+
+def test_a_decider_mutating_the_state_corrupts_only_its_own_row(tmp_path: Path):
+    """A decider is handed the state dict by reference and the history by copy (the
+    mutation contract in engine.py's _decide docstring): mutating the state corrupts
+    only the row it belongs to -- decision_state allocates a fresh dict on every
+    call, so the next decision's state is a different object and is not poisoned by
+    an earlier one -- and mutating the history list changes nothing the engine keeps,
+    since that list is copied before it is handed over."""
+    decider = _MutatingDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.5))
+    events = _drive(engine, [("tick", 0.0)])
+    [sent] = _decisions(events, "state_poll")
+    assert sent["state"]["in_flight"] == "corrupted"
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    [reschedule] = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert reschedule["state"]["in_flight"] == "corrupted"
+    assert reschedule["state"] is not sent["state"]
+    due = engine._next_state_poll["h1"]
+    engine.on_tick(due)
+    [sent2] = _decisions(engine.drain_events(), "state_poll")
+    assert sent2["state"] is not sent["state"]
+    # The decider's own history mutation never reaches the engine's kept history.
+    assert all("corrupted" not in row for row in engine._poll_hist["h1"])
+
+
+def test_a_decider_is_handed_a_timed_out_resolution_and_the_history_row_matches_the_emitted_action(
+    tmp_path: Path,
+):
+    """The one resolution path every other decider test skips: a poll that times out
+    with no reply. The obs at that resolution shows the engine's own poll
+    bookkeeping (last_poll_status timed_out, a nonzero consecutive_poll_timeouts --
+    the decider-mode twin of test_redecide_draws_a_new_choice_on_a_timed_out_poll_and_clamps),
+    and the history row kept from it carries the emitted row's own values field for
+    field, not a hard-coded or swapped shape -- which the key-set check of
+    test_the_decider_s_history_is_the_pair_s_last_eight_resolutions_oldest_first alone
+    cannot tell apart from one."""
+    decider = _RecordingDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
+    events = _drive(engine, [("tick", 0.0), ("tick", 2.0)])
+    [reschedule] = _decisions(events, "state_poll_reschedule")
+    assert reschedule["action"] == {
+        "neighbor": "h1",
+        "poll_epoch_ms": 0,
+        "trigger": "timed_out",
+        "interval_s": 1.0,
+        "applied_interval_s": 1.0 * _J_UP,
+        "clamped": True,
+        "empty": None,
+        "decided_at_ms": 2000,
+        "late": False,
+    }
+    _send_obs, res_obs, _resend_obs = decider.calls
+    assert res_obs["resolved"] == {"poll_epoch_ms": 0, "trigger": "timed_out", "empty": None}
+    assert res_obs["state"]["last_poll_status"] == "timed_out"
+    assert res_obs["state"]["consecutive_poll_timeouts"] == 1
+    [history_row] = list(engine._poll_hist["h1"])
+    assert history_row == {
+        "ts_ms": reschedule["ts_ms"],
+        "poll_epoch_ms": reschedule["action"]["poll_epoch_ms"],
+        "trigger": reschedule["action"]["trigger"],
+        "empty": reschedule["action"]["empty"],
+        "interval_s": reschedule["action"]["interval_s"],
+        "applied_interval_s": reschedule["action"]["applied_interval_s"],
+        "clamped": reschedule["action"]["clamped"],
+    }
+
+
+def test_a_decider_run_is_the_same_run_with_logging_off(tmp_path: Path):
+    """The decider's own twin of test_redecide_draws_once_per_resolution_with_logging_off_as_well:
+    with log_decisions True and False the same Interests go out at the same times,
+    the decider is handed exactly the same sequence of obs (the history included),
+    and the engine's own kept history ends up identical -- logging off must not
+    change what the decider is ever asked."""
+
+    def _run(label: str, log_decisions: bool) -> tuple[list[str], list[dict], dict]:
+        """Drive one decider engine through four answered polls; return the
+        state-request names sent, every obs the decider was handed, and its kept
+        per-neighbor history."""
+        decider = _RecordingDecider(1.0, 2.0, 4.0, 2.0)
+        store = Store(tmp_path / f"{label}.db")
+        transport = RecordingTransport()
+        engine = SyncEngine(
+            SyncConfig(
+                group="g",
+                node="h0",
+                neighbors=("h1",),
+                state_poll_interval_choices_s=_REDECIDE_CHOICES,
+                state_poll_choice_jitter_frac=0.1,
+                state_poll_choice_redecide=True,
+                state_poll_decider=_A_DECIDER_SPEC,
+                log_decisions=log_decisions,
+            ),
+            store,
+            transport,
+            poll_choice_jitter_rng=_Cycle(0.3, 0.8, 0.55, 0.4),
+            poll_decider=decider,
+        )
+        for _ in range(4):
+            due = engine._next_state_poll.get("h1", 0.0)
+            engine.on_tick(due)
+            engine.drain_events()
+            engine.on_state("h1", _EMPTY_STATE_PAYLOAD, due + 0.05, poll_epoch_ms=round(due * 1000))
+            engine.drain_events()
+        return _poll_names(transport), decider.calls, dict(engine._poll_hist)
+
+    sent_on, calls_on, hist_on = _run("logging-on", True)
+    sent_off, calls_off, hist_off = _run("logging-off", False)
+    assert sent_on == sent_off
+    assert calls_on == calls_off
+    assert hist_on == hist_off
+
+
+def test_an_engine_with_a_decider_config_and_no_object_refuses_to_construct(tmp_path: Path):
+    """state_poll_decider set with no poll_decider object injected is refused before
+    the engine registers its own prefix."""
+    store = Store(tmp_path / "x.db")
+    transport = RecordingTransport()
+    config = SyncConfig(
+        group="g",
+        node="h0",
+        neighbors=("h1",),
+        state_poll_interval_choices_s=(1.0,),
+        state_poll_choice_redecide=True,
+        state_poll_decider=_A_DECIDER_SPEC,
+    )
+    with pytest.raises(ValueError) as exc_info:
+        SyncEngine(config, store, transport)
+    assert str(exc_info.value) == "state_poll_decider and poll_decider must be both set or both unset"
+    assert transport.registered == []
+
+
+def test_a_poll_decider_object_with_no_decider_config_refuses_to_construct(tmp_path: Path):
+    """The converse of the above: an object injected with the config field unset."""
+    store = Store(tmp_path / "x.db")
+    transport = RecordingTransport()
+    config = SyncConfig(group="g", node="h0", neighbors=("h1",))
+    with pytest.raises(ValueError) as exc_info:
+        SyncEngine(config, store, transport, poll_decider=_ConstDecider(1.0))
+    assert str(exc_info.value) == "state_poll_decider and poll_decider must be both set or both unset"
+    assert transport.registered == []
+
+
+def test_an_interval_outside_the_choices_raises(tmp_path: Path):
+    """A decider that answers a value outside the configured choices is refused with
+    the port's own message shape, naming both the returned value and the choice set."""
+    engine, _, _ = _decider_engine(tmp_path, _ConstDecider(3.0), _Cycle(0.5))
+    with pytest.raises(ValueError) as exc_info:
+        engine.on_tick(0.0)
+    assert str(exc_info.value) == "h0->h1 state_poll: the decider returned 3.0, which is not one of (1.0, 2.0, 4.0)"
+
+
+def test_none_at_a_send_raises(tmp_path: Path):
+    """A decider that defers at a send -- the convention it must never use there -- is
+    refused, falling through to the same choice-set check every other invalid
+    send-time answer hits, since None is never one of the choices either."""
+    engine, _, _ = _decider_engine(tmp_path, _ConstDecider(None), _Cycle(0.5))
+    with pytest.raises(ValueError) as exc_info:
+        engine.on_tick(0.0)
+    assert str(exc_info.value) == "h0->h1 state_poll: the decider returned None, which is not one of (1.0, 2.0, 4.0)"
+
+
+def test_none_at_a_resolution_is_refused_as_not_supported_yet(tmp_path: Path):
+    """This phase has no deferred path yet: a decider that returns None at a
+    resolution is refused by name instead of by the generic choice-set check, so the
+    message says what is missing. The next phase replaces this refusal."""
+    decider = _RecordingDecider(1.0, None)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.5))
+    _drive(engine, [("tick", 0.0)])
+    engine.drain_events()
+    with pytest.raises(ValueError) as exc_info:
+        engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    assert str(exc_info.value) == "h0->h1 state_poll_reschedule: deferred answers are not supported yet"
+
+
+def test_a_decider_s_exception_is_not_caught(tmp_path: Path):
+    """An exception raised inside decide() reaches the caller of on_tick unmodified:
+    no call site on this path swallows it."""
+    engine, _, _ = _decider_engine(tmp_path, _RaisingDecider(RuntimeError("boom")), _Cycle(0.5))
+    with pytest.raises(RuntimeError, match="boom"):
+        engine.on_tick(0.0)

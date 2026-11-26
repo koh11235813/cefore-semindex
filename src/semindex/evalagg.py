@@ -389,6 +389,24 @@ def read_meta_state_poll_rule(run_dir: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+def read_meta_state_poll_decider(run_dir: str) -> dict | None:
+    """This run's external poll-decider spec from `<run_dir>/meta.json`, or None.
+
+    2026-11-27: semindex.evalrun records `state_poll_decider` from then on, null for a
+    run that set none -- the table's and the rule's own rule, not the redecide knob's.
+    None means no decider both then and for every run recorded before the key existed,
+    for a value that is not an object, and when meta.json is unreadable. A reader of
+    its own, beside `read_meta_state_poll_rule`, for the same reason that one is.
+    """
+    try:
+        with open(os.path.join(run_dir, "meta.json"), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = data.get("state_poll_decider") if isinstance(data, dict) else None
+    return value if isinstance(value, dict) else None
+
+
 def read_meta_workload(run_dir: str) -> str | None:
     """This run's record-creation workload from `<run_dir>/meta.json`, or None.
 
@@ -722,6 +740,7 @@ class RunAnalysis:
     disconnect_duration_s: list[float] | None = None  # see `read_meta_disconnect_duration`
     state_poll_rule: dict | None = None  # see `read_meta_state_poll_rule`
     workload: str | None = None  # see `read_meta_workload`
+    state_poll_decider: dict | None = None  # see `read_meta_state_poll_decider`
 
 
 def _split_lives(events: list[dict]) -> list[list[dict]]:
@@ -1107,6 +1126,7 @@ def analyze_run(p: float, seed: int, run_dir: str) -> RunAnalysis:
     analysis.disconnect_duration_s = read_meta_disconnect_duration(run_dir)
     analysis.state_poll_rule = read_meta_state_poll_rule(run_dir)
     analysis.workload = read_meta_workload(run_dir)
+    analysis.state_poll_decider = read_meta_state_poll_decider(run_dir)
     return analysis
 
 
@@ -1371,6 +1391,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                     "disconnect_duration_s": _choices_cell(run.disconnect_duration_s),
                     "state_poll_rule": _policy_cell(run.state_poll_rule),
                     "workload": run.workload,
+                    "state_poll_decider": _policy_cell(run.state_poll_decider),
                 }
             )
             continue
@@ -1431,6 +1452,7 @@ def build_runs_rows(analyses: list[RunAnalysis]) -> list[dict]:
                 "disconnect_duration_s": _choices_cell(run.disconnect_duration_s),
                 "state_poll_rule": _policy_cell(run.state_poll_rule),
                 "workload": run.workload,
+                "state_poll_decider": _policy_cell(run.state_poll_decider),
             }
         )
     return rows
@@ -1499,6 +1521,9 @@ RUNS_FIELDS = [
     # 2026-11-19: last, by the same rule. The record-creation workload's name
     # ("w0", "wo", "wv"); empty for a run whose meta.json does not record one.
     "workload",
+    # 2026-11-27: last, by the same rule. The external decider spec as compact,
+    # key-sorted JSON (the policy cell's format); empty when not set or not recorded.
+    "state_poll_decider",
 ]
 
 

@@ -1081,6 +1081,7 @@ def test_run_one_meta_json_has_the_documented_fields(tmp_path: Path, monkeypatch
         "store_synchronous",
         "state_poll_policy",
         "state_poll_rule",
+        "state_poll_decider",
         "workload",
         "disconnect_duration_s",
         "semindex_git_commit",
@@ -2097,3 +2098,168 @@ def test_run_all_hands_every_run_the_redecide_knob(tmp_path: Path, monkeypatch, 
 
     assert capsys.readouterr().out == "p=0.4 seed=1 status=skipped\np=0.4 seed=2 status=skipped\n"
     assert [call["state_poll_choice_redecide"] for call in calls] == [True, True]
+
+
+# -- the external poll decider (--poll-decider, 2026-11-27) ------------------
+
+_DECIDER = {"path": "/abs/decider.py", "sha256": "0" * 64, "factory": "build", "args": {}}
+_DECIDER_CHOICES = [3.695, 6.0, 10.043]
+
+
+def test_run_one_generates_with_and_records_a_poll_decider(tmp_path: Path, monkeypatch):
+    """A decider spec reaches the generated run (stored experiment and agent configs,
+    with the choices and redecide it rides) and meta.json as given; the table and the
+    rule stay null beside it."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.4,
+        3,
+        "s12a",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        k=4,
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        state_poll_decider=_DECIDER,
+    )
+
+    run_dir = store / "s12a" / "p0.4" / "3"
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["state_poll_decider"] == _DECIDER
+    assert meta["state_poll_policy"] is None
+    assert meta["state_poll_rule"] is None
+    assert meta["validity"]["valid"] is True
+    experiment = json.loads((run_dir / "s12a_p040_seed3.experiment.json").read_text(encoding="utf-8"))
+    assert experiment["state_poll_decider"] == _DECIDER
+    h0 = json.loads((run_dir / "s12a_p040_seed3" / "h0.json").read_text(encoding="utf-8"))
+    assert h0["state_poll_decider"] == _DECIDER
+    assert h0["seed"] == 3
+
+
+def test_run_one_without_a_poll_decider_records_null(tmp_path: Path, monkeypatch):
+    """Unset, meta.json records null (the table's and the rule's own rule), and no
+    agent config carries the key."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    store = tmp_path / "store"
+    staging_root = tmp_path / "staging"
+    staging_root.mkdir()
+    recefore = tmp_path / "recefore"
+    recefore.mkdir()
+
+    evalrun.run_one(
+        0.4,
+        3,
+        "s12b",
+        str(store),
+        str(recefore),
+        str(staging_root),
+        run_subprocess=make_fake_run_subprocess(),
+        capture_subprocess=_fake_capture_subprocess,
+        k=4,
+    )
+
+    run_dir = store / "s12b" / "p0.4" / "3"
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta["state_poll_decider"] is None
+    h0 = json.loads((run_dir / "s12b_p040_seed3" / "h0.json").read_text(encoding="utf-8"))
+    assert "state_poll_decider" not in h0
+
+
+def test_main_passes_a_poll_decider_to_run_all_and_none_when_not_given(tmp_path: Path, monkeypatch):
+    """--poll-decider reaches run_all parsed from its JSON; without it, None."""
+    seen: dict = {}
+    monkeypatch.setattr(evalrun, "run_all", lambda *a, **kw: seen.update(kw) or [])
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    base = ["--stage", "s12a", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+            str(tmp_path / "recefore"), "--staging", str(staging_parent)]
+    assert evalrun.main(base + ["--poll-decider", json.dumps(_DECIDER)]) == 0
+    assert seen["state_poll_decider"] == _DECIDER
+    seen.clear()
+    assert evalrun.main(base) == 0
+    assert seen["state_poll_decider"] is None
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--poll-policy", json.dumps(_SHORTEN)], "state_poll_decider cannot be combined with state_poll_policy"),
+        (["--poll-rule", json.dumps(_T37R)], "state_poll_decider cannot be combined with state_poll_rule"),
+        ([], "state_poll_decider requires state_poll_interval_choices_s"),
+    ],
+)
+def test_main_refuses_a_bad_or_combined_poll_decider_before_any_run(tmp_path: Path, monkeypatch, capsys, extra, message):
+    """A decider spec with the table or the rule, or without choices, is refused once,
+    up front (exit 2), with the exact diagnostic, and no run is attempted."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_one", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s12a", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--poll-decider", json.dumps(_DECIDER)]
+        + extra
+    )
+    assert rc == 2
+    assert calls == []
+    assert capsys.readouterr().err == f"semindex.evalrun: {message}\n"
+
+
+def test_main_refuses_a_poll_decider_that_is_not_json_before_any_run(tmp_path: Path, monkeypatch, capsys):
+    """A --poll-decider string that is not JSON exits 2 with the exact diagnostic; no run."""
+    calls: list = []
+    monkeypatch.setattr(evalrun, "run_all", lambda *a, **kw: calls.append(a))
+    staging_parent = tmp_path / "staging"
+    staging_parent.mkdir()
+    rc = evalrun.main(
+        ["--stage", "s12a", "--p", "0.4", "--seeds", "1", "--store", str(tmp_path / "store"), "--recefore",
+         str(tmp_path / "recefore"), "--staging", str(staging_parent), "--poll-decider", "{"]
+    )
+    assert rc == 2
+    assert calls == []
+    assert capsys.readouterr().err == "semindex.evalrun: --poll-decider must be valid JSON\n"
+
+
+def test_run_all_hands_every_run_the_poll_decider(tmp_path: Path, monkeypatch, capsys):
+    """The decider spec reaches each `run_one` call as a keyword, not just `run_all`'s
+    validation: a sweep asked for a decider would otherwise run without it while every
+    meta.json recorded it."""
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    monkeypatch.delenv("SUDO_GID", raising=False)
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        evalrun,
+        "run_one",
+        lambda *a, **kw: calls.append(kw) or evalrun.RunOutcome(a[0], a[1], "skipped"),
+    )
+
+    evalrun.run_all(
+        [0.4],
+        [1, 2],
+        "s12a",
+        str(tmp_path / "store"),
+        str(tmp_path / "recefore"),
+        str(tmp_path / "staging"),
+        allow_dirty=True,
+        k=4,
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        state_poll_decider=_DECIDER,
+    )
+
+    assert capsys.readouterr().out == "p=0.4 seed=1 status=skipped\np=0.4 seed=2 status=skipped\n"
+    assert [call["state_poll_decider"] for call in calls] == [_DECIDER, _DECIDER]

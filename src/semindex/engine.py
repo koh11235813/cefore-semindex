@@ -15,6 +15,7 @@ schema.py, holder_state.py): this baseline has no signatures, so
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -125,6 +126,17 @@ class SyncConfig:
     # before this one keeps its exact behaviour and event streams. Mutually exclusive
     # with state_poll_policy, the choices and stage-1 interval settings (agent.py).
     state_poll_rule: StatePollRule | None = None
+    # 2026-11-27: when set, the next-poll interval comes from an external decider
+    # object injected at construction (SyncEngine.__init__'s poll_decider) instead of
+    # any of the five policies above. The engine never reads a key of this value --
+    # it exists so the run's own config names which decider its engine is running --
+    # and only ever asks whether it is None, which is what turns decider mode on.
+    # The spec here and the object on the engine are two sides of one invariant,
+    # checked at construction: one is never set without the other. Trusted as given
+    # otherwise: agent.py's config validation enforces that decider mode comes with
+    # state_poll_interval_choices_s and state_poll_choice_redecide = True, since a
+    # decider that is never asked at a resolution could not be the thing polling.
+    state_poll_decider: dict | None = None
     interest_lifetime_ms: int = 2000
     # 2026-10-23: matches tracker.DEFAULT_BACKOFF_INITIAL_S -- see that
     # constant's comment for why 1s let the first retry land inside
@@ -320,6 +332,7 @@ class SyncEngine:
         poll_choice_rng: Callable[[], float] = lambda: 0.0,
         poll_choice_jitter_rng: Callable[[], float] = lambda: 0.5,
         backoff_jitter: Callable[[], float] = lambda: 0.0,
+        poll_decider: object | None = None,
     ) -> None:
         """`poll_jitter_rng` must return a float in [0, 1); it is mapped to
         +/- state_poll_jitter_frac around state_poll_interval_s (map.md
@@ -345,6 +358,13 @@ class SyncEngine:
         for that table row's or that neighbor's interval jitter; neither
         poll_choice_rng nor poll_jitter_rng is drawn.
 
+        2026-11-27: `poll_decider`, when given, replaces the choice draw itself (not
+        the jitter draw) with a call to its own `decide(obs)` -- config.state_poll_decider
+        must then be set too, since the config is what a run's own record says it asked
+        for and the object is what actually ran; one set without the other is refused
+        below rather than silently running the wrong mode or silently not running the
+        one that was asked for.
+
         2026-10-22 fix: `config.group` and `config.node` already failed
         here with an exact diagnostic -- the registration_prefix call
         below validates both -- but a malformed neighbor went
@@ -357,12 +377,15 @@ class SyncEngine:
         """
         for neighbor in config.neighbors:
             names.validate_component(neighbor, "neighbor")
+        if (config.state_poll_decider is None) != (poll_decider is None):
+            raise ValueError("state_poll_decider and poll_decider must be both set or both unset")
         self._config = config
         self._store = store
         self._transport = transport
         self._poll_jitter_rng = poll_jitter_rng
         self._poll_choice_rng = poll_choice_rng
         self._poll_choice_jitter_rng = poll_choice_jitter_rng
+        self._poll_decider = poll_decider
         self._tracker = Tracker(
             backoff_initial_s=config.fetch_backoff_initial_s,
             backoff_multiplier=config.fetch_backoff_multiplier,
@@ -376,6 +399,12 @@ class SyncEngine:
         # keeps per neighbor, seeded with i_min_s at that neighbor's first poll.
         self._rule_interval_s: dict[str, float] = {}
         self._poll_replies: dict[str, _PollReplies] = {}
+        # 2026-11-27: poll_decider only -- the per-neighbor history a decider is
+        # handed beside its state: its pair's last 8 resolved polls, oldest first.
+        # Appended only from a state_poll_reschedule row
+        # (_redecide_next_poll), after that row's own decision has been asked, so a
+        # decision is never asked about itself.
+        self._poll_hist: dict[str, deque] = {}
         self._events: list[dict] = []
         self._transport.register(names.registration_prefix(config.group, config.node))
         # Seed the tracker with whatever this node already holds (e.g.
@@ -508,7 +537,25 @@ class SyncEngine:
         # The reply status is snapshotted before this poll itself is recorded as
         # sent, so the decision shows how the *previous* poll to this neighbor
         # fared, not the trivially-pending poll being sent right now.
-        if self._config.state_poll_policy is None and self._config.state_poll_rule is None:
+        if self._poll_decider is not None:
+            # 2026-11-27: the state the decider is asked with has to be the very
+            # dict this row ends up logging (see _decide's own mutation contract),
+            # so it is built here, before the call, rather than left to the shared
+            # line below -- which would rebuild it from a decision_state call that
+            # allocates a fresh dict every time, handing the decider one object and
+            # the row another.
+            last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, lifetime_s)
+            state = {
+                **self._tracker.decision_state(neighbor),
+                "last_poll_status": last_poll_status,
+                "consecutive_poll_timeouts": consecutive_poll_timeouts,
+            }
+            interval = self._decide(neighbor, "state_poll", now, state, None)
+            jitter_u = self._poll_choice_jitter_rng()
+            applied_interval = interval * (1 + self._config.state_poll_choice_jitter_frac * (2 * jitter_u - 1))
+            action = {"neighbor": neighbor, "interval_s": interval, "applied_interval_s": applied_interval}
+            action_prob = 1.0
+        elif self._config.state_poll_policy is None and self._config.state_poll_rule is None:
             action, applied_interval, action_prob, jitter_u = self._choose_poll_interval(neighbor)
             last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, lifetime_s)
         else:
@@ -526,11 +573,16 @@ class SyncEngine:
                 interval, applied_interval = self._rule_interval(neighbor, jitter_u)
             action = {"neighbor": neighbor, "interval_s": interval, "applied_interval_s": applied_interval}
             action_prob = 1.0
-        state = {
-            **self._tracker.decision_state(neighbor),
-            "last_poll_status": last_poll_status,
-            "consecutive_poll_timeouts": consecutive_poll_timeouts,
-        }
+        if self._poll_decider is None:
+            # The one line decider mode guards rather than skips: with a decider, `state`
+            # above is already the dict the decider was handed, and rebuilding it here
+            # from a fresh decision_state call would log a different object from the
+            # one the decision was actually made from.
+            state = {
+                **self._tracker.decision_state(neighbor),
+                "last_poll_status": last_poll_status,
+                "consecutive_poll_timeouts": consecutive_poll_timeouts,
+            }
         # map.md "判断の記録", kind 1: this *is* the decision -- which
         # neighbor, and the interval chosen for its next poll. Always made
         # (a neighbor due for a poll is always polled), so always logged
@@ -544,6 +596,48 @@ class SyncEngine:
         # state_poll_rule or (2026-11-22) that knob on, only provisional, until this
         # poll is resolved (_redecide_next_poll), which also measures from here.
         self._next_state_poll[neighbor] = now + applied_interval
+
+    def _decide(self, neighbor: str, kind: str, now: float, state: dict, resolved: dict | None) -> float:
+        """Ask `self._poll_decider` for `neighbor`'s next interval and return it, or
+        raise if the answer cannot be used (poll_decider only).
+
+        `state` is handed over by reference, not copied: it is the same dict this
+        decision's own row logs, and a decider that mutates it corrupts exactly that
+        one row and nothing later (decision_state allocates a fresh dict on every
+        call, so the next call's `state` is never this one). `history` is the
+        opposite -- the engine keeps that list for the rest of the run, so each row
+        handed to the decider is its own copy, made here, and `obs["where"]` carries
+        no ordinal: nothing a node could run reads one call's position in a stream of
+        decisions across every other node, and a decider that depended on it could
+        not run on a real node at all.
+
+        `None` is the shape of an answer that would come later, which is not
+        supported: at a resolution it is refused by name below. At a
+        send a deferred answer means nothing -- the row cannot report what it does not
+        yet have -- so it is left to fall through to the one check every other invalid
+        answer hits, `interval not in choices`, which None always fails.
+        """
+        obs = {
+            "state": state,
+            "history": [dict(row) for row in self._poll_hist.get(neighbor, ())],
+            "resolved": resolved,
+            "where": {"node": self._config.node, "neighbor": neighbor, "kind": kind, "ts_ms": round(now * 1000)},
+        }
+        interval = self._poll_decider.decide(obs)
+        if interval is None and kind != "state_poll":
+            # 2026-11-27: refused by name here, before the generic choice-set check
+            # below could fail on it for the wrong reason -- the engine keeps no
+            # pending entry for a resolution and arms nothing from a None answer, so
+            # deferring here would leave the pair's next poll unarmed with no row
+            # logged to say why.
+            raise ValueError(f"{self._config.node}->{neighbor} {kind}: deferred answers are not supported yet")
+        choices = self._config.state_poll_interval_choices_s
+        if interval not in choices:
+            raise ValueError(
+                f"{self._config.node}->{neighbor} {kind}: the decider returned {interval!r}, "
+                f"which is not one of {choices!r}"
+            )
+        return interval
 
     def _policy_interval(self, consecutive_poll_timeouts: int, jitter_u: float) -> tuple[float, float]:
         """(table interval, applied interval) for that many consecutive timeouts and
@@ -665,7 +759,20 @@ class SyncEngine:
         # The table and the rule read none of the tracker's per-origin state, and
         # carrying it would make every reschedule row as large as a state_poll row.
         state = {"last_poll_status": last_poll_status, "consecutive_poll_timeouts": consecutive_poll_timeouts}
-        if self._config.state_poll_choice_redecide:
+        if self._poll_decider is not None:
+            # 2026-11-27: checked before the redecide branch below, and not after it
+            # -- decider mode always has state_poll_choice_redecide on (agent.py's
+            # config validation), so that branch's own test would also be true here,
+            # and a decider check placed after it would never run.
+            state = {
+                **self._tracker.decision_state(neighbor),
+                "last_poll_status": last_poll_status,
+                "consecutive_poll_timeouts": consecutive_poll_timeouts,
+            }
+            resolved = {"poll_epoch_ms": poll.epoch_ms, "trigger": trigger, "empty": empty}
+            interval = self._decide(neighbor, "state_poll_reschedule", now, state, resolved)
+            applied_interval = interval * (1 + self._config.state_poll_choice_jitter_frac * (2 * poll.jitter_u - 1))
+        elif self._config.state_poll_choice_redecide:
             # 2026-11-22: checked first, and before the table's branch, because that
             # branch reads self._config.state_poll_policy, which choices mode leaves
             # None. Exactly one draw from the choice stream per resolution, made
@@ -705,7 +812,32 @@ class SyncEngine:
             # the uniform draw does not react to it, but a learner reading these
             # rows beside a rule's needs the same column there.
             action["empty"] = empty
+        if self._poll_decider is not None:
+            # 2026-11-27: `decided_at_ms` is when the answer was actually applied --
+            # this phase never defers, so that is always this same instant, equal to
+            # `ts_ms`; `late` is always False for the same reason (both gain meaning
+            # once a deferred answer can arrive after the pair's next poll). Written
+            # only in decider mode: the five existing modes' rows gain nothing.
+            action["decided_at_ms"] = round(now * 1000)
+            action["late"] = False
         self._emit_decision("state_poll_reschedule", state, action, now, action_prob)
+        if self._poll_decider is not None:
+            # 2026-11-27: appended from this row's own action, after it has been
+            # asked for and emitted (or would have been, with logging on) -- never
+            # from inside _emit_decision, which is a no-op with log_decisions off, so
+            # turning logging off must not change what the next decision is asked
+            # with.
+            self._poll_hist.setdefault(neighbor, deque(maxlen=8)).append(
+                {
+                    "ts_ms": round(now * 1000),
+                    "poll_epoch_ms": action["poll_epoch_ms"],
+                    "trigger": action["trigger"],
+                    "empty": action["empty"],
+                    "interval_s": action["interval_s"],
+                    "applied_interval_s": action["applied_interval_s"],
+                    "clamped": action["clamped"],
+                }
+            )
 
     def _choose_poll_interval(self, neighbor: str) -> tuple[dict, float, float, float | None]:
         """Draw the interval until `neighbor`'s next state poll: the decision's

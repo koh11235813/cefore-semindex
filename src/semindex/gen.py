@@ -37,6 +37,8 @@ import sys
 from dataclasses import dataclass
 
 from semindex import schema
+from semindex.cefpyco_transport import DEFAULT_RECEIVE_TIMEOUT_MS
+from semindex.engine import SyncConfig
 from semindex.store import STORE_SYNCHRONOUS_MODES
 
 # This generator and the agent it configures live in, and are only ever
@@ -154,6 +156,8 @@ class ExperimentSpec:
     state_poll_policy: dict[str, list[float]] | None
     # {"i_min_s": ..., "factor": ..., "i_max_s": ..., "jitter_frac": ..., "on_timeout": "keep"|"reset"}, or None.
     state_poll_rule: dict[str, float | str] | None
+    # {"path": ..., "sha256": ..., "factory": ..., "args": {...}}, or None.
+    state_poll_decider: dict | None
     max_in_flight_per_neighbor: int | None
     store_synchronous: str | None
 
@@ -182,6 +186,7 @@ _TOP_LEVEL_OPTIONAL = (
     "state_poll_choice_redecide",
     "state_poll_policy",
     "state_poll_rule",
+    "state_poll_decider",
     "max_in_flight_per_neighbor",
     "store_synchronous",
 )
@@ -565,6 +570,68 @@ def parse_state_poll_choice_redecide(raw, *, have_choices: bool) -> bool | None:
     return raw
 
 
+def parse_state_poll_decider(
+    raw,
+    *,
+    have_policy: bool,
+    have_rule: bool,
+    have_choices: bool,
+    have_redecide: bool,
+    choices: tuple[float, ...] | None,
+    choice_jitter_frac: float | None,
+) -> dict | None:
+    """Validate the optional `state_poll_decider` top-level key, or None if absent.
+
+    Forwarded verbatim into every generated agent config, where it names the external
+    object the agent asks for each poll's next interval (semindex.decider, reached
+    through agent.build_agent). 2026-11-27: every rule agent._validate_poll_decider
+    enforces is checked here too, so a bad spec fails at generation, not at every
+    agent's startup mid-run. `have_policy`/`have_rule` are checked here rather than by
+    adding this key to parse_state_poll_policy's/parse_state_poll_rule's own
+    combination parameters, the same reason the agent's own validator gives (see its
+    docstring): those two functions' parameters name only the keys that existed when
+    each was written. The numeric messages use this module's own phrasing (as for the
+    rule); the structural and combination ones are the agent's text. The bound below
+    reads `interest_lifetime_ms` and `receive_timeout_ms` off the agent's own defaults,
+    not off a top-level experiment key -- neither is one, so every generated config
+    actually runs with exactly these two values.
+    """
+    if raw is None:
+        return None
+    if have_policy:
+        raise ExperimentError("state_poll_decider cannot be combined with state_poll_policy")
+    if have_rule:
+        raise ExperimentError("state_poll_decider cannot be combined with state_poll_rule")
+    if not have_choices:
+        raise ExperimentError("state_poll_decider requires state_poll_interval_choices_s")
+    if not have_redecide:
+        raise ExperimentError("state_poll_decider requires state_poll_choice_redecide")
+    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "factory", "args"}:
+        raise ExperimentError("state_poll_decider must be an object with keys path, sha256, factory and args")
+    path = raw["path"]
+    if not isinstance(path, str) or not path or not os.path.isabs(path):
+        raise ExperimentError("state_poll_decider.path must be a non-empty absolute path")
+    sha256 = raw["sha256"]
+    if not isinstance(sha256, str) or len(sha256) != 64 or any(c not in "0123456789abcdef" for c in sha256):
+        raise ExperimentError("state_poll_decider.sha256 must be 64 lower-case hex characters")
+    factory = raw["factory"]
+    if not isinstance(factory, str) or not factory.isidentifier():
+        raise ExperimentError("state_poll_decider.factory must be a Python identifier")
+    args = raw["args"]
+    if not isinstance(args, dict):
+        raise ExperimentError("state_poll_decider.args must be an object")
+    effective_jitter = (
+        choice_jitter_frac if choice_jitter_frac is not None else SyncConfig.state_poll_choice_jitter_frac
+    )
+    smallest_applied_ms = min(choices) * (1 - effective_jitter) * 1000
+    if not smallest_applied_ms > SyncConfig.interest_lifetime_ms + DEFAULT_RECEIVE_TIMEOUT_MS:
+        raise ExperimentError(
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms"
+        )
+    return {"path": path, "sha256": sha256, "factory": factory, "args": dict(args)}
+
+
 def parse_state_poll_policy(raw, *, have_choices: bool, have_choice_jitter: bool) -> dict[str, list[float]] | None:
     """Validate the optional `state_poll_policy` top-level key, or None if absent.
 
@@ -787,6 +854,16 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
     state_poll_choice_redecide = parse_state_poll_choice_redecide(
         raw.get("state_poll_choice_redecide"), have_choices=state_poll_interval_choices_s is not None
     )
+    # 2026-11-27: after the redecide knob, whose presence (and truth) it requires.
+    state_poll_decider = parse_state_poll_decider(
+        raw.get("state_poll_decider"),
+        have_policy=raw.get("state_poll_policy") is not None,
+        have_rule=raw.get("state_poll_rule") is not None,
+        have_choices=state_poll_interval_choices_s is not None,
+        have_redecide=state_poll_choice_redecide is True,
+        choices=state_poll_interval_choices_s,
+        choice_jitter_frac=state_poll_choice_jitter_frac,
+    )
     max_in_flight_per_neighbor = parse_max_in_flight_per_neighbor(raw.get("max_in_flight_per_neighbor"))
     store_synchronous = parse_store_synchronous(raw.get("store_synchronous"))
 
@@ -819,6 +896,7 @@ def parse_experiment(raw: dict) -> ExperimentSpec:
         state_poll_choice_redecide=state_poll_choice_redecide,
         state_poll_policy=state_poll_policy,
         state_poll_rule=state_poll_rule,
+        state_poll_decider=state_poll_decider,
         max_in_flight_per_neighbor=max_in_flight_per_neighbor,
         store_synchronous=store_synchronous,
     )
@@ -964,6 +1042,11 @@ def _build_agent_config(spec: ExperimentSpec, host: int) -> dict:
     if spec.state_poll_rule is not None:
         config["seed"] = spec.seed
         config["state_poll_rule"] = dict(spec.state_poll_rule)
+    # 2026-11-27: the decider rides the choices (parse_experiment never lets it through
+    # without them), which already write `seed` above, so nothing further is needed here.
+    # Left out, the config stays byte for byte what it was before this key existed.
+    if spec.state_poll_decider is not None:
+        config["state_poll_decider"] = dict(spec.state_poll_decider)
     # Only when given: left out, the agent keeps SyncConfig's default cap and
     # the config stays byte for byte what it was before this key existed.
     if spec.max_in_flight_per_neighbor is not None:
