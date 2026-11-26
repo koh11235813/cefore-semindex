@@ -1,7 +1,7 @@
 ---
-status: open
+status: closed
 type: task
-claimed-by: claude-main
+claimed-by:
 blocked-by: [08, 09]
 ---
 
