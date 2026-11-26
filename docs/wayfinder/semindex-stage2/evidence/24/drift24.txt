@@ -1,0 +1,267 @@
+NOT in the frozen plan: this script and its appended RUN.txt section were
+written after every score of M (seeds 81 to 100) was already seen.
+It selects nothing -- the candidate that goes forward is candidate a, as
+shipped (ana24.txt's VERDICT); this script does not reopen that choice.
+The replay below runs on seeds 1 to 20, which are TRAINING seeds: candidate
+a's own fit read their emulator logs, so every comparison in this file is an
+IN-SAMPLE comparison, not a generalisation claim.
+The 0.5 threshold on |within-run corr(decision time)|, used below to name a
+cell 'drifting', was chosen by a verifier after the fact; it is restated here
+and not tuned by this script.
+
+========================================================================
+0  SCOPE, CODE DIGESTS, AND THE TWO SEED RANGES THIS SCRIPT MAY TOUCH
+========================================================================
+fit seeds (candidate a, read via rows24.build_all): 1 to 70, p 0.2 only
+replay seeds (this script's own comparison):        1 to 20, 40 streams each
+code digests (sha256):
+  drift24.py     6cde361fea140ff9674c40165ee2bba74528d14e4ece7e0f673af504fb164e07
+  m24.py         f93641cb4022a21437365f2f019d8c705e2cdffc99ba1654b879a4cdcdb79719
+  rows24.py      5f4b3c8ba1a854aa7d3aef6fceb03b80c4c7d92390e7aa1640ab847673a34c88
+  eval24.py      1a3f6388592932b6a3ddaa65e7d23bf981f519ea4d8144fb0a478e5d43d1b0f4
+  features.py    437e840b04d10d6e58ff28513f994cb85c63c135bc0baee2b230592b30e7b80e
+  charges.py     39c9b8669488b5e848e49e97781988f285245ecbe728b1526f70a5e41e8c0c40
+  coef_a.npy     bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf
+
+========================================================================
+1  CANDIDATE A'S FIT ROWS, AND THE WITHIN-RUN CORRELATION OF EACH CELL
+========================================================================
+fit rows: 7837, seeds 1 to 70 (70 distinct)
+logged rate over the fit rows, R_fit = sum(c)/sum(tau) = 48.8953 score ms/s
+cells with |within-run corr(decision time)| > 0.5: 40 of 261
+  max |corr| over all cells: 0.9482  (at cell index 26, o1_p1_hi)
+  the 40 drifting cells, by name and index, with their own within-run
+  correlation against decision time (t_rel_ms):
+    [ 15] origins_shown                corr = +0.6749
+    [ 18] polled_peer_present          corr = +0.5274
+    [ 21] o1_hi                        corr = +0.9218
+    [ 26] o1_p1_hi                     corr = +0.9482
+    [ 27] o1_p1_notified_max           corr = +0.9482
+    [ 30] o1_p2_hi                     corr = +0.6768
+    [ 31] o1_p2_notified_max           corr = +0.6768
+    [ 40] o2_present                   corr = +0.6914
+    [ 41] o2_hi                        corr = +0.9255
+    [ 44] o2_p1_present                corr = +0.6934
+    [ 45] o2_p1_peer                   corr = +0.5885
+    [ 46] o2_p1_hi                     corr = +0.9152
+    [ 47] o2_p1_notified_max           corr = +0.9152
+    [ 50] o2_p2_hi                     corr = +0.6954
+    [ 51] o2_p2_notified_max           corr = +0.6954
+    [180] exchanges_count              corr = +0.8541
+    [211] x4_present                   corr = +0.6067
+    [212] x4_age_s                     corr = +0.5784
+    [221] x5_present                   corr = +0.7046
+    [222] x5_age_s                     corr = +0.6929
+    [228] x5_interval_s                corr = +0.5621
+    [229] x5_waited_s                  corr = +0.5605
+    [231] x6_present                   corr = +0.7720
+    [232] x6_age_s                     corr = +0.7677
+    [233] x6_trigger_answered          corr = +0.5293
+    [236] x6_empty_false               corr = +0.5008
+    [238] x6_interval_s                corr = +0.6389
+    [239] x6_waited_s                  corr = +0.6374
+    [241] x7_present                   corr = +0.8155
+    [242] x7_age_s                     corr = +0.8149
+    [243] x7_trigger_answered          corr = +0.6121
+    [246] x7_empty_false               corr = +0.5166
+    [248] x7_interval_s                corr = +0.6939
+    [249] x7_waited_s                  corr = +0.6920
+    [251] x8_present                   corr = +0.8396
+    [252] x8_age_s                     corr = +0.8408
+    [253] x8_trigger_answered          corr = +0.6625
+    [256] x8_empty_false               corr = +0.5083
+    [258] x8_interval_s                corr = +0.7323
+    [259] x8_waited_s                  corr = +0.7310
+
+========================================================================
+2  THE SHIPPED FIT, RE-SOLVED LOCALLY, AS A REPRODUCIBILITY GATE
+========================================================================
+rho_0 (re-solved) = 17.2626   gap vs R_fit = -31.6327   cond = 1.073e+05
+max |shipped coef_a.npy - this re-solve| = 2.547e-09  (max|w| = 1022.5200)
+mu/sigma identical to the shipped file's own: True
+GATE PASSED: coefficients agree within 1e-06, and the greedy answer on every one
+  of the 7837 fit rows agrees between the shipped file and the local re-solve.
+
+========================================================================
+3  THE NEUTRALISED FIT: 40 CELLS HELD AT THEIR FIT-ROW MEAN, ROWS AND CHAIN ALIKE
+========================================================================
+records neutralised (rows and chain entries, deduplicated by record identity): 10683
+rho_2 (neutralised) = 53.2585   gap vs R_fit = +4.3633   cond = 1.095e+07
+argmin disagreement, shipped vs neutralised, on the 7837 fit rows: 3706 (0.4729)
+
+within-run slope of the fitted Q of the LOGGED interval on decision time
+(score ms per second within a run; a_logged is a fact of the log, unaffected
+by neutralising vec):
+  shipped     (w_blocks_a) slope = -38.7759  within-run corr = -0.6491
+  neutralised (w2)         slope = +0.4153  within-run corr = +0.0274
+
+wrote coef_a_neutral.npy (sha256 cf5f49d71ebc1c1973fd521373d3b658c602e7457ba7c1552c1f9b66e66a9acc) and coef_a_neutral.json
+
+========================================================================
+4  FIT-ROW ANSWER SHARES: OVERALL, AND BY DECILE OF DECISION TIME
+========================================================================
+deciles are the 9 pooled cutoffs of all 7837 fit rows' own decision time
+(t_rel_ms / 1000, in seconds); the SAME cutoffs are applied to both models, so
+the shipped and neutralised rows below are comparable decile for decile.
+decile cutoffs (s): 19.247, 28.137, 37.278, 46.440, 55.785, 64.924, 74.263, 83.609, 92.953
+
+overall shares, n=7837 fit rows:
+                  3.695    6.000   10.043
+  shipped        0.2839   0.3796   0.3365
+  neutralised    0.2483   0.3545   0.3972
+
+by decile of decision time:
+  dec       n   shipped 3.695/6.000/10.043   neutral 3.695/6.000/10.043
+  0       784   0.2997 0.4349 0.2653   0.0370 0.4694 0.4936
+  1       784   0.2423 0.3584 0.3992   0.2577 0.4184 0.3240
+  2       783   0.3231 0.2095 0.4674   0.2414 0.3793 0.3793
+  3       784   0.2513 0.4974 0.2513   0.3202 0.3788 0.3010
+  4       783   0.3934 0.4598 0.1469   0.3997 0.3103 0.2899
+  5       784   0.4273 0.4005 0.1722   0.3240 0.3737 0.3023
+  6       784   0.3214 0.4031 0.2755   0.2207 0.3495 0.4298
+  7       783   0.2529 0.3423 0.4049   0.2107 0.3129 0.4764
+  8       784   0.1811 0.3457 0.4732   0.2309 0.3023 0.4668
+  9       784   0.1467 0.3444 0.5089   0.2411 0.2500 0.5089
+
+========================================================================
+5  THE REPLAY: FOUR DECIDERS, SEEDS 1 TO 20 x 40 STREAMS
+========================================================================
+replay seeds: 1 to 20 (20 distinct), 40 streams each, 800 runs per decider
+seed guards: port.check_seeds (>100 refused) passed; meets 121-160 in 0 seeds;
+             20 of 20 replay seeds are also in candidate a's own 1-70 fit seeds
+
+  decider        runs   mean_score mean_polls mean_delay  censored_runs mind_chg_share
+  a               800    35922.496    139.654  21357.175       2 / 800        0.5355
+  a_neutral       800    38729.286    128.222  25356.198       9 / 800        0.2198
+  F               800    35958.927    182.914  16881.762       0 / 800        0.4863
+  const6.000      800    37406.042    159.570  20763.535       0 / 800        0.0000
+
+interval shares over resolutions, the two M's only (F and the fixed arm do not
+choose among the three by argmin, so eval24.one_run leaves their reads/arm-count
+fields blank):
+  a          reads=124523  3.695=0.2013  6.000=0.4817  10.043=0.3170
+  a_neutral  reads=115378  3.695=0.1691  6.000=0.3921  10.043=0.4387
+
+archiving the per-run table ...
+wrote drift24.csv (3200 rows, sha256 05e7d5676103d4e0281b758888a7475798631a9715723f8d8614842d13de9227)
+
+========================================================================
+6  PAIRED BOOTSTRAP DIFFERENCES OVER SEEDS 1 TO 20
+========================================================================
+  first        second            diff ms     lo 95%     hi 95%   0 in first lower
+  a_neutral    a                2806.790   2073.957   3583.323     no  0 of 20
+  a            F                 -36.431   -544.951    542.317    yes 11 of 20
+  a_neutral    F                2770.359   1932.554   3624.499     no  1 of 20
+  a            const6.000      -1483.545  -1945.800   -978.644     no 17 of 20
+  a_neutral    const6.000       1323.245    537.360   2174.065     no  4 of 20
+
+HEADLINE: score(a_neutral) - score(a), seeds 1 to 20, paired by seed:
+  point 2806.790 ms   95% interval 2073.957 to 3583.323 ms   0 in interval: no
+  a_neutral scores lower (better) on 0 of 20 seeds
+  (negative point / negative interval = neutralised scores lower = better;
+   positive = neutralised scores higher = worse; the sign and the interval are
+   printed above and are not characterised further here)
+
+========================================================================
+7  REPLAY DECISIONS BY DECILE OF DECISION TIME WITHIN THE RUN
+========================================================================
+decision time is measured against the run's OWN start: each resolution's own
+obs['where']['ts_ms'] minus that seed's t0 from EV24.LBL.run_dict -- the same
+clock SCORE.terms uses to score the run, read off the dict the harness already
+builds for every seed and not re-derived by a second simulation.
+
+decile cutoffs are pooled over shipped a's AND the neutralised model's own
+resolutions together, so the two rows below are cut at the same instants and
+are directly comparable to each other.
+decision-time range seen (s), pooled over both M's: min 0.385  max 132.074
+decile cutoffs (s): 7.040, 20.314, 31.651, 41.992, 55.767, 69.856, 83.869, 98.647, 114.689
+These are shares of what each model CHOSE; whether a bigger or steeper move
+here reflects reading the clock or reading some other state cannot be told
+apart by this table alone -- see section 9.  One scalar per model, computed
+and not read off the table by eye, follows each one: the within-run slope and
+correlation of the chosen interval itself (seconds) against decision time,
+with (seed, stream) as the run key.
+
+a (124523 resolutions, pooled over 20 seeds x 40 streams):
+  dec         n    3.695    6.000   10.043
+  0       11994   0.0000   1.0000   0.0000
+  1       11497   0.0958   0.6941   0.2101
+  2       10595   0.3168   0.2138   0.4695
+  3        9200   0.3109   0.3613   0.3278
+  4       14249   0.3485   0.4914   0.1601
+  5       15178   0.3322   0.4709   0.1969
+  6       13016   0.2336   0.3520   0.4144
+  7       12513   0.1836   0.2833   0.5330
+  8       12914   0.1067   0.4142   0.4791
+  9       13367   0.0766   0.5083   0.4151
+  within-run slope of the chosen interval (s) on decision time: +0.012575 s/s
+  within-run corr of the same pair:                             +0.2023
+
+a_neutral (115378 resolutions, pooled over 20 seeds x 40 streams):
+  dec         n    3.695    6.000   10.043
+  0       11994   0.0000   1.0000   0.0000
+  1       12495   0.0271   0.9729   0.0000
+  2       13394   0.5193   0.4807   0.0000
+  3       14791   0.6232   0.2051   0.1717
+  4        9740   0.0508   0.0603   0.8889
+  5        8814   0.0359   0.1143   0.8499
+  6       10974   0.0886   0.2409   0.6705
+  7       11476   0.0959   0.2878   0.6162
+  8       11076   0.0101   0.1751   0.8148
+  9       10624   0.0007   0.2012   0.7981
+  within-run slope of the chosen interval (s) on decision time: +0.036901 s/s
+  within-run corr of the same pair:                             +0.5689
+
+========================================================================
+8  EVERY CHECK SHOWN FAILING ON A MUTATED INPUT
+========================================================================
+  fit seed 71 (just above range)   FIRES: mut/fit-71: fit seeds must be 1 to 70, refused [71]
+  fit seed 0                       FIRES: mut/fit-0: fit seeds must be 1 to 70, refused [0]
+  fit seed set missing seed 1      FIRES: mut/fit-drop-1: fit seed set [2, 3, 4, 5] != expected [1, 2, 3, 4]
+  learn seed 81 (above the 80-seed log cap) FIRES: mut/learn-81: learning seeds must be whole numbers 1 to 80; refused [81.0]
+  replay seed 21 (just above range) FIRES: mut/replay-21: replay seeds for this step must be 1 to 20, refused [21]
+  replay seed 101                  FIRES: mut/replay-101: seeds above 100 are reserved for measuring and may not be used by anything on the learning side; refused [101]
+  replay seed 121 (measuring range) FIRES: mut/replay-121: seed set meets the measuring seeds 121-160: [121]
+  replay seed 71 (outside candidate a's own fit seeds) FIRES: mut/replay-not-fit: 1 of 1 replay seeds are not in candidate a's own 1-70 fit seeds
+  tampered weight breaks Check A   FIRES: mut/checka (p 0.2): telescoped Check A gap 1.400000e+06 > tol 2.524969e+00
+  malformed coefficient shape      FIRES: <malformed coefficient file>: expected shape (5, 262) float64, got (4, 262) float64
+  shipped gate: coefficient off by 1e-5 FIRES: mut/gate-coef: max |shipped file - local re-solve| 1.000e-05 > tol 1.000e-06
+  shipped gate: one greedy answer flipped FIRES: mut/gate-greedy: 1 of 7837 rows disagree between the two greedy-index arrays
+
+12 of 12 mutations produced a failure
+
+========================================================================
+9  WHAT THIS DOES NOT SHOW
+========================================================================
+- NOTHING ABOUT GENERALISATION.  Seeds 1 to 20 are inside the 70 seeds candidate
+  a's own fit already read; this is a within-fit sensitivity, not a held-out or
+  selection-half measurement.  The held seeds (71-80) and the selection seeds
+  (81-100) are untouched by this script -- nothing here is about them.
+- NO RE-SELECTION.  Candidate a stays the chosen candidate (ana24.txt's VERDICT);
+  this script does not compare candidate b and does not reopen that choice.
+- ONE THRESHOLD.  The 0.5 cutoff on |within-run corr(decision time)| is the
+  cross-verification's own after-the-fact choice, restated here and not
+  re-tuned; no other threshold is tried.
+- WHAT A SCORE CHANGE CANNOT SETTLE.  The 40 neutralised cells are held at their
+  fit-row mean, which removes whatever STATE information they also carried, not
+  only the clock-position information the within-run correlation flags.  A
+  worse replay score after neutralising them does not by itself show that the
+  shipped M was reading the clock rather than the state those same cells also
+  describe; an EQUAL score would not have shown the opposite either, because
+  the neutralised model could have picked up the lost state signal through the
+  221 cells left untouched.  Section 7 reports, for each model, the decile
+  shares of its own chosen interval and the within-run slope and correlation
+  of that chosen interval against decision time; these numbers are printed as
+  computed and are NOT characterised here as one model 'reading the clock'
+  more or less than the other -- that reading is left to whoever compares the
+  two printed slopes, not asserted by this script.
+- THE EMULATOR-TO-REPLAY GAP.  Every number in this file comes from
+  `eval24.one_run`'s replay port on logged-style observations; nothing here
+  touches whether the replay port's own dynamics match the live Mininet
+  emulator those logs were recorded from.
+- NOTHING ABOUT WHY a difference, if any, has the sign it has beyond what is
+  printed with its interval above; nothing further is inferred from it.
+- Nothing about candidate b, p 0.4, the held or selection seeds, or any further
+  neutralisation threshold.
+
+end of drift24.py

@@ -864,3 +864,145 @@ Stage 5 artifact sha256 digests:
   versus24.txt   960a9ae56e1a004940963d4af4f16186f7a35c5ff4445ac1d4ba5642a2cd6fa9
   agree24.txt    f7d203983d27502a1dd40d9be66645422080fa6f446d01b3a3ea1f75c21ef8ea
   latency24.txt  0ecf7017fa41d7bfa46f780cb74eb99019860c9c4a550d8119ccb16998d030b9
+
+========================================================================
+10  POST HOC SENSITIVITY: THE WITHIN-RUN DRIFT, NEUTRALISED (SEEDS 1 TO 20)
+========================================================================
+Not in the frozen plan, written after every score of M was already seen, and selects
+nothing -- recorded as a post hoc sensitivity, per the instruction for this step; the
+ticket's own decision line for it is the parent's to write and is not written here.
+Seeds 1 to 20 are TRAINING seeds candidate a's own fit read, so every number below is an
+IN-SAMPLE comparison, not a generalisation claim.  A cross-verification of the committed
+fit found candidate a's k=0 solve dominated by a within-run drift in decision time, with
+a specific magnitude and cell count attached but no controlled before/after replay
+comparison performed; the 0.5 threshold naming a cell "drifting" is that verifier's own
+after-the-fact choice, restated and not re-tuned here.  This section runs that one
+comparison: neutralise the drifting cells (hold them at their own fit-row mean, in every
+row's vec AND in every entry of that row's own chain -- the two are the same dict object
+by precheck.table_of_run's own construction, so neutralising one without the other
+compares a neutralised current state against an un-neutralised successor), refit
+candidate a's k=0 solve on the neutralised rows at the same penalty (lambda* = 1e-4), and
+replay FOUR deciders through eval24.one_run, unmodified, on seeds 1 to 20 x 40 streams
+(inside the 70 fit seeds, disjoint from the 81-100 selection seeds): the shipped model,
+the neutralised model, the formula rule F, and the fixed 6.0 s arm (F and the fixed arm
+read off eval24.py's own module, not redefined).
+
+Command (PYTHONPATH=/home/lab_shared/wt/semindex-ev24/src, local interpreter):
+  drift24.py > drift24.txt
+  Run twice (2026-11-26); drift24.txt, drift24.csv, coef_a_neutral.npy and
+  coef_a_neutral.json byte-identical on rerun.  12 of 12 mutations fire.
+  uvx ruff@0.17.2 check --no-cache on this directory: "All checks passed!".
+  No __pycache__, *.pyc or .ruff_cache left in the worktree.
+  Last lines of the real output:
+    - Nothing about candidate b, p 0.4, the held or selection seeds, or any further
+      neutralisation threshold.
+
+    end of drift24.py
+
+What changed from the first, uncommitted draft, and why: the reproducibility gate
+(section 2) now actually raises if the shipped coef_a.npy drifts more than 1e-6 from the
+local re-solve or if one greedy answer disagrees -- the first draft printed the numbers
+but never asserted on them.  The 40 drifting cells are now named (section 1), not only
+counted, matching what the module docstring already claimed.  Section 3 also reports the
+within-run slope of the fitted Q of the logged interval on decision time, shipped
+(-38.7759 score ms/s, within-run corr -0.6491) and neutralised (+0.4153 score ms/s,
+corr +0.0274), reproducing the cross-verification's own numbers to the model's own
+reported digits.  The replay now runs F and the fixed 6.0 s arm alongside the two M's,
+reports mean polls, mean delay and censored-run counts for all four, and the mind-change
+share for each.  A per-run archive (drift24.csv, 3200 rows: 4 deciders x 20 seeds x 40
+streams) carries score_ms, polls, delay_ms, c4, the arm-count fields, mind_changes and
+res_decisions (so the mind-change share is also recomputable from the csv, not only from
+this script's own accumulator), and, for the two M's, a per-decile x per-arm resolution
+count, so a verifier can recompute every per-decider mean and every decile share in this
+file from the csv alone.  Section 4 adds the fit rows' own answer shares, overall and by
+decile of decision time, shipped against neutralised.  Section 7 adds the replay's own
+decile table (decision time measured against each run's own t0 from EV24.LBL.run_dict,
+the clock SCORE.terms already uses), read off a RecordingM subclass of m24.M that only
+appends to a log after deferring to m24.M.__call__ unmodified, so no run is simulated
+twice and no score row can differ from a plain m24.M's.  Mutation coverage grew from 8
+to 11 (the two new gate checks, plus rows24.check_learn_seeds(81) showing the 80-seed
+log cap).  None of this moved the headline or any previously-printed number.
+
+A second pass, after an independent verification of the above, fixed four things in
+this uncommitted draft and its archive; none of the five comparison numbers below
+moved.  (1) Section 3's count of neutralised records printed 10684: `neutralise_in_place`
+deduplicated on the id of each record's ORIGINAL vec array, but reassigning a record's
+`vec` can drop the last reference to that original array, and CPython can then reuse
+its freed address for the replacement array, so a record visited through more than one
+chain entry was skipped on its later visits only when the allocator happened to recycle
+that freed address, and counted again when it did not -- a malloc coincidence, not a
+property of the data, which is how the old check printed 10684.  Deduplicating on the
+record dict's own id instead -- a record is never replaced, only mutated -- makes the
+count a property of the data and stable across interpreters: 10683 distinct records.
+The neutralised coefficients are
+unaffected either way, since the replacement was already idempotent.  (2) Section 5's
+two seed-guard lines ("meets 121-160 in 0 seeds" and "every seed is also one of
+candidate a's own 1-70 fit seeds") were typed literals; they now print two computed
+counts, and the fit-seed membership is asserted by a new check, `check_replay_in_fit`,
+with a twelfth mutation (replay seed 71, outside the 1-70 fit range) showing it refused
+-- mutation coverage is 12, up from the 11 above.  (3) The cross-reference corrected
+earlier in this section (Section 3, not Section 1, for the within-run slope of the
+fitted Q) was fixed in this same pass.  (4) The honest note below misquoted its own
+decile spans ("0.80-0.89" and "0.42-0.53") against what section 7's table actually
+prints; both spans are now quoted as printed (0.6162 to 0.8889, and 0.1601 to 0.5330,
+both over deciles 4-9).  The slope/corr pair the note's reading rests on, and that
+reading itself, are unaffected.
+
+One honest note from my own first pass at this section (caught before this archive was
+written, via a second review of the drafted output against its own numbers, not caught
+by any mutation test): my first draft of section 9 asserted that "shipped a's own chosen
+interval moves with decision time while the neutralised model's does not".  Section 7's
+own table contradicts that: a_neutral's 10.043 s share moves from 0.0000 in decile 0 to a
+span of 0.6162 to 0.8889 over deciles 4-9, a bigger move than shipped a's span of 0.1601
+to 0.5330 over the same deciles, and the within-run slope/corr of the chosen interval
+on decision time (added to section 7 for exactly this reason) is +0.012575 s/s (corr
++0.2023) for shipped against +0.036901 s/s
+(corr +0.5689) for neutralised -- the neutralised model's own chosen answer tracks the
+clock MORE, not less.  The typed sentence was wrong and has been removed from both
+drift24.py and this file; section 7 now prints the two slopes as computed and section 9
+says only that the reading is left to whoever compares them, asserting neither
+direction.  This matches the task's own instruction to "report whatever the numbers are
+... and explain nothing beyond what they carry": the one sentence in my first pass that
+did more than that was the one the numbers themselves refuted.
+
+Results (reproducing the cross-verification's numbers independently, from the committed
+rows and the shipped coef_a.npy, not read from its scratch output):
+  - 40 of 261 live cells have |within-run corr(decision time)| > 0.5 (max |corr| 0.9482,
+    cell o1_p1_hi); named in drift24.txt section 1 with their own correlations.
+  - Re-solved locally: rho_0 = 17.2626 (gap vs R_fit 48.8953 = -31.6327), matching
+    coef_a.npy to 2.547e-09 max|w| 1022.52 (gate: within 1e-6, greedy answers identical
+    on all 7837 fit rows).  Neutralised: rho_2 = 53.2585 (gap +4.3633).
+  - Argmin disagreement, shipped vs neutralised, on the 7837 fit rows: 3706 (0.4729).
+  - Replay means, seeds 1-20 x 40 streams (800 runs each): a 35922.496, a_neutral
+    38729.286, F 35958.927, const6.000 37406.042 score ms.
+  - HEADLINE -- score(a_neutral) - score(a), seeds 1 to 20, paired by seed:
+      point +2806.790 ms  (95% interval +2073.957 to +3583.323 ms, 0 excluded)
+      neutralised scores lower (better) on 0 of 20 seeds
+    The neutralised model scores clearly WORSE than the shipped model on the seeds the
+    fit itself was built from.  This is a within-fit sensitivity, not a generalisation
+    claim (seeds 1-20 are inside the 70 fit seeds) and not a re-selection of a or b,
+    which stays fixed at a.  No seed above 70 was fitted on and no seed above 20 was
+    replayed by this step; no seed of 81-100 was touched by anything in this section.
+    drift24.py's own section 8 shows both bounds, the measuring range 121-160, the 80-
+    seed log cap, and the new reproducibility gate, all refused on a mutated input.
+  - Section 7's decile table and its own computed within-run slope/corr of the chosen
+    interval (s) on decision time: shipped +0.012575 s/s (corr +0.2023, 124523 pooled
+    replay resolutions), neutralised +0.036901 s/s (corr +0.5689, 115378 pooled
+    resolutions).  Printed as computed; this is evidence about what the CHOSEN interval
+    does during the replay, not a proof of what either model reads, and this file does
+    not characterise which direction that comparison favours -- see section 9 and the
+    honest note above.
+
+Stage 6 (post hoc sensitivity) artifact sha256 digests:
+  drift24.py          6cde361fea140ff9674c40165ee2bba74528d14e4ece7e0f673af504fb164e07
+  drift24.txt         15466919e7412f5ea2154edc93878604b8594620945ab773e79a5a3f7ca57e17
+  drift24.csv         05e7d5676103d4e0281b758888a7475798631a9715723f8d8614842d13de9227
+  coef_a_neutral.npy  cf5f49d71ebc1c1973fd521373d3b658c602e7457ba7c1552c1f9b66e66a9acc
+  coef_a_neutral.json c02e7fda8f232cefdfcb633616cb4facca1ede71684d058048d6928ea6d31601
+
+What this section does not do: it does not amend ticket 11's 決まったこと, does not
+touch any file above this appended section, and the ticket's own decision line recording
+why this is a post hoc sensitivity that selects nothing is the parent's to write, not
+this appended section's.  It does not simulate, open or summarise any seed outside 1-70
+(fit) and 1-20 (replay); seeds 81-100 and above are untouched.  It does not re-select
+between candidate a and b.  It sends no message to any agent.
