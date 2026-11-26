@@ -1006,3 +1006,158 @@ why this is a post hoc sensitivity that selects nothing is the parent's to write
 this appended section's.  It does not simulate, open or summarise any seed outside 1-70
 (fit) and 1-20 (replay); seeds 81-100 and above are untouched.  It does not re-select
 between candidate a and b.  It sends no message to any agent.
+
+========================================================================
+11  THE MAIN SESSION'S VERIFICATION OF SECTIONS 7 TO 9, AND WHAT IT FOUND
+========================================================================
+2026-11-26 18:53 JST.  Sections 7 to 9 (the frozen plan, the fit, the selection
+evaluation; commits 86e78c6, 5923c62, ce0b20b) were carried out by another agent,
+alone, in about ninety minutes, while the main session's usage limit was exhausted.
+The user asked the main session to check them.  Five verifiers were run (every number;
+the order of events; the learner against the plan; what may be claimed; a last sceptic
+who re-derived every blocker and major finding), and the main session recounted the
+scores itself.  No blocker was found.  What reproduced and what did not is below, so
+that a reader of sections 7 to 9 knows which sentences there stand.
+
+  11.1  WHAT REPRODUCED
+  ------------------------------------------------------------------
+  - eval24.csv: 4800 rows, six deciders x seeds 81 to 100 x streams 0 to 39; on every
+    row score_ms equals delay_ms + 104.29595912307323 x polls exactly.  The means, the
+    paired differences with their intervals and seed counts (versus24.txt), the
+    frontier gains (ana24.txt, through ../20/predict.py) and the agreement table
+    (agree24.txt) follow from it; ana24.py, versus24.py and agree24.py re-run byte for
+    byte.
+  - The control: the 3200 rows of the three fixed arms and F equal ../23/eval.csv's in
+    every column but script_sha, and eval24_control.csv's in every column.
+  - Five runs re-simulated by a verifier's own driver (a 81/0, a 93/17, b 100/39,
+    F 87/5, const6.000 95/22) match the csv to the last digit in all 17 numeric columns.
+  - The shipped M is what the frozen plan prescribes for the event that happened (a rate
+    bound breached at the first improvement step, section 4.6: ship the greedy policy
+    of the logging policy's evaluation).  A local refit gives coefficients within
+    2.5e-09 (a) and 3.7e-09 (b) of the shipped files and 0 changed greedy answers on
+    7837 and 15633 fit rows.  The bytes differ across hosts; the decisions do not.
+  - spec.md did not change after 86e78c6 (git diff 86e78c6 ce0b20b -- spec.md is empty).
+    Every Stage-5 output has an mtime after commit 5923c62.
+  - No seed above 100 was opened, listed or simulated.  The hpc-debian store holds seeds
+    1 to 80 only, and ticket 10's directories there were not modified.
+  The main session's own recount (a scratch script that imports nothing from the
+  repository; hand-logged, not in the repository), which also carries the one
+  comparison no archive of this directory prints, M against L's better tuning draw:
+
+      python3 -B -I recount.py 24/eval24.csv 23/eval.csv 23/eval_run1.csv
+    deciders in eval24.csv: ['F', 'a', 'b', 'const10.043', 'const3.695', 'const6.000'] rows 4800
+      a             35858.943
+      b             35961.509
+      F             36150.829
+      const6.000    37035.920
+      const10.043   39855.665
+      const3.695    40811.181
+    fixed arms and F equal ticket 10's rows exactly: True
+    M_a - M_b                      -102.566  95 %   -407.071 to    222.470  first lower on 11 of 20
+    M_a - F                        -291.886  95 %   -822.101 to    274.164  first lower on 13 of 20
+    M_b - F                        -189.320  95 %   -595.275 to    241.930  first lower on 13 of 20
+    M_a - const6.000              -1176.977  95 %  -1761.779 to   -588.763  first lower on 15 of 20
+    M_a - L_b (2nd tuning)        -1351.607  95 %  -1941.338 to   -780.824  first lower on 16 of 20
+    M_a - L_b (1st tuning)         -717.150  95 %  -1262.820 to   -177.835  first lower on 14 of 20
+    M_a - L_a (2nd tuning)        -1969.447  95 %  -2756.247 to  -1182.556  first lower on 18 of 20
+
+  So against the language model the difference is -1351.607 ms for ticket 10's
+  candidate (versus24.txt) and -717.150 ms (-1262.820 to -177.835) for the first tuning
+  run's b, the lowest-scoring adapter on record.  Both intervals exclude 0.
+
+  11.2  WHAT CHANGES HOW THE RESULT MUST BE READ
+  ------------------------------------------------------------------
+  1. THE FITTED VALUES DRIFT ALONG A RUN.  learn24.txt prints, as a non-gating
+     diagnostic, that the evaluation of the LOGGING policy gives a rate of 17.2626
+     against a logged 48.8953 (difference -31.6327, SE 0.6317), with all 560 block
+     endpoints of one sign.  A verifier measured the rest: the fitted Q of the logged
+     interval falls by 38.78 score ms per second of decision time within a run; 40 of
+     the 261 cells have an absolute within-run correlation with the decision time above
+     0.5; with those cells neutralised the rate becomes 53.2585 and 3706 of 7837 of M's
+     own greedy answers change.  spec.md's section 15 set 2.0 score ms per second as the
+     size of a rate gap that would be reported as surprising.  NO OUTPUT OF SECTIONS 8
+     AND 9 SAYS THIS.  Section 10 (drift24.txt) is the measurement taken because of it.
+  2. THE SHIPPED POLICY'S OWN EVALUATION BREACHED THE PLAN'S BOUND.  The plan ships the
+     greedy policy of the logging policy's evaluation as "the one improvement whose own
+     evaluation the logs can test".  The step that stopped the iteration IS that
+     evaluation, and it returned 8.8813 (a) and 12.4988 (b) against 48.8953, outside the
+     band of 12.2238.  The code follows the plan; the plan's justification did not
+     survive its own test.  NOTHING HERE SUPPORTS A CLAIM THAT STEPWISE IMPROVEMENT
+     WORKED: the shipped M is one greedy step over a uniformly random policy.
+  3. THE PREDICTIONS WERE NEVER SCORED.  Against spec.md section 15: 1 held (both
+     candidates below the two outer arms); 2 held (a candidate below the fixed 6.0 s
+     arm); 3 FAILED (F does not stay below both candidates: a 35858.943 against F
+     36150.829); 4 FAILED (the gap 102.566 ms is inside the 297.0 ms band, verdict
+     CLOSE); 5 FAILED (agreement 0.378036 and 0.348117, far below the band around
+     0.5273); 6 FAILED (the iteration did not settle; it stopped on the rate bound).
+     Two items of the plan's "what would be surprising" list occurred (a candidate below
+     F; a rate gap above 2.0) and neither is named in sections 8 and 9.
+  4. THE WINNER IS THE LOWER OF TWO CANDIDATES ON 20 SEEDS THAT NINE DECIDERS HAD
+     ALREADY BEEN SCORED ON, and a is not distinguished from F (-291.886 ms, -822.101 to
+     274.164, a lower on 13 of 20 seeds).  F reached its score choosing among six
+     intervals; M chooses among three.
+  5. M AND F DO NOT SEE THE SAME RANDOM DRAWS.  eval24.txt records the share of
+     resolutions that change the pair's interval: F 0.4769, a 0.5220, b 0.5405, the fixed
+     arms 0.0000, with 266025 lag draws for F against 210240 for a.  A decider that
+     changes its mind draws one more lag than one that does not.
+
+  11.3  DEFECTS OF THE RECORD AND OF ONE SCRIPT, NONE OF WHICH MOVES A NUMBER
+  ------------------------------------------------------------------
+  - learn24.py lines 326 to 327 compare an array with bytes at iterations above 0, so
+    the "changed share is 0" exit of the policy iteration can never be taken.  The
+    shipped M is unaffected (the rate bound stopped the loop first).  NOT FIXED:
+    learn24.py's digest is printed in learn24.txt; to be corrected when the script is
+    next changed for a reason of its own.
+  - Check A above iteration 0 is the row-by-row form and not the telescoped walk the
+    plan names; the near-constant cut "non_mode <= 20" in rows24.py is in no section of
+    spec.md; coef_<c>.json does not list the dead cells the plan says it carries.
+  - inventory.txt was produced before eval24_control.csv and the later outputs existed,
+    so it lists no file of this directory, and section 8's "byte-identical on rerun"
+    does not hold against the committed tree.  inventory_after.txt is the same script
+    run on 2026-11-26 after section 11 was written; it lists eval24.csv (4800 rows of
+    seeds 81 to 100), eval24_control.csv (3200) and the two csvs with none
+    (eval24_dry.csv, drift24.csv).  inventory.txt is left as it was.
+  - The plan's step 1 (the four scripts of sections 1 to 4 re-run and compared after the
+    seed-bound keyword was added to charges.py and precheck.py) has no record in section
+    8.  Done by two verifiers and by the main session: charges.txt, features.txt and
+    labelsig.txt byte-identical; precheck.txt identical through line 400.  One verifier
+    found that precheck.txt's part 7 (the three coefficient digests) changes when the
+    BLAS thread count is pinned to 1, so that identity depends on the thread count.
+  - outage.py was run before push_inputs24.sh and rows24.py, against the plan's order;
+    it reads seeds 1 to 20 and influences no setting.
+  - agree24.py --dry was run before the real evaluation.  It reads out seeds 71 to 80
+    with the shipped coefficients (a verifier re-ran it: a 537/1425 = 0.376842, b
+    492/1425 = 0.345263, baseline 0.5102).  The a-against-b choice is score-only, so
+    this could not move it, but the plan says the agreement runs after the scores.
+  - README.md, the plan's last deliverable, does not exist yet.
+
+  11.4  THE TWO FITS ON HPC-DEBIAN: THE OTHER AGENT'S OWN ACCOUNT
+  ------------------------------------------------------------------
+  A verifier saw on hpc-debian that the coefficient files and learn24.txt were created
+  at 01:04 and overwritten at 01:50, with learn24.py changed at 01:05 in between.  The
+  agent that ran them was asked over agmsg and answered in writing (not in the
+  repository).  ITS ACCOUNT, not independently verifiable because the first run's files
+  no longer exist: the first run completed; the only change was in learn24.py's mutation
+  part, where a leftover line printed "DID NOT FIRE" and was replaced by a real mutation
+  of Check A (8 of 8 became 9 of 9); every number of the first run's sections 1 to 4
+  equals the final learn24.txt; the first run printed the same sha256 for coef_a.npy
+  and coef_b.npy as the final files; nothing that reads the coefficients ran between
+  the two fits; eval24.py ran in its real mode once, at 01:54:04, after commit 5923c62.
+  It also reports a two-line fix to ana24.py at 01:52:34, during the dry run (a function
+  of ../20/predict.py returns three values and two were unpacked).
+  WHAT THE RECORD CORROBORATES: the file times; that the committed learn24.py reproduces
+  learn24.txt on another host; that the fit is deterministic to 1e-9.  What it cannot:
+  what the first run printed.
+
+  11.5  WHAT WAS NOT CHECKED BY ANYONE
+  ------------------------------------------------------------------
+  - spec.md's own review (section 7's 36 findings and their synthetic test harness):
+    not reproducible from the repository.
+  - latency24.txt's timings, which do not reproduce by design; a single per-decision
+    total with its p99 is in no file (the three parts' medians sum to about 0.095 ms).
+  - outage.txt's arithmetic (202 and 393 closed outages; a median of 1.0 and a maximum
+    of 3 decisions of a pair inside one outage): read by every verifier, recomputed by
+    none.
+  - Whether the 28 s the fit window removes at the end of a run changes M's replay score.
+  - Which interpreter ran the fit on hpc-debian beyond what learn24.txt prints
+    (numpy 2.5.4, python 3.13.5).
