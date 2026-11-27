@@ -1466,6 +1466,8 @@ its own, `/home/lab_shared/t25store`, with the record directories in `/home/lab_
 | `t25md`, `t25md1`, `t25md45` | M deferred by 0.07 s, 1.0 s and 4.5 s | `f7a1a31` |
 | `t25n45` | M deferred by 4.5 s again | `1bb5ab1` |
 | `t25l` | L, through the relay and the recorder | `1bb5ab1` |
+| `t25m2` | M again, after the scripts were corrected (18.4) | `b70f5e8` |
+| `t25l2` | L again, after the scripts were corrected (18.4) | `b70f5e8` |
 
 ### 18.1 Statements above that the runs showed to be wrong
 
@@ -1476,8 +1478,9 @@ its own, `/home/lab_shared/t25store`, with the record directories in `/home/lab_
    null), which is what `parity.py` prints per node.
 2. **Section 13.3's fourth bullet fires on the end of the run.** It sends the design back on any `unanswered`
    decision of a validity run and says the shutdown drain is what makes that readable. The drain collects once and
-   does not wait, and an answer reaches the engine only after the decider's latency plus up to one loop tick, so a
-   resolution in the last moments before the stop stays pending however fast the server is. In `t25md45` a node
+   does not wait, so a resolution asked less than the decider's own latency before the stop stays pending: its
+   answer has not arrived yet when the drain looks. The loop tick does not add to that window; it adds only to
+   the wait of an answer released while the loop is running. In `t25md45` a node
    whose last resolution came 0.6 s before the stop left two unanswered. The user decided (ticket, decision 9) to
    leave the run's behaviour alone and to record, per unanswered resolution, when it was asked: the
    `decider_counts` row now carries `unanswered_asked` (commit `1bb5ab1`). In `t25n45` the three unanswered
@@ -1486,25 +1489,31 @@ its own, `/home/lab_shared/t25store`, with the record directories in `/home/lab_
 
 ### 18.2 Where the scripts differ from the sections above, on purpose
 
-1. **`parity.py` excuses less than check 28 allows.** Check 28 lists a `state_poll_late_reply` and an undecodable
-   reply as explanations of a mismatch. Within one run the `state` and `resolved` a decider is handed are the very
-   values its row logs, taken at the same instant, so no event of the log can make the two sides differ; a
-   difference in either is reported as a defect. Both are still counted per node, because those counts are what
-   section 5's caveats need.
+1. **`parity.py` excuses less than check 28 allows.** Check 28 lists a `state_poll_late_reply`, an undecodable
+   reply and a restart as explanations of a mismatch. Within one run the `state` and `resolved` a decider is
+   handed are the very values its row logs, taken at the same instant, so no event of the log can make the two
+   sides differ; a difference in either is reported as a defect. The first two are still counted per node,
+   because those counts are what section 5's caveats need. A second `agent_start` line excuses nothing either:
+   no stage of this comparison restarts an agent, and an excuse keyed on one extra line would cover every history
+   difference of the node, those before the restart included.
 2. **A history is checked against the instant of the ask before it is checked against the log's row order.**
    The engine appends an exchange to a pair's history when its row is written, which for a deferred answer is
    when the answer is applied. So the history at an ask is "the pair's rows already written", and it equals
    "the pair's earlier rows in file order" only when no two resolutions of the pair overlap. `parity.py` rebuilds
-   the first from `decided_at_ms` and treats any difference as a defect (a restart excepted); a difference from
-   the row-order rebuild, which is what M was fitted on, is then the `overlap` caveat and nothing else. In
-   `t25md45` the 189 recorded histories equal the as-of-ask rebuild in all 189 cases, with 72 overlaps.
+   the first from `decided_at_ms` and treats any difference as a defect, with no excuse; a difference from the
+   row-order rebuild, which is what M was fitted on, is then the `overlap` caveat and nothing else, and at most
+   as many decisions of a node are excused that way as the node counted overlaps. In `t25md45` the 189 recorded
+   histories equal the as-of-ask rebuild in all 189 cases, the six resolutions with no logged row included, with
+   72 overlaps.
 3. **An unanswered resolution is matched by name.** With `unanswered_asked` in the log, a recorded resolution
    with no logged row is excused only if the row names that resolution, and a named one that was never recorded
    or has a row is a defect. On a log written before the key existed the excuse is a budget of `unanswered` many.
 4. **`arms.py` reads send rows as well as reschedule rows.** Section 9 says the check reads the reschedule rows.
    A fixed-arm stage writes no reschedule row at all (`t25b6` has none), so that check would pass such a stage
-   without reading one interval. Membership is checked on both kinds; the comparison with what the decider
-   returned stays on the reschedule rows.
+   without reading one interval. Membership is checked on both kinds, and so is the comparison with what the
+   decider returned: the recorder holds the value returned at every send, which joins to the send row on the
+   neighbour and the instant. Given the jitter fraction, the check also requires every applied interval to lie
+   inside its arm's jitter band, which nothing else in either check reads.
 5. **An out-of-choices answer raises even when its token matches no pending entry.** Section 6.7 says such an
    answer is counted and dropped. The engine checks the value before it looks the token up, and that is kept: a
    decider that returns a value outside its own choice set is wrong whichever answer it happens on.
@@ -1516,16 +1525,17 @@ its own, `/home/lab_shared/t25store`, with the record directories in `/home/lab_
    second item of section 17.7 open and unneeded.
 8. **M's entry file pins thirteen files, not one.** Section 8.1 pins `mdecider.py` through the config's digest.
    Importing M loads twelve evidence files, so `mdecider.py` refuses to start unless each of them and the
-   coefficient file hash to a table in it. Seven of the thirteen digests are the ones the scoring run recorded.
-   For the other six no recorded digest exists; they have not changed in git since before the scoring commit, and
-   what their pins enforce is that every run of the comparison loads the same bytes. `lserver.py` does the same
+   coefficient file hash to a table in it. Seven of the thirteen digests are the ones M's scoring run recorded,
+   and an eighth, `22/observe.py`, is the one L's scoring recorded. For the other five no recorded digest exists;
+   they have not changed in git since before M's scoring commit, and what their pins enforce is that every run of
+   the comparison loads the same bytes. `lserver.py` does the same
    for L, plus the adapter's two files, the three library versions and the archived logits of the repeat row.
 
 ### 18.3 What sections 7.3 and 13.2 asked to be measured
 
-**M (section 13.2 items 1 and 2).** Loading `mdecider.py` in a node process, five at once: 0.150 to 0.239 s over
-five runs, against the 3 s margin. One resolution-time decision inside the live loop: median 0.25 to 0.33 ms, p99
-0.45 to 0.54 ms, largest 0.59 ms. The constant decider consumed no draw of the engine's stream: `t25c6` and
+**M (section 13.2 items 1 and 2).** Loading `mdecider.py` in a node process, five at once: 0.150 to 0.241 s over
+the five runs that load it, against the 3 s margin. One resolution-time decision inside the live loop, per run:
+median 0.25 to 0.33 ms, p99 0.45 to 0.58 ms, largest 0.76 ms. The constant decider consumed no draw of the engine's stream: `t25c6` and
 `t25b6` sent the same number of polls on every pair, and 148 of their 174 send rows carry the same applied
 interval to the last digit.
 
@@ -1538,8 +1548,9 @@ interval to the last digit.
 | 4.5 s | 189 | 99 | 84 | 6 | 72 | 25 | 4502, 4517, 4596 |
 
 The wait the engine sees is the decider's latency plus the time to the next loop pass, up to one tick. The 4.5 s
-run is far outside any margin of section 7.2 and exists to reach the late and the overlapping answer: it raised
-nothing and stayed valid.
+row is `t25md45`; its rerun on the later commit, `t25n45`, asked 188, applied 103, with 82 late, 3 unanswered, 72
+overlaps and 28 clamped by the wait. Both are far outside any margin of section 7.2 and exist to reach the late
+and the overlapping answer: neither raised anything and both stayed valid.
 
 **L (section 7.3).** The server on the GPU machine, `torch 2.15.0+cu132`, `transformers 5.24.0`, `peft 0.22.0`,
 the adapter's two digests as the tuning and the scoring recorded them, the repeat row read out as
@@ -1557,11 +1568,21 @@ the adapter's two digests as the tuning and the scoring recorded them, the repea
 | `t25l` with each node's first second left out (138): median, p99, largest | 101, 201, 212 ms |
 | `t25l`, the client's `decide` at a resolution: median, largest | 0.05, 0.24 ms |
 | `t25l`: applied, late, unanswered, overlap, orphan, clamped by the wait | 146, 0, 0, 0, 0, 0 |
+| `t25l2`, the wait the engine saw (148): min, median, p99, largest | 72, 101, 508, 602 ms |
+| `t25l2` with each node's first second left out (140): median, p99, largest | 101, 201, 210 ms |
+| `t25l2`: applied, late, unanswered, overlap, orphan, clamped by the wait | 148, 0, 0, 0, 0, 0 |
 
-**The slow answers are one event, the start of the run.** The first poll of all eight ordered pairs is sent and
-answered inside the same 10 ms, the server answers one request at a time, and the eight answers therefore come
-back as a staircase of about 70 ms a step. That is where the replay's p99 and largest value come from, and both
-of `t25l`'s waits above 0.56 s. Eight is the number of pairs, so the staircase cannot be taller than this.
+**The slow answers are one event, the start of the run.** The first polls of all eight ordered pairs are sent
+within 19 ms of each other in `t25l` and all eight are resolved within 25 ms of the first send, the server answers
+one request at a time, and the eight answers therefore come back as a staircase of about 70 ms a step. That is
+where the replay's p99 and largest value come from, and both of `t25l`'s waits above 0.56 s.
+
+**What bounds the staircase is a condition, not the number of pairs.** The server's queue holds one request per
+resolution still unanswered, and the engine admits a second one for a pair whose first is outstanding (it counts
+it as `overlap`). The queue stays at eight or fewer as long as every answer returns before its pair's next
+resolution, which is at least 3.3255 s after the previous send: eight requests at the largest compute time seen
+in these runs, 102.5 ms, is 0.82 s. A server slower than about 0.4 s a request would let a pair ask twice, and
+the staircase could then grow. The run reports this itself: `overlap` is zero in `t25l`.
 
 **Read against section 7.3's reconsideration number.** The number is on the round trip: a p99 above 0.56 s, or
 any observation above 1.1255 s. The round trip's p99 is 488.8 ms and nothing is above 1.1255 s, so by its own
@@ -1580,6 +1601,43 @@ the engine's wait, which includes the tick, and the replay ran from the host. A 
 server dies part way. A reply the agent cannot decode, and a restart of an agent, on the emulator: neither
 occurred in these runs. That a node's stderr reaches `semindex_agent.log` (section 17.7, first item) is read from
 ReCefore's runner, which sends both streams to the log file when one is given; no node has raised in a run yet.
+
+### 18.4 What an independent review changed, and what it left
+
+Six reviewers, one question each, read the scripts, the source commit and this section; every finding was then
+handed to a second reader whose task was to refute it. Of 63 findings, 15 stood as written, 46 stood once an
+overstatement was removed and 2 were refuted. No number of this section failed to reproduce from the raw files.
+Three explanations did, and are corrected above: the width of the window at the stop (18.1 item 2), what bounds
+the staircase (18.3), and whether a link cut bears on the unanswered count (the ticket, decision 9).
+
+**Changed in the scripts.** The server no longer ends on one line it cannot decode or parse. It hashes the pinned
+files before importing them, reads no bytecode cache (the GPU machine's checkout carries caches from the earlier
+scoring runs, and a cache is used whenever its header matches the source), takes the repeat row's expected logits
+from the tuning archive instead of a typed constant, logs the logits it read out, refuses a request that is not a
+resolution, and removes a stale socket only if it is a socket. The client validates a token and an interval
+instead of coercing them and can no longer raise out of one bad line. `parity.py` and `arms.py` fail on a node
+with no log, on a record file for a node the run does not have, on a decider run with no `decider_counts` row and
+on a count of logged rows that differs from applied plus late; a second `agent_start` excuses nothing; the
+overlap excuse is a budget; send rows are compared with what the decider returned; a second release of one token
+must be matched by the engine's `orphan` count; and, given the jitter fraction, every applied interval must lie
+inside its arm's band. `t25m2` and `t25l2` are the reruns after these changes, and all nine decider runs pass both
+checks.
+
+**Left as they are**, because the second reader found each unreachable with this client and this server, and a
+guard for a failure that cannot occur is code that has to be kept true for nothing:
+
+- A server that streams answers nobody asked for makes the client's memory grow and one loop pass long.
+- A peer that stops reading without closing leaves the client connected and its requests dropped.
+- More than about a thousand simultaneous connections end the server.
+- A node built before the forward exists counts every decision unreachable for the whole run; the launcher
+  probes the server through the forward before each run instead.
+- The server keeps one `L` for its lifetime; its per-pair memory is written and never read, because no client
+  sends a send-time request and the server now refuses one.
+- A file that changes between its hash and its import is not caught.
+
+**Not shown by either check**, and so not to be read into a pass: that every pair kept being polled to the end of
+the run; that the interval a late row says was held is the one that ran; and anything about a log and a record
+altered consistently with each other. The first belongs in `spec.md` if the comparison needs it.
 
 ## Appendix A: the ADR text, in this repository's format
 

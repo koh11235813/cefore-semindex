@@ -50,7 +50,14 @@ case "${1:-}" in
   start)
     # nohup and a background job on the far side: a foreground ssh that holds a model for
     # hours dies with its connection. The pid file is what stop reads.
-    $SSH $HOST "cd ~/$RROOT && mkdir -p t25 && if [ -f t25/lserver.pid ] && kill -0 \$(cat t25/lserver.pid) 2>/dev/null; then echo 'a server is already running'; exit 1; fi; \
+    # 2026-11-27: a pid file whose pid is alive but is NOT an lserver.py process (e.g. the
+    # pid got reused by an unrelated process after a server died without cleaning up) is
+    # stale, not "a server already running"; it is removed here so a start proceeds
+    # instead of refusing on a pid file nothing related is actually holding.
+    $SSH $HOST "cd ~/$RROOT && mkdir -p t25 && if [ -f t25/lserver.pid ] && kill -0 \$(cat t25/lserver.pid) 2>/dev/null; then \
+        if ps -p \$(cat t25/lserver.pid) -o args= 2>/dev/null | grep -q lserver.py; then echo 'a server is already running'; exit 1; \
+        else echo 'stale pid file (not an lserver.py process); removing it'; rm -f t25/lserver.pid; fi; \
+      fi; \
       (env -u HF_TOKEN -u HUGGING_FACE_HUB_TOKEN -u HF_API_TOKEN ROOT=\$PWD STORE=\$PWD/store PYTHONPATH=\$PWD/repo/src \
         PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 HF_HUB_DISABLE_IMPLICIT_TOKEN=1 HF_HOME=\$PWD/hf-home \
         nohup ./.venv/bin/python -B repo/docs/wayfinder/semindex-stage2/evidence/25/lserver.py \
@@ -62,6 +69,13 @@ case "${1:-}" in
     ;;
   forward)
     mkdir -p "$LDIR"
+    # 2026-11-27: refuse rather than start a second master over this control socket; a
+    # second `-M` here would leave two ssh processes both claiming the forward and `stop`
+    # would only ever close one of them.
+    if [ -S "$CTL" ] && $SSH -S "$CTL" -O check $HOST >/dev/null 2>&1; then
+      echo "forward: a master is already live on $CTL; refusing to start a second one"
+      exit 1
+    fi
     # A control socket, so that stop closes exactly this forward and no other ssh of the user.
     $SSH -M -S "$CTL" -f -N -o ExitOnForwardFailure=yes -o StreamLocalBindUnlink=yes \
       -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
@@ -72,9 +86,25 @@ case "${1:-}" in
     ;;
   stop)
     [ -S "$CTL" ] && $SSH -S "$CTL" -O exit $HOST 2>&1
-    $SSH $HOST "cd ~/$RROOT && if [ -f t25/lserver.pid ]; then p=\$(cat t25/lserver.pid); kill -TERM \$p 2>/dev/null; \
-      for i in \$(seq 1 20); do kill -0 \$p 2>/dev/null || break; sleep 0.5; done; \
-      kill -0 \$p 2>/dev/null && echo 'still running' || { echo stopped; tail -1 t25/lserver.log; }; fi"
+    # 2026-11-27: the pid in t25/lserver.pid can outlive the server it named (pid reuse
+    # by an unrelated process, or the server itself already gone) -- SIGTERM is sent only
+    # after confirming, on the far side, that the pid is both running and still names
+    # lserver.py; otherwise nothing is signalled and this says so instead of guessing. The
+    # pid file is removed in every case where it no longer names a live lserver.py process
+    # (no such pid running at all, or that pid now belongs to something else), not left
+    # for the next start to trip over, and also once a signalled lserver is confirmed gone.
+    $SSH $HOST "cd ~/$RROOT && if [ -f t25/lserver.pid ]; then p=\$(cat t25/lserver.pid); \
+      if ! kill -0 \$p 2>/dev/null; then \
+        echo \"pid \$p in t25/lserver.pid is not running; removing stale pid file\"; rm -f t25/lserver.pid; \
+      elif ! ps -p \$p -o args= 2>/dev/null | grep -q lserver.py; then \
+        echo \"pid \$p in t25/lserver.pid is running but is not an lserver.py process; not signalling it\"; rm -f t25/lserver.pid; \
+      else \
+        kill -TERM \$p 2>/dev/null; \
+        for i in \$(seq 1 20); do kill -0 \$p 2>/dev/null || break; sleep 0.5; done; \
+        if kill -0 \$p 2>/dev/null; then echo 'still running'; \
+        else echo stopped; tail -1 t25/lserver.log; rm -f t25/lserver.pid; fi; \
+      fi; \
+    fi"
     ;;
   *)
     echo "usage: bash lrun.sh push|start|forward|probe|stop"; exit 2

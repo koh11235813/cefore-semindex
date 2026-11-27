@@ -9,15 +9,22 @@ still available, through `fakes.wrap`, for a run that wants to exercise the
 deferred path with M's own answers rather than a constant.
 """
 import sys
+import os
 # 2026-11-27: node processes run as root and are started with only PYTHONPATH in
 # their environment (no PYTHONDONTWRITEBYTECODE), so without this flag root would
 # leave __pycache__ directories in a checkout its own owner cannot delete. It
 # matters most here, because importing m24 below pulls in a dozen modules of
 # the checkout, every one of which would otherwise be compiled to a .pyc.
 sys.dont_write_bytecode = True
+# 2026-11-27: `dont_write_bytecode` only stops a NEW .pyc from being WRITTEN; Python
+# still READS an existing __pycache__/*.pyc whose header (mtime, size) matches the
+# source on disk, and `_check_pins` below hashes the source bytes on disk, not
+# whatever bytecode import actually ran. Cache LOOKUPS are disabled outright here,
+# before `import m24` below (or anything it pulls in) loads a single byte, for the
+# same reason `lserver.py` sets this beside its own `dont_write_bytecode`.
+sys.pycache_prefix = os.devnull
 
 import hashlib  # noqa: E402
-import os  # noqa: E402
 import time  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,8 +58,11 @@ PINS = {
     "22/score.py": "24743e3547ed877cec0a35c8925f12f20c2ed6941d4d805268701fbd0e0f3e49",
     "13/replay.py": "f689d3a82fb3740f2aedf4a6b523329c971de05b4947f103f2c0bb882b58f49d",
     "24/coef_a.npy": "bbf5a5c7abf1c6fa476c728b3855ecdcab601c580452a2101cf4203e560b8ebf",
+    # Recorded by the other learned decider's scoring (its latency read-out
+    # lists this file), not by the scoring of the model this file adapts.
+    "22/observe.py": "9a5808bb40ddfd0f827fa04ff3aa7ad3c2c9c69243104b9651bb7e4da90056c2",
     # No scoring run recorded a digest for these: they are loaded by `import
-    # m24` all the same, so what this half of the table enforces is only
+    # m24` all the same, so what this part of the table enforces is only
     # that every run of this comparison loads the same bytes as every
     # other run, not that those bytes match any particular earlier result.
     "13/trickle.py": "df86f490433b61f7a6529da20b408e47b947a3a5e02cf0079d6d1c9915b647eb",
@@ -60,7 +70,6 @@ PINS = {
     "14/workload.py": "71f6ad01f9a8cafa6ae7a90702fb837b4461e1e2856c92c14f10dd7d9c5c466e",
     "15/onoff.py": "8daa6322fd68d514800eb348e3e03ff5410c6c1b0e28bbb6dc8a654aa60ddc6d",
     "18/bound.py": "564b2cd6cc7fe4fab5dc9e82cf6881d841bf5b784ef261c9cde7371532d739bf",
-    "22/observe.py": "9a5808bb40ddfd0f827fa04ff3aa7ad3c2c9c69243104b9651bb7e4da90056c2",
 }
 
 

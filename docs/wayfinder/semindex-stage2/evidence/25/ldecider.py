@@ -4,8 +4,10 @@ This is the half of the design that runs inside a node process: one
 `AF_UNIX` socket, one JSON line per request and per answer, nothing that
 can block the agent's single tick loop. It asks a question at every
 resolution and never waits for the answer there; `collect()` is the only
-place an answer is ever picked up, and it is itself bounded to whatever
-bytes are already sitting in the kernel's socket buffer. Every failure
+place an answer is ever picked up. It reads until the socket has nothing
+more to give AT THAT MOMENT, not a fixed number of bytes, and it never
+waits for more: a peer that keeps sending keeps the read loop going
+rather than leaving bytes behind for a later call. Every failure
 mode the socket can produce -- refused, reset, full, slow -- is turned
 into a counter instead of an exception, because an exception here does
 not just fail one decision, it kills the node's networking for the rest
@@ -25,6 +27,29 @@ import socket  # noqa: E402
 # into dropped requests, not unbounded memory growth inside a node process
 # that is otherwise expected to run for the length of an experiment.
 MAX_OUTBUF_BYTES = 1024 * 1024
+
+
+def _valid_token(tok):
+    """`(str, int)` when `tok` is exactly that shape, else `None`.
+
+    2026-11-27 crash fix: the old code rebuilt the token with `str()`/`int()`,
+    which COERCES a wrong token into a different one instead of rejecting it
+    (and raises `OverflowError` on an infinite epoch such as the JSON literal
+    `1e999`, which is not caught alongside `ValueError`/`TypeError` and used
+    to escape `_parse_line` entirely). This only ever accepts a two-element
+    list whose first element is already a `str` and whose second is already
+    an `int` and not a `bool` (`bool` is a subclass of `int` in Python, so it
+    must be excluded explicitly); anything else is the caller's problem to
+    count as malformed, not this function's to reshape into something valid.
+    """
+    if not isinstance(tok, list) or len(tok) != 2:
+        return None
+    neighbor, epoch = tok
+    if not isinstance(neighbor, str):
+        return None
+    if not isinstance(epoch, int) or isinstance(epoch, bool):
+        return None
+    return (neighbor, epoch)
 
 
 class LClient:
@@ -60,6 +85,14 @@ class LClient:
         self.counters = dict.fromkeys(
             ["sends", "asked", "answered", "errors", "malformed", "dropped",
              "unreachable", "lost", "reconnects", "outstanding_at_close"], 0)
+
+        # 2026-11-27: created here, at construction, rather than in close(): a
+        # path that cannot be made is a configuration mistake that should fail
+        # the node at start-up. Deferring it to close() would instead raise at
+        # the one moment this client has no more chances to report anything,
+        # costing the run exactly the final counter lines that would explain
+        # what went wrong with it.
+        os.makedirs(self.stats_dir, exist_ok=True)
 
         connected = self._connect()
         # A client that never managed the first connection has nothing to
@@ -186,11 +219,11 @@ class LClient:
 
         self._flush()
 
-        # Read everything already sitting in the kernel buffer before
-        # deciding anything is lost: a server can answer several requests
-        # and then close the connection in the same burst, and the answers
-        # already in that burst must be parsed, not written off along with
-        # the ones that never came.
+        # Read until the socket has nothing more to give right now, not a
+        # fixed number of bytes, before deciding anything is lost: a server
+        # can answer several requests and then close the connection in the
+        # same burst, and the answers already in that burst must be parsed,
+        # not written off along with the ones that never came.
         closed = False
         while True:
             try:
@@ -219,63 +252,71 @@ class LClient:
 
         Every failure to make sense of the line (bad JSON, a missing key,
         a token of the wrong shape) is counted as `malformed` and the line
-        is dropped; nothing here is allowed to raise, because one bad line
-        from the server must not stop the rest of the batch from being
-        read.
+        is dropped. The whole parse is wrapped in one broad `except
+        Exception`, scoped to this one line and not to collect()'s socket
+        loop: 2026-11-27 crash fix, an infinite epoch (`OverflowError`, from
+        a JSON literal such as `1e999`) and deeply nested JSON
+        (`RecursionError`, from `json.loads` itself) both used to escape the
+        narrower `except (KeyError, TypeError, ValueError)` this used to
+        have, and either one kills the node's networking for the rest of
+        the run the moment it reaches the caller.
         """
         try:
             obj = json.loads(line)
-        except ValueError:
-            self.counters["malformed"] += 1
-            return
-        if not isinstance(obj, dict):
-            self.counters["malformed"] += 1
-            return
+            if not isinstance(obj, dict):
+                self.counters["malformed"] += 1
+                return
 
-        try:
-            neighbor, epoch = obj["token"]
-            # The token must be rebuilt as a tuple (str, int): json.loads
-            # turns a two-element array into a list, and the engine uses
-            # the token as a dict key. Handing it a list raises
-            # "TypeError: unhashable type", which kills the node.
-            token = (str(neighbor), int(epoch))
-        except (KeyError, TypeError, ValueError):
-            self.counters["malformed"] += 1
-            return
+            # Checked before the token is validated: the server's reply to a
+            # line it could not parse carries `{"token": null, "error": ...}`,
+            # and that line is an error regardless of whether its token
+            # happens to be a valid pair. Only a VALID token is ever
+            # discarded from `outstanding` -- a null or missing one names no
+            # request this client is still waiting on.
+            if "error" in obj:
+                self.counters["errors"] += 1
+                token = _valid_token(obj.get("token"))
+                if token is not None:
+                    self.outstanding.discard(token)
+                return
 
-        if "error" in obj:
-            self.counters["errors"] += 1
-            self.outstanding.discard(token)
-            return
+            token = _valid_token(obj.get("token"))
+            if token is None:
+                self.counters["malformed"] += 1
+                return
 
-        try:
-            interval = obj["interval_s"]
+            interval = obj.get("interval_s")
+            # Accepted only as a `float` (which already excludes `int` and
+            # `bool`): the engine tests this value against its configured
+            # choices with `==`, so an integer equal to an arm would pass
+            # that check and be logged as an integer instead of the float
+            # every real answer is.
+            if not isinstance(interval, float):
+                self.counters["malformed"] += 1
+                return
+            if "logits" not in obj:
+                self.counters["malformed"] += 1
+                return
             logits = obj["logits"]
-        except KeyError:
-            self.counters["malformed"] += 1
-            return
 
-        # `interval` is kept exactly as json.loads produced it: the engine
-        # checks it against its configured choices by `in`, and rounding
-        # or otherwise mapping it here would make an exact arm fail that
-        # check for no reason visible anywhere in this file.
-        #
-        # `mem` is updated from every answer received, whether or not the
-        # engine goes on to apply it. The alternative -- updating only on
-        # an applied answer -- would make this client's send-time value
-        # disagree with the row the log carries for that resolution.
-        # Keyed by `token[0]`, not the raw `neighbor` above: the token
-        # construction already turned it into the plain `str` `mem` is
-        # keyed by, and re-using that avoids holding two differently-typed
-        # ideas of "the same neighbour".
-        self.mem[token[0]] = interval
-        self.counters["answered"] += 1
-        # A duplicate answer for a token already discarded is a harmless
-        # second discard, not an error; it is also yielded a second time,
-        # on purpose -- the engine is what recognises and counts a
-        # duplicate, not this client.
-        self.outstanding.discard(token)
-        results.append((token, interval, {"logits": logits}))
+            # `mem` is updated from every answer received, whether or not the
+            # engine goes on to apply it. The alternative -- updating only on
+            # an applied answer -- would make this client's send-time value
+            # disagree with the row the log carries for that resolution.
+            # Keyed by `token[0]`, not the raw `neighbor` field: the token
+            # construction already turned it into the plain `str` `mem` is
+            # keyed by, and re-using that avoids holding two differently-typed
+            # ideas of "the same neighbour".
+            self.mem[token[0]] = interval
+            self.counters["answered"] += 1
+            # A duplicate answer for a token already discarded is a harmless
+            # second discard, not an error; it is also yielded a second time,
+            # on purpose -- the engine is what recognises and counts a
+            # duplicate, not this client.
+            self.outstanding.discard(token)
+            results.append((token, interval, {"logits": logits}))
+        except Exception:
+            self.counters["malformed"] += 1
 
     def _handle_closed(self):
         """Tear down a dead connection and account for everything it was holding.
@@ -308,6 +349,14 @@ class LClient:
         the failure is exactly the run that leaves no stats file behind.
         That is a known gap, not an oversight -- the engine's own log of
         decisions and resolutions is what has to explain that run instead.
+
+        2026-11-27: `stats_dir` is created again here, not only in
+        `__init__`, because a directory that existed at construction can
+        still disappear during a long run (an operator cleaning scratch
+        space, a shared tmpfs being cleared); without this call, `open()`
+        below would raise at the one moment this client has no more
+        chances to report anything, costing the run exactly the final
+        counter lines this method exists to write.
         """
         if self.sock is not None:
             try:

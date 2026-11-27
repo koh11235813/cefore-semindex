@@ -11,31 +11,40 @@ digests, then (unless `--stub`) the adapter's two files, the installed library v
 and a live reproduction of the repeat check `tune.py` and `latency.py` both ran on seed
 71's k 72 row.  A mismatch anywhere exits non-zero naming the file, the expected digest
 and the actual one, before a single socket is opened.
+
+What this establishes, precisely: the source files named in `CODE_DIGESTS` and
+`LOADED_NO_DIGEST` have, ON DISK, AT START-UP, the exact bytes recorded, with bytecode
+caches disabled so nothing stale is ever read in their place.  What it does NOT
+establish: it does not hash the bytes the import system actually read.  `CODE_DIGESTS`
+is checked before `import decider` runs a line of the checkout's own code, but
+`LOADED_NO_DIGEST` is only checked by `check_loaded_pins()`, which in real mode runs
+after the adapter digests, the version check, the model load and the repeat check have
+all already executed -- so a `LOADED_NO_DIGEST` file that changes on disk any time
+before that call is imported, and run, as whatever it changed to, and nothing here
+notices until the hash check that follows.
 """
 import sys
+import os
 # The checkout this runs from is shared with the scoring scripts whose digests this file
 # itself checks; a stray __pycache__ left here by a root-owned process would be noise in
-# every later inventory of what produced a result, so this is set before any other import.
+# every later inventory of what produced a result, so this is set before any import of a
+# checkout module (`os` itself is a builtin, not something this flag affects).
 sys.dont_write_bytecode = True
+# 2026-11-27: `dont_write_bytecode` only stops a NEW .pyc from being WRITTEN; Python still
+# READS an existing __pycache__/*.pyc whose header (mtime, size) matches the source on disk,
+# and the checkout this runs from on the GPU machine carries such directories from earlier
+# scoring runs. `check_code_digests()` below hashes the source bytes on disk, not whatever
+# bytecode import actually ran, so cache LOOKUPS are disabled outright here, before `import
+# decider` below (or anything it pulls in) loads a single byte.
+sys.pycache_prefix = os.devnull
 
-import argparse     # noqa: E402
-import errno        # noqa: E402
 import hashlib       # noqa: E402
-import json          # noqa: E402
-import os            # noqa: E402
-import select        # noqa: E402
-import signal        # noqa: E402
-import socket        # noqa: E402
-import time          # noqa: E402
-from collections import deque  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EVID = os.path.dirname(HERE)
 _EV23 = os.path.join(EVID, "23")
 if _EV23 not in sys.path:
     sys.path.insert(0, _EV23)
-
-import decider as D  # noqa: E402  the read-out this server answers with; see decider.py
 
 # ---------------------------------------------------------------------------
 # The code digests, read off `latency.txt`'s own "the code that produced every figure
@@ -86,11 +95,11 @@ LOADED_NO_DIGEST = (
 ADAPTER_CONFIG_SHA = "4d76d6c63d6a9a20ba4018f64e11b76743645617211a8aa7f019126f305cd760"
 ADAPTER_MODEL_SHA = "268a3dd4db8b6e8fc5452ba3aa1ce174a7990979026f82fe0e0ce896ecc32514"
 
-# The exact three logits `tune.py` and `latency.py` both read off seed 71's k 72 row with
-# this adapter attached (the repeat check of `latency.txt`).  Reproducing them, bit for bit,
-# is the one way to know this process would answer a node with the model that was scored
-# rather than a model that merely loads without error.
-REPEAT_LOGITS = (18.5, 17.75, 19.25)
+# Named directly, rather than read off `--adapter`'s own directory name: the two digests
+# above already pin candidate b's kept epoch, and deriving the name from a directory that
+# could be renamed would let a renamed `--adapter` silently look up the wrong candidate's
+# archived triple below instead of failing loudly.
+EXPECTED_CANDIDATE = "b"
 
 VERSIONS = {"torch": "2.15.0+cu132", "transformers": "5.24.0", "peft": "0.22.0"}
 
@@ -117,12 +126,36 @@ def check_code_digests():
     return len(CODE_DIGESTS)
 
 
+# 2026-11-27: hashed here, at module load, BEFORE `import decider` below runs a single
+# line of the checkout's own code (with bytecode caches disabled, above) -- so this check
+# is of the bytes on disk that are about to be imported, not of bytes some earlier import
+# already executed. `CODE_DIGEST_COUNT` is kept so `main()` can still report how many
+# digests were checked, without hashing everything a second time.
+CODE_DIGEST_COUNT = check_code_digests()
+
+import decider as D  # noqa: E402  the read-out this server answers with; see decider.py
+
+import argparse      # noqa: E402
+import errno         # noqa: E402
+import json          # noqa: E402
+import select        # noqa: E402
+import signal        # noqa: E402
+import socket        # noqa: E402
+import stat          # noqa: E402
+import time          # noqa: E402
+from collections import deque  # noqa: E402
+
+
 def check_loaded_pins():
-    """Every module `import decider` pulled in from under EVID is one of the two tables.
+    """Every module loaded from under EVID, by `import decider` or by what ran since, is
+    one of the two tables.
 
     An unpinned file loaded, a pinned file not loaded (the table is stale), or a pinned
     file whose bytes moved are the three ways this checkout could have drifted; this is
-    the one check for all three.
+    the one check for all three.  Called AFTER the model is loaded in real mode, not
+    right after `import decider`: the renderer module `load_real()`'s repeat check
+    touches is imported lazily, on the first rendering, and is in `sys.modules` only
+    once that has happened.
     """
     known = {rel: sha for rel, sha in CODE_DIGESTS if rel.endswith(".py")}
     known.update(dict(LOADED_NO_DIGEST))
@@ -187,7 +220,7 @@ def repeat_row():
 def load_real(adapter_dir):
     """Tokenizer, base and adapter through `decider.py`'s own calls (as `eval.py`'s
     `load_for` makes them), then the live repeat check.  Returns `(read_three, tok,
-    cold_ms, warm_ms)`; nothing here has decided an interval yet.
+    cold_ms, warm_ms, repeat_logits)`; nothing here has decided an interval yet.
     """
     import torch
     tok = D.load_tokenizer()
@@ -206,9 +239,20 @@ def load_real(adapter_dir):
     arm_a, _ = D.pick(first)
     arm_b, _ = D.pick(second)
     D.check_repeat(first, second, arm_a, arm_b, "lserver repeat check")
-    if tuple(first) != REPEAT_LOGITS or tuple(second) != REPEAT_LOGITS:
-        die("repeat check: expected %r twice, got %r then %r"
-            % (REPEAT_LOGITS, tuple(first), tuple(second)))
+    # 2026-11-27: the expected triple is read off `tune.txt` itself, through
+    # `decider.py`'s own `tune_kept()`/`check_triple()` -- the same table and the same
+    # comparator `latency.py`'s own repeat check reads its `TUNED_TRIPLES` from and checks
+    # against -- rather than a hand-typed literal that a re-tune would leave silently
+    # stale here while `tune.txt` itself moved on.
+    want = D.tune_kept()[EXPECTED_CANDIDATE]["triple"]
+    # 2026-11-27: `check_triple` raises `decider.Fail` (a traceback) rather than exiting
+    # with the single line every other start-up refusal in this file uses; caught here and
+    # handed to `die()` so a repeat-check mismatch reads the same way as the rest of them.
+    try:
+        D.check_triple(first, want, EXPECTED_CANDIDATE, "lserver repeat check, first pass")
+        D.check_triple(second, want, EXPECTED_CANDIDATE, "lserver repeat check, second pass")
+    except D.Fail as exc:
+        die(str(exc))
 
     D.readout(model, tok, cand_ids, prompt)   # one more pass, untimed, as warm-up
     t1 = time.perf_counter()
@@ -218,7 +262,7 @@ def load_real(adapter_dir):
     def read_three(rendered_prompt):
         return D.readout(model, tok, cand_ids, rendered_prompt)
 
-    return read_three, tok, cold_ms, warm_ms
+    return read_three, tok, cold_ms, warm_ms, list(first)
 
 
 def stub_read_three(prompt):
@@ -265,14 +309,14 @@ def main():
     ap.add_argument("--stub", action="store_true")
     args = ap.parse_args()
 
-    combined = check_code_digests()
-    check_loaded_pins()
+    combined = CODE_DIGEST_COUNT
 
     # `last_triple` is how the three logits of the LAST resolution reach the log: `L`
     # itself only returns the chosen interval, so `read_three` is wrapped to remember
     # what it last returned.  Re-reading the logits any other way would be a second
     # forward pass, and a second pass is not the pass the answer came from.
     last_triple = [None]
+    repeat_logits = None
     if args.stub:
         def read_three(prompt):
             """Stub read-out, remembering its own last triple for the log."""
@@ -282,10 +326,23 @@ def main():
         Lobj = D.L(read_three)
         cold_ms = warm_ms = 0.0
         adapter_report = "stub: adapter not read"
+        # 2026-11-27: the real branch below can only call this AFTER the model is
+        # loaded, because the renderer module `load_real()` touches is imported
+        # lazily on the first rendering and is in `sys.modules` only then. The stub
+        # branch has no such ordering constraint -- `D.L` here is built with
+        # `stub_read_three`, so nothing it does before the first decision imports
+        # that module -- and the renderer is already covered by `CODE_DIGESTS`
+        # regardless of when it loads, so one call here, right after `L` is built,
+        # is the whole sweep this branch needs.
+        check_loaded_pins()
     else:
         check_adapter_digests(args.adapter)
         check_versions()
-        inner, tok, cold_ms, warm_ms = load_real(args.adapter)
+        inner, tok, cold_ms, warm_ms, repeat_logits = load_real(args.adapter)
+        # Only after load_real() has returned: the repeat check inside it is what
+        # renders a prompt for the first time, and only a first rendering imports
+        # the renderer module this sweep must also find pinned.
+        check_loaded_pins()
 
         def read_three(prompt):
             """Real read-out, remembering its own last triple for the log."""
@@ -304,7 +361,11 @@ def main():
     # A path that nothing answers on is stale and safe to remove; a path that something
     # DOES answer on means a server is already running there, and starting a second one
     # against the same socket would silently steal half of its traffic.
-    if os.path.exists(args.socket):
+    try:
+        socket_mode = os.lstat(args.socket).st_mode
+    except FileNotFoundError:
+        socket_mode = None
+    if socket_mode is not None:
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             probe.connect(args.socket)
@@ -313,6 +374,12 @@ def main():
                 % args.socket)
         except OSError:
             probe.close()
+            # 2026-11-27: only ever unlink a SOCKET left behind by a dead server; anything
+            # else at this path (a regular file, a directory) is a mistake worth stopping
+            # for, not bytes to delete and silently replace with this run's own listener.
+            if not stat.S_ISSOCK(socket_mode):
+                die("socket path %s exists and is not a socket; refusing to remove it"
+                    % args.socket)
             os.unlink(args.socket)
 
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -333,7 +400,8 @@ def main():
 
     ready = {"ev": "ready", "adapter": adapter_report, "code_digests": combined,
              "versions": VERSIONS if not args.stub else "stub", "cold_ms": cold_ms,
-             "warm_ms": warm_ms, "pid": os.getpid(), "stub": args.stub}
+             "warm_ms": warm_ms, "pid": os.getpid(), "stub": args.stub,
+             "repeat_logits": repeat_logits}
     write_log(ready)
     # Flushed by hand: started under nohup with stdout sent to a file, the line would
     # otherwise sit in the buffer until exit, and it is the line a launcher waits for.
@@ -344,9 +412,13 @@ def main():
     # reasons, none of them a style preference:
     #  - batch 1 is the read-out the score, the agreement and the latency of this effort
     #    were all measured at; batching in bf16 changes the argmax of some label rows.
-    #  - a single queue never reorders one node's own requests, which the engine's own
-    #    ordering assumption (one pair's answers arrive in the order they were asked)
-    #    depends on; an out-of-order answer for one pair makes the engine raise.
+    #  - what the single queue actually guarantees is narrower than "never reorders this
+    #    connection's traffic": it guarantees that two INTERVAL answers on one connection
+    #    are never reordered relative to each other, which is the engine's own ordering
+    #    assumption (one pair's answers arrive in the order they were asked) and an
+    #    out-of-order answer for one pair makes the engine raise.  A probe reply or an
+    #    error reply is written to `outbuf` at once, in `handle_line`, outside this queue
+    #    entirely, and MAY overtake an earlier request's still-queued interval answer.
     #  - per-node fairness would make one node's answer time depend on another node's
     #    load in a way no node can see or compensate for.
     queue = deque()
@@ -366,15 +438,25 @@ def main():
     def handle_line(c, line, arrival):
         """Parse one complete wire line and either answer it now (probe, bad envelope)
         or enqueue it for `process_one` to answer through `L`.
+
+        `line` is the raw bytes between two newlines, not yet decoded: decoding happens
+        here, in the same `try` as `json.loads`, so that invalid UTF-8 is one more way
+        this one line can fail to parse rather than an exception out of the caller's recv
+        loop that would end the whole process for the other four nodes it serves.
         """
         if not line:
             return
         try:
-            req = json.loads(line)
-        except (ValueError, TypeError):
+            req = json.loads(line.decode("utf-8"))
+        except Exception as exc:
+            # 2026-11-27 crash fix: `UnicodeDecodeError` (invalid UTF-8) and
+            # `RecursionError` (JSON nested deep enough) both used to escape the narrower
+            # `except (ValueError, TypeError)` this used to have, and killed the server
+            # for the other four nodes along with the one that sent the bad line.
             errors[0] += 1
-            write_log({"ev": "error", "token": None, "error": "invalid JSON line"})
-            c.outbuf += (json.dumps({"token": None, "error": "invalid JSON line"})
+            msg = "invalid line: %s" % exc
+            write_log({"ev": "error", "token": None, "error": msg})
+            c.outbuf += (json.dumps({"token": None, "error": msg})
                         + "\n").encode("utf-8")
             return
         if isinstance(req, dict) and req.get("probe") == 1:
@@ -387,6 +469,17 @@ def main():
             errors[0] += 1
             write_log({"ev": "error", "token": tok, "error": msg})
             c.outbuf += (json.dumps({"token": tok, "error": msg}) + "\n").encode("utf-8")
+            return
+        if req["kind"] != "state_poll_reschedule":
+            # Any other `kind` is answered from `L`'s memory (`last_triple`) without a
+            # forward pass -- there is no decision for it to make -- and that answer
+            # would be logged carrying the PREVIOUS request's logits, which is wrong in
+            # a way nothing downstream would notice on its own.
+            msg = "unsupported kind: %r" % req["kind"]
+            errors[0] += 1
+            write_log({"ev": "error", "token": req.get("token"), "error": msg})
+            c.outbuf += (json.dumps({"token": req.get("token"), "error": msg})
+                        + "\n").encode("utf-8")
             return
         queue.append({"conn": c, "req": req, "arrival": arrival, "t_wall": time.time(),
                      "queued_behind": len(queue)})
@@ -464,7 +557,7 @@ def main():
                 arrival = time.monotonic()
                 while b"\n" in c.inbuf:
                     line, c.inbuf = c.inbuf.split(b"\n", 1)
-                    handle_line(c, line.decode("utf-8"), arrival)
+                    handle_line(c, line, arrival)
 
             for c in list(conns.values()):
                 if c.sock not in writable or c.closed or not c.outbuf:
@@ -478,7 +571,8 @@ def main():
 
             process_one()
     finally:
-        write_log({"ev": "stop", "served": served[0], "errors": errors[0]})
+        write_log({"ev": "stop", "served": served[0], "errors": errors[0],
+                  "queued": len(queue), "reads": Lobj.reads, "ties": Lobj.ties})
         log.close()
         try:
             listener.close()

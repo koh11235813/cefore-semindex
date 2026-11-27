@@ -76,22 +76,32 @@ def asof_histories(pair_rows, ask_ms, own_epoch):
     return build(False), build(True)
 
 
-def make_classifier(decider_counts, agent_starts):
-    """Build a per-node classifier: mismatch_class(field) -> class name.
+def make_classifier(decider_counts):
+    """Build a per-node classifier: mismatch_class(field, key) -> class name.
 
-    Each excuse is tied to the one thing it can explain. A recorded resolution with no
-    logged row is excused only when the node's own `decider_counts` row names that very
-    resolution as unanswered: a run with one unanswered resolution at the stop boundary
-    must not be allowed to wave away an unrelated pile of real defects. A log written
-    before the row named them carries a count only, and there the excuse is a budget of
-    that many, used up one at a time. A history that differs from
-    the log's row-order rebuild is excused as `overlap` only on a node that counted one,
-    and only when the as-of-ask rebuild agreed (the caller reports `history_asof`
-    otherwise, which nothing but a restart excuses).
+    Each excuse is tied to the one thing it can explain, and is a budget spent once,
+    never a standing permission.
+    - A recorded resolution with no logged row (`join_recorded_missing`) is excused as
+      `unanswered` only when the node's own `decider_counts` row names that very
+      resolution as unanswered (when it carries an `unanswered_asked` list), or, on a
+      log written before that list existed, up to `decider_counts.unanswered` times,
+      used up one at a time: a run with one unanswered resolution at the stop boundary
+      must not be allowed to wave away an unrelated pile of real defects.
+    - A history difference (`history`, `history[i]`, `record.exchanges`) is excused as
+      `overlap` for at most `decider_counts.overlap` DECISIONS per node, keyed by
+      (neighbor, poll_epoch_ms): the history and record.exchanges findings of one
+      decision are the same excuse and spend the budget only once, but a decision the
+      budget has already run out on is a DEFECT like any other.
+    Nothing excuses `history_asof` or a history difference once the budget is spent --
+    2026-11-27: a second `agent_start` used to excuse every history finding on the node
+    as a "restart", which let a genuinely diverging history hide behind an unrelated
+    restart; agent_start_count is still reported in the per-node INFO line but no
+    longer changes any class here.
     """
     counts = decider_counts or {}
-    overlap = counts.get("overlap", 0)
-    budget = {"unanswered_left": counts.get("unanswered", 0)}
+    budget = {"unanswered_left": counts.get("unanswered", 0),
+              "overlap_left": counts.get("overlap", 0)}
+    overlap_used_keys = set()
     named = None
     if "unanswered_asked" in counts:
         named = {(u["neighbor"], u["poll_epoch_ms"]) for u in counts["unanswered_asked"]}
@@ -108,15 +118,13 @@ def make_classifier(decider_counts, agent_starts):
                 budget["unanswered_left"] -= 1
                 return "unanswered"
             return "DEFECT"
-        if field == "history_asof":
-            # A restarted agent begins with an empty history while the log keeps the
-            # first life's rows; nothing else makes the engine's own history differ.
-            return "restart" if agent_starts > 1 else "DEFECT"
         if is_history_field(field):
-            if overlap > 0:
+            if key in overlap_used_keys:
                 return "overlap"
-            if agent_starts > 1:
-                return "restart"
+            if budget["overlap_left"] > 0:
+                budget["overlap_left"] -= 1
+                overlap_used_keys.add(key)
+                return "overlap"
         return "DEFECT"
 
     return classify
@@ -125,9 +133,9 @@ def make_classifier(decider_counts, agent_starts):
 def load_jsonl(path):
     """Parse one newline-delimited JSON file into a list of dicts, in file order.
 
-    Order matters everywhere this is used: history reconstruction and the "more than one
-    agent_start" restart check both depend on reading rows in the sequence they were
-    written, not some other order a dict or set would silently impose.
+    Order matters everywhere this is used: history reconstruction depends on reading
+    rows in the sequence they were written, not some other order a dict or set would
+    silently impose.
     """
     rows = []
     with open(path) as fh:
@@ -139,17 +147,20 @@ def load_jsonl(path):
 
 
 def find_nodes(run_dir):
-    """List of hN names that have an events.jsonl under RUN/debug/node_dirs.
+    """List of all node-directory names under RUN/debug/node_dirs.
 
-    A node directory without this file is not "no data to check", it is the thing this
-    check exists to catch: a node the run silently never logged.
+    Every directory here is a node the run created. A node directory without
+    events.jsonl is not "no data to check", it is the thing this check exists to catch:
+    a node the run silently never logged. A missing events.jsonl is reported as a
+    DEFECT rather than this function quietly leaving the node out.
     """
     base = os.path.join(run_dir, "debug", "node_dirs")
-    nodes = []
-    for name in sorted(os.listdir(base)):
-        if os.path.isfile(os.path.join(base, name, "semindex", "events.jsonl")):
-            nodes.append(name)
-    return nodes
+    # 2026-11-27: filter to directories only. node_dirs holds nothing but node
+    # directories on every stage this check has ever run against, but a plain file
+    # dropped next to them (a README, a tarball) is not a node, and without this
+    # filter it would be treated as one and fail with a phantom missing-events.jsonl
+    # DEFECT.
+    return sorted(e for e in os.listdir(base) if os.path.isdir(os.path.join(base, e)))
 
 
 def logged_reschedule_rows(rows):
@@ -170,8 +181,15 @@ def truncate(value):
 
 
 def check_node(node, run_dir, record_dir):
-    """Run the full parity check for one node; returns (mismatches, info_lines, defect_count)."""
+    """Run the full parity check for one node; returns (mismatches, info_lines,
+    defect_count, joined_count, overlap_excused_count, unanswered_excused_count)."""
     events_path = os.path.join(run_dir, "debug", "node_dirs", node, "semindex", "events.jsonl")
+    if not os.path.isfile(events_path):
+        # 2026-11-27: a node directory with no events.jsonl means its process never
+        # wrote a single event. Returning "nothing to check" here would hide exactly
+        # the failure this script exists to catch, so it is a DEFECT like any other.
+        return (["MISMATCH node=%s neighbor=- poll_epoch_ms=- field=events_file "
+                 "class=DEFECT logged=missing recorded=-" % node], [], 1, 0, 0, 0)
     rows = load_jsonl(events_path)
     reschedule_rows = logged_reschedule_rows(rows)
 
@@ -181,7 +199,7 @@ def check_node(node, run_dir, record_dir):
                         and e["action"].get("empty") is None)
     agent_starts = sum(1 for e in rows if e.get("event") == "agent_start")
 
-    classify = make_classifier(decider_counts, agent_starts)
+    classify = make_classifier(decider_counts)
 
     # Logged side: zip the generator's yields with the filtered rows it walked, in
     # lockstep, since from_logged_rows yields exactly one tuple per reschedule row in
@@ -209,15 +227,47 @@ def check_node(node, run_dir, record_dir):
     has_record = os.path.isfile(record_path)
 
     mismatches = []
-    defects = [0]
+    # 2026-11-27: defect_keys counts DECISIONS, not finding lines, so two findings
+    # on the same (neighbor, poll_epoch_ms) -- e.g. "history" and the
+    # matching "record.exchanges" -- are one DEFECT, the same way they are one spent
+    # overlap excuse above. A finding with no decision to key on (decider_counts,
+    # reschedule_count, record_file, an empty join) adds a synthetic, node-scoped key
+    # instead of a real (neighbor, poll_epoch_ms) pair, so it still counts as exactly
+    # one item without colliding with a real decision's key. (events_file is its own
+    # early return before this set exists, and is already exactly one item.)
+    defect_keys = set()
+    excused_keys = {"overlap": set(), "unanswered": set()}
 
     def report(neighbor, poll_epoch_ms, field, logged_val, recorded_val):
-        c = classify(field, (neighbor, poll_epoch_ms))
+        key = (neighbor, poll_epoch_ms)
+        c = classify(field, key)
         if c == "DEFECT":
-            defects[0] += 1
+            defect_keys.add(key)
+        elif c in excused_keys:
+            excused_keys[c].add(key)
         mismatches.append(
             "MISMATCH node=%s neighbor=%s poll_epoch_ms=%s field=%s class=%s logged=%s recorded=%s"
             % (node, neighbor, poll_epoch_ms, field, c, truncate(logged_val), truncate(recorded_val)))
+
+    if has_record and decider_counts is None:
+        # Every excuse above is read out of this row, and a decider run always writes
+        # one; a record with no matching decider_counts row means the log is missing
+        # something a real run never omits, not that there is nothing to excuse.
+        mismatches.append("MISMATCH node=%s neighbor=- poll_epoch_ms=- field=decider_counts "
+                           "class=DEFECT logged=missing recorded=present" % node)
+        defect_keys.add(("__node__", node, "decider_counts"))
+
+    if decider_counts and decider_counts.get("deferred", 0) > 0:
+        # A deferred resolution's row is written once applied (if in time) or on a late
+        # reply; `applied` and `late` between them must therefore account for every
+        # reschedule row this node logged, deferred or not.
+        expected = decider_counts.get("applied", 0) + decider_counts.get("late", 0)
+        if len(reschedule_rows) != expected:
+            mismatches.append(
+                "MISMATCH node=%s neighbor=- poll_epoch_ms=- field=reschedule_count "
+                "class=DEFECT logged=%d expected_applied_plus_late=%d"
+                % (node, len(reschedule_rows), expected))
+            defect_keys.add(("__node__", node, "reschedule_count"))
 
     recorded_resolutions = []
     recorded_sends = 0
@@ -229,7 +279,7 @@ def check_node(node, run_dir, record_dir):
     if not has_record:
         mismatches.append("MISMATCH node=%s neighbor=- poll_epoch_ms=- field=record_file "
                            "class=DEFECT logged=present recorded=missing" % node)
-        defects[0] += 1
+        defect_keys.add(("__node__", node, "record_file"))
     else:
         rec_rows = load_jsonl(record_path)
         starts_in_record = sum(1 for e in rec_rows if e.get("rec") == "start")
@@ -254,11 +304,11 @@ def check_node(node, run_dir, record_dir):
     for key in sorted(logged_dupe_keys):
         mismatches.append("MISMATCH node=%s neighbor=%s poll_epoch_ms=%s field=join "
                            "class=DEFECT logged=duplicate_key recorded=-" % (node, key[0], key[1]))
-        defects[0] += 1
+        defect_keys.add(key)
     for key in sorted(recorded_dupe_keys):
         mismatches.append("MISMATCH node=%s neighbor=%s poll_epoch_ms=%s field=join "
                            "class=DEFECT logged=- recorded=duplicate_key" % (node, key[0], key[1]))
-        defects[0] += 1
+        defect_keys.add(key)
 
     joined_keys = set(logged_by_key) & set(recorded_by_key)
     if has_record and not joined_keys:
@@ -267,7 +317,7 @@ def check_node(node, run_dir, record_dir):
         mismatches.append("MISMATCH node=%s neighbor=- poll_epoch_ms=- field=join "
                            "class=DEFECT logged=%d recorded=%d joined=0"
                            % (node, len(logged_by_key), len(recorded_by_key)))
-        defects[0] += 1
+        defect_keys.add(("__node__", node, "join_empty"))
     only_logged = set(logged_by_key) - set(recorded_by_key)
     only_recorded = set(recorded_by_key) - set(logged_by_key)
 
@@ -278,6 +328,18 @@ def check_node(node, run_dir, record_dir):
     for key in sorted(only_recorded, key=lambda k: (k[0] or "", k[1] or 0)):
         report(key[0], key[1], "join_recorded_missing",
                "none", "recorded resolution with no logged row")
+
+    # A recorded resolution with no logged row still had a history the decider was
+    # handed at that instant; having no row to join against does not exempt it from
+    # the as-of-ask bookkeeping check that joined pairs get further down.
+    for key in sorted(only_recorded, key=lambda k: (k[0] or "", k[1] or 0)):
+        neighbor, poll_epoch_ms = key
+        rec_entry = recorded_by_key[key]
+        where = rec_entry["obs"]["where"]
+        rec_hist = rec_entry["obs"]["history"]
+        asof = asof_histories(rows_by_neighbor.get(neighbor, []), where.get("ts_ms"), poll_epoch_ms)
+        if rec_hist not in asof:
+            report(neighbor, poll_epoch_ms, "history_asof", asof[0], rec_hist)
 
     # The other direction of the same claim: a resolution the engine names as unanswered
     # must be one the decider was asked and that has no row. One that was never recorded,
@@ -290,7 +352,7 @@ def check_node(node, run_dir, record_dir):
                                "class=DEFECT logged=named_unanswered recorded=%s"
                                % (node, key[0], key[1],
                                   "has_logged_row" if key in logged_by_key else "never_asked"))
-            defects[0] += 1
+            defect_keys.add(key)
 
     for key in sorted(joined_keys, key=lambda k: (k[0] or "", k[1] or 0)):
         neighbor, poll_epoch_ms = key
@@ -312,8 +374,10 @@ def check_node(node, run_dir, record_dir):
         rec_hist = obs["history"]
         asof = asof_histories(rows_by_neighbor[neighbor], where.get("ts_ms"), poll_epoch_ms)
         if rec_hist not in asof:
-            # Checked first and excused by nothing but a restart: this is the engine's
-            # own bookkeeping, and it must hold however late or overlapped answers were.
+            # 2026-11-27: excused by nothing -- the restart excuse that used to cover
+            # this is gone, so a history_asof difference is a DEFECT like any other.
+            # This is the engine's own bookkeeping, and it must hold however late or
+            # overlapped answers were.
             report(neighbor, poll_epoch_ms, "history_asof", asof[0], rec_hist)
         elif logged_hist != rec_hist:
             if len(logged_hist) != len(rec_hist):
@@ -356,7 +420,8 @@ def check_node(node, run_dir, record_dir):
         "agent_start_count=%d record_start_count=%d" % (
             node, late_replies, empty_unknown, agent_starts, starts_in_record),
     ]
-    return mismatches, info, defects[0]
+    return (mismatches, info, len(defect_keys),
+            len(joined_keys), len(excused_keys["overlap"]), len(excused_keys["unanswered"]))
 
 
 def main():
@@ -367,28 +432,48 @@ def main():
 
     nodes = find_nodes(args.run)
     if not nodes:
-        print("no nodes with events.jsonl found under %s" % args.run)
+        print("no node directories found under %s" % args.run)
         return 2
 
     all_mismatches = []
     all_info = []
     total_defects = 0
+    total_joined = 0
+    total_overlap = 0
+    total_unanswered = 0
     for node in nodes:
-        mismatches, info, defects = check_node(node, args.run, args.record_dir)
+        mismatches, info, defects, joined, overlap_n, unanswered_n = check_node(
+            node, args.run, args.record_dir)
         all_mismatches.extend(mismatches)
         all_info.extend(info)
         total_defects += defects
+        total_joined += joined
+        total_overlap += overlap_n
+        total_unanswered += unanswered_n
+
+    # A record file naming a node this run never created under node_dirs is the same
+    # failure as a node directory with no events.jsonl, from the other side.
+    if os.path.isdir(args.record_dir):
+        extra = sorted(set(name[:-len(".jsonl")] for name in os.listdir(args.record_dir)
+                            if name.endswith(".jsonl")) - set(nodes))
+        for node in extra:
+            all_mismatches.append(
+                "MISMATCH node=%s neighbor=- poll_epoch_ms=- field=record_file "
+                "class=DEFECT logged=missing recorded=present" % node)
+            total_defects += 1
 
     for line in all_info:
         print(line)
     for line in all_mismatches:
         print(line)
 
-    non_defect = len(all_mismatches) - total_defects
+    excused_decisions = total_overlap + total_unanswered
     if total_defects == 0:
-        print("PARITY PASS (non_defect_findings=%d)" % non_defect)
+        print("PARITY PASS joined=%d excused_decisions=%d (overlap=%d unanswered=%d)"
+              % (total_joined, excused_decisions, total_overlap, total_unanswered))
         return 0
-    print("PARITY FAIL defects=%d non_defect_findings=%d" % (total_defects, non_defect))
+    print("PARITY FAIL defects=%d joined=%d excused_decisions=%d (overlap=%d unanswered=%d)"
+          % (total_defects, total_joined, excused_decisions, total_overlap, total_unanswered))
     return 1
 
 
