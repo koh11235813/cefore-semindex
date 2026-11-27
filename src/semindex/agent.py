@@ -1342,9 +1342,9 @@ class Agent:
                     **self._engine.decider_counts(),
                     # 2026-11-27: unanswered_asked carries when each still-pending
                     # resolution was asked, so a reader can tell a count that is
-                    # only non-zero because the run stopped right after asking
-                    # (nothing could have answered that fast) from one where the
-                    # decider was actually slow. Always present, even as [], so an
+                    # only non-zero because the run stopped sooner after the ask
+                    # than this decider takes to answer from one where the decider
+                    # was slow or gone. Always present, even as [], so an
                     # absent key is never read as "nothing pending" by a reader
                     # that cannot otherwise tell that apart from "an older run".
                     "unanswered_asked": self._engine.decider_unanswered(),

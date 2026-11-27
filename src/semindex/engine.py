@@ -1085,10 +1085,13 @@ class SyncEngine:
 
     def decider_unanswered(self) -> list[dict]:
         """One entry per resolution still in `self._poll_pending`, so a reader of
-        `decider_counts`' own `unanswered` count can tell a resolution asked just
-        before the run stopped (which no decider, however fast, could have
-        answered in time) from one the decider was actually slow on -- the count
-        alone carries no instant to compare against. Each entry's `asked_ms` is
+        `decider_counts`' own `unanswered` count can tell a resolution asked less
+        than the decider's own latency before the run stopped (shutdown collects
+        once and does not wait, so that answer had not arrived yet) from one the
+        decider was slow or gone on -- the count alone carries no instant to
+        compare against. Entries come sorted by `asked_ms`, then neighbor, then
+        `poll_epoch_ms`, so two runs of one schedule write the same row and a
+        reader can take the earliest ask first. Each entry's `asked_ms` is
         `res_now` (the resolution's own instant, the same value a row for this
         token would have carried as `ts_ms`), not the collect instant and not the
         poll's send instant: what a reader compares against the stop is when the
