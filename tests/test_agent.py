@@ -2533,3 +2533,88 @@ def test_no_decider_run_never_touches_the_loader(tmp_path: Path, monkeypatch):
     config = _config(tmp_path, neighbors=["h1"])
     build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))
     assert DECIDER_MODULE_NAME not in sys.modules
+
+
+def _write_deferring_decider(path: Path) -> None:
+    """A decider file whose factory `build(node, interval)` returns a decider that
+    answers `interval` synchronously at a send and defers every resolution,
+    auto-queuing that resolution's own answer for its very next collect() call --
+    enough to show a stop reached right after the deferral still finds that answer
+    available at shutdown."""
+    path.write_text(
+        "class _Deferring:\n"
+        "    def __init__(self, interval):\n"
+        "        self.interval = interval\n"
+        "        self._ready = []\n"
+        "    def decide(self, obs):\n"
+        "        if obs['where']['kind'] == 'state_poll':\n"
+        "            return self.interval\n"
+        "        token = (obs['where']['neighbor'], obs['resolved']['poll_epoch_ms'])\n"
+        "        self._ready.append((token, self.interval, {}))\n"
+        "        return None\n"
+        "    def collect(self):\n"
+        "        ready, self._ready = self._ready, []\n"
+        "        return ready\n"
+        "    def close(self):\n"
+        "        pass\n"
+        "\n"
+        "def build(node, interval):\n"
+        "    return _Deferring(interval)\n",
+        encoding="utf-8",
+    )
+
+
+def test_the_last_deferral_of_a_run_is_collected_in_shutdown(tmp_path: Path):
+    """A stop boundary reached right after a resolution has deferred, with its
+    answer already available, is not lost: shutdown's own drain applies it, the row
+    is written, unanswered is 0, the decider_counts line precedes counters, and
+    counters stays the last line -- the same shutdown-order property
+    test_a_counters_snapshot_captured_mid_probe_is_not_lost_when_that_probe_is_what_triggers_stop
+    and test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_step
+    pin for a counters_snapshot and for stop_at_s itself.
+
+    Timed so the poll sent at the first tick (t=0.1s) times out at exactly t=0.4s
+    (interest_lifetime_ms=300), the last tick run() ever reaches, and stop_at_s=0.5s
+    is crossed on the very next step's poll() -- so that step returns before calling
+    on_tick again and the deferred answer (auto-queued the instant it deferred) is
+    collected nowhere but shutdown's own drain.
+    """
+    decider_path = tmp_path / "deferring_decider.py"
+    _write_deferring_decider(decider_path)
+    digest = hashlib.sha256(decider_path.read_bytes()).hexdigest()
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        seed=7,
+        interest_lifetime_ms=300,
+        stop_at_s=0.5,
+        state_poll_decider={
+            "path": str(decider_path),
+            "sha256": digest,
+            "factory": "build",
+            "args": {"interval": _DECIDER_CHOICES[0]},
+        },
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.run()
+
+    lines = _read_events(config)
+    kinds = [e["event"] for e in lines]
+    assert kinds.count("counters") == 1
+    assert kinds[-1] == "counters"
+    assert kinds.index("decider_counts") < kinds.index("counters")
+    reschedule = next(e for e in lines if e["event"] == "decision" and e["kind"] == "state_poll_reschedule")
+    assert reschedule["action"]["trigger"] == "timed_out"
+    assert reschedule["action"]["late"] is False
+    decider_counts = next(e for e in lines if e["event"] == "decider_counts")
+    assert lines.index(reschedule) < lines.index(decider_counts)  # the drain runs before _drain_engine_events
+    assert decider_counts["deferred"] == 1
+    assert decider_counts["applied"] == 1
+    assert decider_counts["late"] == 0
+    assert decider_counts["unanswered"] == 0

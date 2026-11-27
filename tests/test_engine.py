@@ -829,6 +829,46 @@ class _RaisingDecider:
         """Nothing to release."""
 
 
+class _DeferringDecider:
+    """A poll_decider that answers every send synchronously, cycling through
+    `send_values`, and defers every resolution (decide() returns None): the only
+    other shape the protocol admits besides always answering synchronously (a
+    decider is never a mix of the two within one run). Nothing here decides when a
+    deferred answer arrives -- a test drives that itself by calling release() with
+    the token the engine used for that resolution; collect() yields only what has
+    been released since its own last call, in release order. Records every `obs` it
+    is handed, in call order, like `_RecordingDecider`."""
+
+    def __init__(self, *send_values: float) -> None:
+        """Remember the values to cycle through at a send; nothing is ready yet."""
+        self._send_values = send_values
+        self._send_calls = 0
+        self._ready: list[tuple] = []
+        self.calls: list[dict] = []
+
+    def decide(self, obs: dict):
+        """Record `obs`, then answer synchronously at a send or defer (return None)
+        at a resolution."""
+        self.calls.append(obs)
+        if obs["where"]["kind"] == "state_poll":
+            value = self._send_values[self._send_calls % len(self._send_values)]
+            self._send_calls += 1
+            return value
+        return None
+
+    def release(self, token: tuple, value: float) -> None:
+        """Make the next collect() call yield `(token, value, {})`."""
+        self._ready.append((token, value, {}))
+
+    def collect(self) -> list:
+        """Every answer released since the last call, in release order."""
+        ready, self._ready = self._ready, []
+        return ready
+
+    def close(self) -> None:
+        """Nothing to release."""
+
+
 def _poll_decisions(engine: SyncEngine, ticks: list[float]) -> list[tuple[float, dict, float]]:
     """Tick `engine` at each time in `ticks` and return (ts, action, action_prob) of
     every state_poll decision -- not the whole line, so these tests pin only the
@@ -2548,9 +2588,10 @@ def test_a_decider_row_carries_action_prob_one_and_the_synchronous_row_s_own_key
     a constant decider answering 1.0 resolves the poll at 0 to the same row shape,
     with action_prob 1.0 -- not 1/len, since the decider's answer is not a uniform
     draw over the choices -- and the two extra keys a decider row carries beside it:
-    `decided_at_ms` equal to `ts_ms` and `late` False, since this phase never defers.
-    Contrast with a redecide-mode row under any of the five existing policies, which
-    gains neither key."""
+    `decided_at_ms` equal to `ts_ms` and `late` False, since a decider that answers
+    synchronously is applied at the same instant it was asked. Contrast with a
+    redecide-mode row under any of the five existing policies, which gains neither
+    key."""
     decider = _ConstDecider(1.0)
     jitter = _Cycle(0.75)
     engine, _, _ = _decider_engine(tmp_path, decider, jitter)
@@ -2803,22 +2844,479 @@ def test_none_at_a_send_raises(tmp_path: Path):
     assert str(exc_info.value) == "h0->h1 state_poll: the decider returned None, which is not one of (1.0, 2.0, 4.0)"
 
 
-def test_none_at_a_resolution_is_refused_as_not_supported_yet(tmp_path: Path):
-    """This phase has no deferred path yet: a decider that returns None at a
-    resolution is refused by name instead of by the generic choice-set check, so the
-    message says what is missing. The next phase replaces this refusal."""
-    decider = _RecordingDecider(1.0, None)
-    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.5))
-    _drive(engine, [("tick", 0.0)])
-    engine.drain_events()
-    with pytest.raises(ValueError) as exc_info:
-        engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
-    assert str(exc_info.value) == "h0->h1 state_poll_reschedule: deferred answers are not supported yet"
-
-
 def test_a_decider_s_exception_is_not_caught(tmp_path: Path):
     """An exception raised inside decide() reaches the caller of on_tick unmodified:
     no call site on this path swallows it."""
     engine, _, _ = _decider_engine(tmp_path, _RaisingDecider(RuntimeError("boom")), _Cycle(0.5))
     with pytest.raises(RuntimeError, match="boom"):
         engine.on_tick(0.0)
+
+
+# -- the deferred decider path (poll_decider.decide() returning None at a
+# resolution) --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("answer", [1.0, 2.0, 4.0])
+def test_an_answer_collected_before_the_provisional_timer_gives_the_synchronous_send_instant(
+    tmp_path: Path, answer: float
+):
+    """A deferred answer collected well before its pair's held interval would have
+    fired schedules the pair's next poll at exactly the instant a decider answering
+    `answer` synchronously, at the same resolution, would have -- for an answer
+    shorter than, equal to and longer than the held interval the pair's provisional
+    timer was armed from. Both engines send with the same held interval and share
+    the same jitter stream, so the poll's own send stamp and jitter draw -- what the
+    next-poll arithmetic actually runs on -- are identical; only whether the answer
+    arrived before or after the resolution differs."""
+    held = 2.0
+    (tmp_path / "deferred").mkdir()
+    (tmp_path / "synchronous").mkdir()
+    deferring = _DeferringDecider(held)
+    engine_deferred, _, _ = _decider_engine(tmp_path / "deferred", deferring, _Cycle(0.75))
+    _drive(engine_deferred, [("tick", 0.0)])
+    engine_deferred.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    deferring.release(("h1", 0), answer)
+    engine_deferred.collect_decider_answers(0.05)
+
+    synchronous = _RecordingDecider(held, answer)
+    engine_synchronous, _, _ = _decider_engine(tmp_path / "synchronous", synchronous, _Cycle(0.75))
+    _drive(engine_synchronous, [("tick", 0.0)])
+    engine_synchronous.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+
+    assert engine_deferred._next_state_poll["h1"] == engine_synchronous._next_state_poll["h1"]
+
+
+def test_an_answer_whose_due_instant_has_passed_clamps_and_is_counted_as_clamped_by_wait(tmp_path: Path):
+    """Still the pair's newest poll, but by the time it is collected the answer's own
+    due instant has already passed -- not because the resolution was clamped (it
+    reports a 1.0 s interval against a poll sent at 0, due at ~1.05 s, well after
+    the 0.05 s resolution), but because the wait for the answer itself ran past it.
+    `clamped` stays false (it is computed against the resolution instant, not the
+    collection one) while `clamped_by_wait` is counted, and the schedule is armed at
+    the collection instant since the due instant is already behind it."""
+    decider = _DeferringDecider(4.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    decider.release(("h1", 0), 1.0)
+    engine.drain_events()
+    engine.collect_decider_answers(2.0)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert row["action"]["clamped"] is False
+    assert row["action"]["interval_s"] == 1.0
+    assert engine.decider_counts()["clamped_by_wait"] == 1
+    assert engine.decider_counts()["applied"] == 1
+    assert engine._next_state_poll["h1"] == 2.0
+    assert "held_applied_interval_s" not in row["action"]  # only a late row carries it
+
+
+def test_an_answer_collected_after_the_next_poll_is_marked_late_and_moves_nothing(tmp_path: Path):
+    """Collected after the pair's next poll has already gone out on the held
+    interval: the schedule is left exactly where that next poll's own send put it,
+    the row says late with the held interval that actually ran kept in its own
+    field, and the row's `interval_s`/`applied_interval_s` still carry the answer
+    itself -- the time that ran is a separate field, not a substitute for them."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
+    _drive(engine, [("tick", 0.0)])
+    held_applied = engine._poll_held["h1"]
+    due = engine._next_state_poll["h1"]
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    assert engine._next_state_poll["h1"] == due  # the deferral armed nothing
+    _drive(engine, [("tick", due)])  # the pair's next poll goes out on the held interval
+    after_second_send = engine._next_state_poll["h1"]
+    assert after_second_send != due
+    decider.release(("h1", 0), 2.0)
+    engine.collect_decider_answers(after_second_send + 1.0)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert row["action"]["late"] is True
+    assert row["action"]["interval_s"] == 2.0
+    assert row["action"]["applied_interval_s"] == pytest.approx(2.0 * _J_UP)
+    assert row["action"]["held_applied_interval_s"] == pytest.approx(held_applied)
+    assert held_applied != pytest.approx(2.0 * _J_UP)  # the two fields are not the same number
+    assert engine._next_state_poll["h1"] == after_second_send  # unchanged by the late answer
+    assert engine.decider_counts() == {
+        "deferred": 1,
+        "applied": 0,
+        "late": 1,
+        "clamped_by_wait": 0,
+        "overlap": 0,
+        "orphan": 0,
+        "unanswered": 0,
+    }
+
+
+def test_an_answer_that_never_comes_leaves_the_held_interval_firing(tmp_path: Path):
+    """A deferred answer that is never collected is not an error: the pair's next
+    poll still goes out at the instant its held interval armed, no row is emitted
+    for the unanswered resolution and its history gains nothing, and decider_counts
+    reports it deferred and unanswered, with neither applied nor late."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75), interest_lifetime_ms=100)
+    events = _drive(engine, [("tick", 0.0)])
+    held_due = engine._next_state_poll["h1"]
+    events += _drive(engine, [("tick", 0.1)])  # the poll times out and defers; never released
+    assert _decisions(events, "state_poll_reschedule") == []
+    assert engine._poll_hist.get("h1", []) == []
+    assert engine._next_state_poll["h1"] == held_due  # the held arming still stands
+    assert engine.decider_counts() == {
+        "deferred": 1,
+        "applied": 0,
+        "late": 0,
+        "clamped_by_wait": 0,
+        "overlap": 0,
+        "orphan": 0,
+        "unanswered": 1,
+    }
+
+
+def _h1_pair_with_two_outstanding_deferrals(tmp_path: Path) -> tuple[SyncEngine, "_DeferringDecider", float, float]:
+    """h1 polled with a 0.2 s held interval and a 0.1 s lifetime, driven through two
+    timeouts in a row with neither answer ever released: poll0 (epoch 0) defers,
+    then poll1 (sent on the held interval, since the first deferral armed nothing)
+    also times out and defers while poll0's answer is still outstanding -- one
+    overlap. Returns the engine, its decider, poll0's own held applied interval
+    (`due_after_poll0`, since poll0 was sent at 0) and poll1's own resolution
+    instant `res_now1`."""
+    decider = _DeferringDecider(0.2)
+    engine, _, _ = _decider_engine(
+        tmp_path, decider, _Cycle(0.9, 0.1), choices=(0.2, 0.3, 0.5), interest_lifetime_ms=100
+    )
+    _drive(engine, [("tick", 0.0)])  # poll0 sent, epoch 0
+    _drive(engine, [("tick", 0.1)])  # poll0 times out and defers
+    due_after_poll0 = engine._next_state_poll["h1"]
+    _drive(engine, [("tick", due_after_poll0)])  # poll1 sent, on the still-held interval
+    assert engine.decider_counts()["overlap"] == 0
+    res_now1 = due_after_poll0 + 0.1
+    _drive(engine, [("tick", res_now1)])  # poll1 times out and defers too, while poll0's is outstanding
+    assert engine.decider_counts() == {
+        "deferred": 2,
+        "applied": 0,
+        "late": 0,
+        "clamped_by_wait": 0,
+        "overlap": 1,
+        "orphan": 0,
+        "unanswered": 2,
+    }
+    return engine, decider, due_after_poll0, res_now1
+
+
+def test_two_outstanding_answers_for_one_pair_are_each_applied_with_their_own_poll_s_stamp(tmp_path: Path):
+    """Two deferrals of one pair, overlapping -- the second deferred while the
+    first's answer was still outstanding -- are each applied with their own poll's
+    own send stamp and jitter draw: the earlier one (collected after the pair's
+    second poll has already gone out) is late, and the actual newest poll's answer
+    is applied."""
+    engine, decider, due_after_poll0, res_now1 = _h1_pair_with_two_outstanding_deferrals(tmp_path)
+    poll1_epoch_ms = round(due_after_poll0 * 1000)
+
+    decider.release(("h1", 0), 0.3)
+    decider.release(("h1", poll1_epoch_ms), 0.5)
+    engine.collect_decider_answers(res_now1 + 0.5)
+    rows = _decisions(engine.drain_events(), "state_poll_reschedule")
+    [row0, row1] = sorted(rows, key=lambda r: r["action"]["poll_epoch_ms"])
+
+    assert row0["action"]["poll_epoch_ms"] == 0
+    assert row0["action"]["late"] is True
+    assert row0["action"]["held_applied_interval_s"] == pytest.approx(due_after_poll0)
+    assert row1["action"]["poll_epoch_ms"] == poll1_epoch_ms
+    assert row1["action"]["late"] is False
+    assert engine.decider_counts()["applied"] == 1
+    assert engine.decider_counts()["late"] == 1
+    assert engine.decider_counts()["unanswered"] == 0
+
+
+def test_a_non_monotone_resolution_stamp_within_one_pair_raises(tmp_path: Path):
+    """The same overlapping pair, but the later resolution's answer is collected
+    first: applying the earlier one afterwards would stamp a row with a res_now
+    behind the one already emitted for this pair, which the emit site refuses
+    rather than writing a file whose per-pair ages could go negative."""
+    engine, decider, due_after_poll0, res_now1 = _h1_pair_with_two_outstanding_deferrals(tmp_path)
+    poll1_epoch_ms = round(due_after_poll0 * 1000)
+
+    decider.release(("h1", poll1_epoch_ms), 0.5)
+    engine.collect_decider_answers(res_now1 + 0.2)  # applies the newer resolution first
+    engine.drain_events()
+
+    decider.release(("h1", 0), 0.3)
+    with pytest.raises(ValueError) as exc_info:
+        engine.collect_decider_answers(res_now1 + 0.3)
+    assert str(exc_info.value) == (
+        f"h0->h1 state_poll_reschedule: resolution instant {round(0.1 * 1000)} "
+        f"precedes this pair's last emitted {round(res_now1 * 1000)}"
+    )
+
+
+def test_an_answer_for_an_unknown_token_is_dropped_and_counted(tmp_path: Path):
+    """An answer whose token matches no pending entry -- never deferred, or already
+    applied once -- is dropped and counted orphan, with nothing emitted and nothing
+    applied a second time for the same poll_epoch_ms."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
+
+    # No neighbor has even sent a poll yet, so there is nothing in
+    # self._poll_replies either -- this exercises that the choice-set check and
+    # the orphan drop both happen from the token alone, needing neither.
+    decider.release(("h1", 999), 2.0)  # a token this engine never deferred
+    engine.collect_decider_answers(0.0)
+    assert engine.decider_counts()["orphan"] == 1
+    assert engine.drain_events() == []
+
+    _drive(engine, [("tick", 0.5)])
+    engine.on_state("h1", _NOTHING_NEW, 0.55, poll_epoch_ms=500)
+    engine.drain_events()
+    decider.release(("h1", 500), 2.0)
+    engine.collect_decider_answers(0.6)
+    engine.drain_events()
+    assert engine.decider_counts()["applied"] == 1
+
+    decider.release(("h1", 500), 4.0)  # the same token, answered again
+    engine.collect_decider_answers(0.7)
+    assert engine.decider_counts()["orphan"] == 2
+    assert engine.decider_counts()["applied"] == 1  # not double-counted
+    assert engine.drain_events() == []  # no second row for one poll_epoch_ms
+
+
+def test_a_collected_interval_outside_the_choices_raises_even_for_an_unknown_token(tmp_path: Path):
+    """The choice-set check runs before the token is even looked up, so a value
+    outside the choices raises the same way a bad synchronous answer does whether
+    or not it would have been an orphan -- a decider returning garbage is a bug
+    worth a loud failure regardless of which answer it happens to be."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
+    decider.release(("h1", 999), 3.0)  # no pending entry for this token at all
+    with pytest.raises(ValueError) as exc_info:
+        engine.collect_decider_answers(0.0)
+    assert str(exc_info.value) == "h0->h1 state_poll_reschedule: the decider returned 3.0, which is not one of (1.0, 2.0, 4.0)"
+
+
+def test_a_deferred_row_is_stamped_with_the_resolution_instant_and_its_old_state(tmp_path: Path):
+    """A deferred row's `ts_ms` is the resolution instant, not the instant it was
+    finally collected, and its `state` is the snapshot taken then, not the state as
+    it stands by the time the answer arrives: a record created in between changes
+    what a fresh decision_state call would report, but not what this row carries."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
+    engine.drain_events()
+    engine.create_record(content_name="later", zone="zone1", disaster="flood", media="image", observed_at=60)
+    engine.drain_events()
+
+    decider.release(("h1", 0), 2.0)
+    engine.collect_decider_answers(0.2)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert row["ts_ms"] == 50  # the resolution instant (res_now), not the collection one
+    assert row["state"]["origins"]["h0"]["hi"] == 1  # the state as it stood at the resolution
+    assert engine._tracker.decision_state("h1")["origins"]["h0"]["hi"] == 2  # not what it is now
+
+
+def test_a_deferred_run_is_the_same_run_with_logging_off(tmp_path: Path):
+    """The deferred path's own twin of test_a_decider_run_is_the_same_run_with_logging_off:
+    with log_decisions True and False the same Interests go out at the same times,
+    the decider is handed exactly the same sequence of obs, its kept history ends up
+    identical, and decider_counts agrees -- turning logging off must not change what
+    the deferred path is ever asked or how it is counted."""
+
+    def _run(label: str, log_decisions: bool) -> tuple[list[str], list[dict], dict, dict]:
+        decider = _DeferringDecider(1.0)
+        store = Store(tmp_path / f"{label}.db")
+        transport = RecordingTransport()
+        engine = SyncEngine(
+            SyncConfig(
+                group="g",
+                node="h0",
+                neighbors=("h1",),
+                state_poll_interval_choices_s=_REDECIDE_CHOICES,
+                state_poll_choice_jitter_frac=0.1,
+                state_poll_choice_redecide=True,
+                state_poll_decider=_A_DECIDER_SPEC,
+                log_decisions=log_decisions,
+            ),
+            store,
+            transport,
+            poll_choice_jitter_rng=_Cycle(0.3, 0.8),
+            poll_decider=decider,
+        )
+        due = engine._next_state_poll.get("h1", 0.0)
+        engine.on_tick(due)
+        engine.drain_events()
+        engine.on_state("h1", _EMPTY_STATE_PAYLOAD, due + 0.05, poll_epoch_ms=round(due * 1000))
+        engine.drain_events()
+        decider.release(("h1", round(due * 1000)), 2.0)
+        engine.collect_decider_answers(due + 0.1)
+        engine.drain_events()
+        return _poll_names(transport), decider.calls, dict(engine._poll_hist), engine.decider_counts()
+
+    sent_on, calls_on, hist_on, counts_on = _run("logging-on", True)
+    sent_off, calls_off, hist_off, counts_off = _run("logging-off", False)
+    assert sent_on == sent_off
+    assert calls_on == calls_off
+    assert hist_on == hist_off
+    assert counts_on == counts_off
+
+
+def test_decider_counts_add_up_to_deferred(tmp_path: Path):
+    """deferred == applied + late + unanswered always: one run with all three at
+    once -- poll0's answer never arrives, poll1's arrives after poll2 (its own
+    pair's next poll) has already gone out, and poll2's arrives while poll2 is
+    still the newest."""
+    decider = _DeferringDecider(0.2)
+    engine, _, _ = _decider_engine(
+        tmp_path, decider, _Cycle(0.9, 0.1, 0.5), choices=(0.2, 0.3, 0.5), interest_lifetime_ms=100
+    )
+    _drive(engine, [("tick", 0.0)])  # poll0 sent, epoch 0
+    _drive(engine, [("tick", 0.1)])  # poll0 times out and defers -- left unanswered
+    due_after_poll0 = engine._next_state_poll["h1"]
+    _drive(engine, [("tick", due_after_poll0)])  # poll1 sent, epoch round(due_after_poll0 * 1000)
+    poll1_epoch_ms = round(due_after_poll0 * 1000)
+    res_now1 = due_after_poll0 + 0.1
+    _drive(engine, [("tick", res_now1)])  # poll1 times out and defers
+    due_after_poll1 = engine._next_state_poll["h1"]
+    _drive(engine, [("tick", due_after_poll1)])  # poll2 sent -- now poll1 is no longer the newest
+    poll2_epoch_ms = round(due_after_poll1 * 1000)
+    res_now2 = due_after_poll1 + 0.1
+    _drive(engine, [("tick", res_now2)])  # poll2 times out and defers
+
+    decider.release(("h1", poll1_epoch_ms), 0.3)  # collected after poll2 already went out: late
+    engine.collect_decider_answers(res_now2 + 0.05)
+    decider.release(("h1", poll2_epoch_ms), 0.5)  # collected while poll2 is still the newest: applied
+    engine.collect_decider_answers(res_now2 + 0.1)
+
+    counts = engine.decider_counts()
+    assert counts["deferred"] == 3
+    assert counts["applied"] == 1
+    assert counts["late"] == 1
+    assert counts["unanswered"] == 1
+    assert counts["deferred"] == counts["applied"] + counts["late"] + counts["unanswered"]
+
+
+def test_a_deferred_answer_reuses_its_own_poll_s_jitter_draw_not_a_fresh_one(tmp_path: Path):
+    """collect_decider_answers applies a deferred answer with the jitter draw its
+    own poll was sent with, carried in its pending entry -- never a fresh draw
+    from the stream. A fresh draw would both shift every later poll's own draw
+    and change this answer's own applied interval, so both are checked: the
+    stream's call count stays at one (the send-time draw) and the applied
+    interval is the one that draw gives, not a later one."""
+    choice_jitter = _Cycle(0.9, 0.1)
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, choice_jitter)
+    _drive(engine, [("tick", 0.0)])  # poll0 sent, jitter_u = 0.9 (the stream's first draw)
+    assert choice_jitter.calls == 1
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)  # answered -> decider defers
+    assert choice_jitter.calls == 1  # the defer itself draws nothing
+    engine.drain_events()
+
+    decider.release(("h1", 0), 2.0)
+    engine.collect_decider_answers(0.5)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+
+    assert choice_jitter.calls == 1  # still only the one draw, made at the send
+    expected = 2.0 * (1 + 0.1 * (2 * 0.9 - 1))
+    assert row["action"]["applied_interval_s"] == pytest.approx(expected)
+    assert engine._next_state_poll["h1"] == pytest.approx(expected)
+
+
+def test_collecting_a_deferred_answer_runs_before_the_neighbor_s_own_send_check(tmp_path: Path):
+    """on_tick applies any ready deferred answer before deciding whether this
+    neighbor's next poll is due, so an answer that pushes the schedule past `now`
+    stops this same tick from sending a redundant poll on the stale held
+    schedule -- and the answer's own poll is still counted applied, not late,
+    since no new poll has gone out yet when it is collected."""
+    decider = _DeferringDecider(0.2)
+    engine, transport, _ = _decider_engine(
+        tmp_path, decider, _Cycle(0.75), choices=(0.2, 0.3, 0.5), interest_lifetime_ms=100
+    )
+    _drive(engine, [("tick", 0.0)])  # poll0 sent, epoch 0
+    held_due = engine._next_state_poll["h1"]
+    _drive(engine, [("tick", 0.1)])  # poll0 times out and defers; nothing armed
+    assert engine._next_state_poll["h1"] == held_due
+
+    decider.release(("h1", 0), 0.5)  # an answer whose own due instant is past held_due
+    _drive(engine, [("tick", held_due)])  # exactly the pair's held due instant
+
+    assert _poll_names(transport) == [_state_name(0)]  # no redundant second poll
+    assert engine.decider_counts()["applied"] == 1
+    assert engine.decider_counts()["late"] == 0
+    assert engine._next_state_poll["h1"] == pytest.approx(0.525)
+
+
+def test_a_late_answer_s_clamped_field_is_measured_against_its_own_poll_s_stamp(tmp_path: Path):
+    """A late answer's `clamped` and `decided_at_ms` are computed from its own
+    poll's send stamp and resolution instant, not the pair's newest poll's --
+    reachable whenever a stall delays the timeout past the interval the
+    eventual answer chooses: the poll sent at 0 times out at 0.45 (noticed late
+    by the tick), defers, and the pair's next poll goes out on the still-held
+    0.5 s interval before the deferred answer (0.2 s) is collected, landing the
+    answer's own due instant (0.2) before its own resolution instant (0.45)."""
+    decider = _DeferringDecider(0.5)
+    engine, _, _ = _decider_engine(
+        tmp_path, decider, _Cycle(0.5), choices=(0.2, 0.5), interest_lifetime_ms=50
+    )
+    _drive(engine, [("tick", 0.0)])  # poll0 sent, held 0.5
+    _drive(engine, [("tick", 0.45)])  # poll0 times out, noticed late, defers
+    _drive(engine, [("tick", 0.5)])  # poll1 sent on the still-held interval
+    decider.release(("h1", 0), 0.2)
+    engine.drain_events()
+    engine.collect_decider_answers(0.55)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+
+    assert row["action"]["late"] is True
+    assert row["action"]["clamped"] is True
+    assert row["action"]["decided_at_ms"] == 550
+    assert engine._poll_hist["h1"][-1]["clamped"] is True
+
+
+def test_a_clamped_applied_row_is_not_also_counted_clamped_by_wait(tmp_path: Path):
+    """clamped_by_wait counts only a due instant the wait itself pushed into the
+    past (due_at >= res_now and due_at < now) -- not a row whose answer alone was
+    already due before its own resolution instant. Collected only 10 ms after the
+    resolution, well before any wait could have moved anything: the other side of
+    test_an_answer_whose_due_instant_has_passed_clamps_and_is_counted_as_clamped_by_wait,
+    with clamped true and clamped_by_wait still 0."""
+    decider = _DeferringDecider(0.5)
+    engine, _, _ = _decider_engine(
+        tmp_path, decider, _Cycle(0.5), choices=(0.2, 0.5), interest_lifetime_ms=50
+    )
+    _drive(engine, [("tick", 0.0)])  # poll0 sent, held 0.5
+    _drive(engine, [("tick", 0.45)])  # poll0 times out and defers
+    decider.release(("h1", 0), 0.2)
+    engine.drain_events()
+    engine.collect_decider_answers(0.46)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+
+    assert row["action"]["clamped"] is True
+    assert row["action"]["decided_at_ms"] == 460
+    assert engine.decider_counts()["applied"] == 1
+    assert engine.decider_counts()["clamped_by_wait"] == 0
+    assert engine._next_state_poll["h1"] == 0.46
+
+
+def test_a_reply_after_a_deferred_timeout_is_logged_late_not_redecided(tmp_path: Path):
+    """A poll already deferred as timed out is resolved once: a later tick does not
+    resolve it again (poll.resolved is already set, so _resolve_timed_out_poll's
+    own guard skips it), and a reply that arrives for it afterward is logged
+    state_poll_late_reply, same as under every other mode, and changes nothing
+    else -- the decider is not asked about this poll a second time, and the
+    pending deferral and the pair's schedule are both left exactly as the
+    timeout left them."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75), interest_lifetime_ms=100)
+    _drive(engine, [("tick", 0.0)])  # poll0 sent, epoch 0
+    _drive(engine, [("tick", 0.1)])  # poll0 times out and defers
+    due_after_defer = engine._next_state_poll["h1"]
+    calls_before = len(decider.calls)
+
+    _drive(engine, [("tick", 0.12)])  # a later tick does not resolve poll0 again
+    assert len(decider.calls) == calls_before
+    assert engine.decider_counts()["deferred"] == 1
+
+    events = _drive(engine, [("reply", 0.15, 0)])  # a reply for poll0 arrives late
+
+    late_events = [e for e in events if e["event"] == "state_poll_late_reply"]
+    assert len(late_events) == 1
+    assert late_events[0]["poll_epoch_ms"] == 0
+    assert _decisions(events, "state_poll_reschedule") == []
+    assert len(decider.calls) == calls_before  # not asked about this poll again
+    assert engine._next_state_poll["h1"] == due_after_defer
+    assert engine.decider_counts()["unanswered"] == 1

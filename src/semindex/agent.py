@@ -411,18 +411,19 @@ def _validate_poll_decider(
     object SyncEngine asks for each poll's next interval, loaded by semindex.decider
     from the file this spec names (see build_agent).
 
-    Checked in the port's own order -- exclusivity before sufficiency, so a decider set
-    beside a rule is reported as the combination and not as "nothing to pick from" (the
-    rule already silences the choices one frame up, so by the time a decider beside a
-    rule reached "requires choices" that would be the wrong diagnosis): combined with a
+    Checked exclusivity before sufficiency, so a decider set beside a rule is
+    reported as the combination and not as "nothing to pick from" (the rule already
+    silences the choices one frame up, so by the time a decider beside a rule
+    reached "requires choices" that would be the wrong diagnosis): combined with a
     policy or a rule; requires choices; requires redecide (present and true -- a decider
     never asked at a resolution could not be the thing polling); the spec's own shape
     (`path`, `sha256`, `factory`, `args`, nothing else); and the bound every poll a
-    decider drives must clear, so that a `last_poll_status` the decider reads means on
-    this emulator what it means on the port this run is compared against: the choice
-    set's smallest applied interval must still exceed the poll's own timeout plus one
-    tick, or a poll can be superseded before it resolves and the two sides report
-    different statuses with no test failing.
+    decider drives must clear, so that the `last_poll_status` and
+    `consecutive_poll_timeouts` a decider reads describe this poll's own history and
+    not a later poll's that has already superseded it: the choice set's smallest
+    applied interval must still exceed the poll's own timeout plus one tick, or a
+    poll can be superseded before it resolves and a decider asked about it reads a
+    status that already belongs to the neighbor's next poll instead.
 
     `have_policy`/`have_rule` are checked here rather than by editing the policy's or
     the rule's own combination lists (_validate_poll_policy, _validate_poll_rule): those
@@ -1317,13 +1318,25 @@ class Agent:
         `counters` line and this life is flagged (evalvalid's counters_count/
         last_line_not_counters) rather than averaged in, the same reasoning
         SyncEngine._decide's own exceptions are left uncaught for.
+
+        2026-11-27: before that drain, this is also the one place a deferred
+        answer collected after the loop's very last on_tick gets applied --
+        Agent.step() never calls on_tick again once _stop_requested is set, so an
+        answer that arrived only in that gap would otherwise sit in the engine's
+        pending store forever and be counted `unanswered` although it had, in
+        truth, arrived. Its own `decider_counts` line is written right after
+        `close()`, still before `counters`, so a reader of this life's seven counts
+        never has to wait for a later life's events to see the final tally.
         """
         self._transport.abort_fetch()
         self._settle_probe_fetch()
         self._emit_pending_snapshots()
+        if self._poll_decider is not None:
+            self._engine.collect_decider_answers(self._transport.now())
         self._drain_engine_events()
         if self._poll_decider is not None:
             self._poll_decider.close()
+            self._events.write({"event": "decider_counts", **self._engine.decider_counts()})
         self._events.write(
             {
                 "event": "counters",

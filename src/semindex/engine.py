@@ -401,10 +401,46 @@ class SyncEngine:
         self._poll_replies: dict[str, _PollReplies] = {}
         # 2026-11-27: poll_decider only -- the per-neighbor history a decider is
         # handed beside its state: its pair's last 8 resolved polls, oldest first.
-        # Appended only from a state_poll_reschedule row
-        # (_redecide_next_poll), after that row's own decision has been asked, so a
-        # decision is never asked about itself.
+        # Appended once a state_poll_reschedule row exists for a resolution --
+        # synchronously from _redecide_next_poll, or later from
+        # collect_decider_answers once a deferred answer is collected -- after that
+        # row's own decision has been asked, so a decision is never asked about
+        # itself.
         self._poll_hist: dict[str, deque] = {}
+        # 2026-11-27: poll_decider only -- the applied interval `neighbor`'s pending
+        # next-poll time was last armed from at a send (_send_state_request). A
+        # deferred answer that is collected too late to move the schedule still has
+        # to report what actually ran, and _Poll itself keeps no interval (only
+        # epoch_ms, sent_at, replied, jitter_u, resolved), so this is the one place
+        # that value survives past its own send.
+        self._poll_held: dict[str, float] = {}
+        # 2026-11-27: poll_decider only -- one resolution's inputs, keyed by the
+        # token (neighbor, poll.epoch_ms) the decider is answering, for every
+        # resolution whose decide() returned None. Keyed by the token and not the
+        # pair: a second resolution of the same pair can defer while the first is
+        # still outstanding (overlap), and a per-pair entry would then apply the
+        # first answer with the second poll's own sent_at and jitter_u. Nothing is
+        # ever evicted except by collect_decider_answers popping a matched token, so
+        # its size at any point is exactly how many deferred answers have not yet
+        # arrived.
+        self._poll_pending: dict[tuple[str, int], dict] = {}
+        # 2026-11-27: poll_decider only -- the res_now of the last
+        # state_poll_reschedule row emitted for each neighbor, so a row about to be
+        # emitted out of order (a deferred answer collected after a later
+        # resolution's row already carries a newer res_now) is caught at the emit
+        # site rather than written with a ts_ms that goes backwards within one pair.
+        self._poll_last_res_now: dict[str, float] = {}
+        # 2026-11-27: poll_decider only -- six running counts of what happened to
+        # every deferred resolution (decider_counts() adds the seventh, unanswered,
+        # computed from self._poll_pending's own size rather than tracked here).
+        self._decider_counts = {
+            "deferred": 0,
+            "applied": 0,
+            "late": 0,
+            "clamped_by_wait": 0,
+            "overlap": 0,
+            "orphan": 0,
+        }
         self._events: list[dict] = []
         self._transport.register(names.registration_prefix(config.group, config.node))
         # Seed the tracker with whatever this node already holds (e.g.
@@ -515,10 +551,16 @@ class SyncEngine:
     def on_tick(self, now: float) -> None:
         """Send due state requests and due record fetches to every neighbor.
 
+        2026-11-27: in decider mode, any answer the decider has collected since the
+        last call is applied first, before the neighbor loop -- so a pair whose
+        deferred answer just arrived is scheduled, or found late, before this same
+        tick decides whether to send that pair's next poll.
+
         In a mode that re-decides on resolution, a newest poll whose lifetime
         has passed is resolved first, so a re-decided next time already in the past
         (clamped to `now`) is polled in this same tick rather than one tick late.
         """
+        self.collect_decider_answers(now)
         for neighbor in self._config.neighbors:
             if self._redecides_on_resolution():
                 self._resolve_timed_out_poll(neighbor, now)
@@ -555,6 +597,12 @@ class SyncEngine:
             applied_interval = interval * (1 + self._config.state_poll_choice_jitter_frac * (2 * jitter_u - 1))
             action = {"neighbor": neighbor, "interval_s": interval, "applied_interval_s": applied_interval}
             action_prob = 1.0
+            # 2026-11-27: the interval this poll's own schedule entry is armed from
+            # (the shared assignment at the end of this method), kept per neighbor
+            # because a deferred answer to *this* poll, collected after its own
+            # lifetime, has to report what actually ran -- which is this value, not
+            # the answer's.
+            self._poll_held[neighbor] = applied_interval
         elif self._config.state_poll_policy is None and self._config.state_poll_rule is None:
             action, applied_interval, action_prob, jitter_u = self._choose_poll_interval(neighbor)
             last_poll_status, consecutive_poll_timeouts = replies.snapshot(now, lifetime_s)
@@ -597,9 +645,10 @@ class SyncEngine:
         # poll is resolved (_redecide_next_poll), which also measures from here.
         self._next_state_poll[neighbor] = now + applied_interval
 
-    def _decide(self, neighbor: str, kind: str, now: float, state: dict, resolved: dict | None) -> float:
+    def _decide(self, neighbor: str, kind: str, now: float, state: dict, resolved: dict | None) -> float | None:
         """Ask `self._poll_decider` for `neighbor`'s next interval and return it, or
-        raise if the answer cannot be used (poll_decider only).
+        `None` when a resolution's answer will come later, or raise if the answer
+        cannot be used at all (poll_decider only).
 
         `state` is handed over by reference, not copied: it is the same dict this
         decision's own row logs, and a decider that mutates it corrupts exactly that
@@ -611,11 +660,12 @@ class SyncEngine:
         decisions across every other node, and a decider that depended on it could
         not run on a real node at all.
 
-        `None` is the shape of an answer that would come later, which is not
-        supported: at a resolution it is refused by name below. At a
-        send a deferred answer means nothing -- the row cannot report what it does not
-        yet have -- so it is left to fall through to the one check every other invalid
-        answer hits, `interval not in choices`, which None always fails.
+        2026-11-27: `None` at a resolution means the answer will come later, and the
+        caller (_redecide_next_poll) is the one that knows what to do about it --
+        this method only reports it. At a send `None` means nothing -- the row
+        cannot report what it does not yet have -- so it is left to fall through to
+        the one check every other invalid send-time answer hits, `interval not in
+        choices`, which `None` always fails.
         """
         obs = {
             "state": state,
@@ -624,20 +674,24 @@ class SyncEngine:
             "where": {"node": self._config.node, "neighbor": neighbor, "kind": kind, "ts_ms": round(now * 1000)},
         }
         interval = self._poll_decider.decide(obs)
-        if interval is None and kind != "state_poll":
-            # 2026-11-27: refused by name here, before the generic choice-set check
-            # below could fail on it for the wrong reason -- the engine keeps no
-            # pending entry for a resolution and arms nothing from a None answer, so
-            # deferring here would leave the pair's next poll unarmed with no row
-            # logged to say why.
-            raise ValueError(f"{self._config.node}->{neighbor} {kind}: deferred answers are not supported yet")
+        if interval is None and kind == "state_poll_reschedule":
+            return None
+        self._check_in_choices(neighbor, kind, interval)
+        return interval
+
+    def _check_in_choices(self, neighbor: str, kind: str, interval: object) -> None:
+        """Raise unless `interval` is one of the configured choices, with the same
+        message shared by a bad synchronous answer (_decide) and a bad answer
+        collected later (collect_decider_answers): a loud invalid run is better than
+        an arm that is counted as an arm it is not, however the value reached the
+        engine.
+        """
         choices = self._config.state_poll_interval_choices_s
         if interval not in choices:
             raise ValueError(
                 f"{self._config.node}->{neighbor} {kind}: the decider returned {interval!r}, "
                 f"which is not one of {choices!r}"
             )
-        return interval
 
     def _policy_interval(self, consecutive_poll_timeouts: int, jitter_u: float) -> tuple[float, float]:
         """(table interval, applied interval) for that many consecutive timeouts and
@@ -770,8 +824,37 @@ class SyncEngine:
                 "consecutive_poll_timeouts": consecutive_poll_timeouts,
             }
             resolved = {"poll_epoch_ms": poll.epoch_ms, "trigger": trigger, "empty": empty}
-            interval = self._decide(neighbor, "state_poll_reschedule", now, state, resolved)
-            applied_interval = interval * (1 + self._config.state_poll_choice_jitter_frac * (2 * poll.jitter_u - 1))
+            answer = self._decide(neighbor, "state_poll_reschedule", now, state, resolved)
+            if answer is None:
+                # 2026-11-27: the answer will come later -- _defer keeps what this
+                # resolution needs to apply it then. Nothing is armed and no row is
+                # emitted here: the row belongs to whichever answer eventually
+                # resolves this token, not to the ask.
+                self._defer(neighbor, poll, trigger, empty, now, state)
+                return
+            applied_interval = answer * (1 + self._config.state_poll_choice_jitter_frac * (2 * poll.jitter_u - 1))
+            due_at = poll.sent_at + applied_interval
+            self._next_state_poll[neighbor] = max(due_at, now)
+            # 2026-11-27: a float answer is applied at once, at the same instant it
+            # was asked for, so decided_at_ms equals this row's own ts_ms and late is
+            # always False -- both gain meaning only once an answer can arrive after
+            # this instant, which collect_decider_answers is the one path that happens on.
+            self._emit_decider_reschedule_row(
+                neighbor,
+                state,
+                poll.epoch_ms,
+                trigger,
+                empty,
+                answer,
+                applied_interval,
+                due_at,
+                res_now=now,
+                decided_at_ms=round(now * 1000),
+                late=False,
+                held_applied_interval_s=None,
+                action_prob=action_prob,
+            )
+            return
         elif self._config.state_poll_choice_redecide:
             # 2026-11-22: checked first, and before the table's branch, because that
             # branch reads self._config.state_poll_policy, which choices mode leaves
@@ -812,32 +895,193 @@ class SyncEngine:
             # the uniform draw does not react to it, but a learner reading these
             # rows beside a rule's needs the same column there.
             action["empty"] = empty
-        if self._poll_decider is not None:
-            # 2026-11-27: `decided_at_ms` is when the answer was actually applied --
-            # this phase never defers, so that is always this same instant, equal to
-            # `ts_ms`; `late` is always False for the same reason (both gain meaning
-            # once a deferred answer can arrive after the pair's next poll). Written
-            # only in decider mode: the five existing modes' rows gain nothing.
-            action["decided_at_ms"] = round(now * 1000)
-            action["late"] = False
         self._emit_decision("state_poll_reschedule", state, action, now, action_prob)
-        if self._poll_decider is not None:
-            # 2026-11-27: appended from this row's own action, after it has been
-            # asked for and emitted (or would have been, with logging on) -- never
-            # from inside _emit_decision, which is a no-op with log_decisions off, so
-            # turning logging off must not change what the next decision is asked
-            # with.
-            self._poll_hist.setdefault(neighbor, deque(maxlen=8)).append(
-                {
-                    "ts_ms": round(now * 1000),
-                    "poll_epoch_ms": action["poll_epoch_ms"],
-                    "trigger": action["trigger"],
-                    "empty": action["empty"],
-                    "interval_s": action["interval_s"],
-                    "applied_interval_s": action["applied_interval_s"],
-                    "clamped": action["clamped"],
-                }
+
+    def _defer(
+        self,
+        neighbor: str,
+        poll: _Poll,
+        trigger: str,
+        empty: bool | None,
+        now: float,
+        state: dict,
+    ) -> None:
+        """Hold `poll`'s resolution under its own token (neighbor, poll.epoch_ms) for
+        `collect_decider_answers` to apply once the decider's `collect()` yields its
+        answer (poll_decider only).
+
+        `now`, `poll.sent_at` and `poll.jitter_u` are copied into the entry rather
+        than read back from `self._poll_replies` later, because the poll may no
+        longer be the newest, or may have been dropped from that pair's list
+        entirely, by the time the answer arrives. `held_applied_interval_s` is read
+        from `self._poll_held` rather than from `poll` itself, because `_Poll` keeps
+        no interval of its own -- only the pending schedule entry does, and only
+        while nothing moves it.
+
+        Counted as `overlap`, not as a new kind of failure, when `neighbor` already
+        has an outstanding entry: this pair's previous deferral has not been applied
+        yet, and a decider either always defers at a resolution or never does (the
+        one protocol shape this engine admits), so the only way to reach a second
+        deferral here is a second resolution before the first was collected.
+        """
+        if any(pending_neighbor == neighbor for pending_neighbor, _ in self._poll_pending):
+            self._decider_counts["overlap"] += 1
+        self._poll_pending[(neighbor, poll.epoch_ms)] = {
+            "res_now": now,
+            "sent_at": poll.sent_at,
+            "jitter_u": poll.jitter_u,
+            "trigger": trigger,
+            "empty": empty,
+            "state": state,
+            "held_applied_interval_s": self._poll_held[neighbor],
+        }
+        self._decider_counts["deferred"] += 1
+
+    def _emit_decider_reschedule_row(
+        self,
+        neighbor: str,
+        state: dict,
+        poll_epoch_ms: int,
+        trigger: str,
+        empty: bool | None,
+        interval: float,
+        applied_interval: float,
+        due_at: float,
+        *,
+        res_now: float,
+        decided_at_ms: int,
+        late: bool,
+        held_applied_interval_s: float | None,
+        action_prob: float,
+    ) -> None:
+        """Emit one decider-mode `state_poll_reschedule` row -- synchronous or the
+        answer to a deferred one, `collect_decider_answers`' own apply step -- and
+        append it to `neighbor`'s kept history (poll_decider only).
+
+        `res_now` is the resolution's own instant and is always this row's `ts_ms`,
+        collected synchronously or not: a late answer's row still reports the
+        question as it stood when it was asked, not when it was finally answered.
+        It is also what the check below is against: within one pair, a row's
+        `res_now` must never be smaller than the previous row's, or a reader ageing
+        a row's own stamp against the state it carries would see time run
+        backwards for that pair. A single decider answered once per pair in
+        arrival order cannot produce that; only two deferred
+        answers of the same pair, collected out of the order their resolutions
+        happened in, can -- which is exactly the ordering `collect_decider_answers`
+        must not let through silently.
+        """
+        last_res_now = self._poll_last_res_now.get(neighbor)
+        if last_res_now is not None and res_now < last_res_now:
+            raise ValueError(
+                f"{self._config.node}->{neighbor} state_poll_reschedule: resolution instant "
+                f"{round(res_now * 1000)} precedes this pair's last emitted {round(last_res_now * 1000)}"
             )
+        self._poll_last_res_now[neighbor] = res_now
+        # Computed once and reused below for the history entry: the action row and
+        # the kept history must always agree on which side of res_now this poll's
+        # due instant fell, and a single value is what guarantees that rather than
+        # two copies of the same comparison that a later edit could drift apart.
+        clamped = due_at < res_now
+        action = {
+            "neighbor": neighbor,
+            "poll_epoch_ms": poll_epoch_ms,
+            "trigger": trigger,
+            "interval_s": interval,
+            "applied_interval_s": applied_interval,
+            "clamped": clamped,
+            "empty": empty,
+            "decided_at_ms": decided_at_ms,
+            "late": late,
+        }
+        if late:
+            action["held_applied_interval_s"] = held_applied_interval_s
+        self._emit_decision("state_poll_reschedule", state, action, res_now, action_prob)
+        # Appended outside _emit_decision's own logging gate, like every other
+        # decider-mode history append: turning logging off must not change what the
+        # next decision is asked with.
+        self._poll_hist.setdefault(neighbor, deque(maxlen=8)).append(
+            {
+                "ts_ms": round(res_now * 1000),
+                "poll_epoch_ms": poll_epoch_ms,
+                "trigger": trigger,
+                "empty": empty,
+                "interval_s": interval,
+                "applied_interval_s": applied_interval,
+                "clamped": clamped,
+            }
+        )
+
+    def collect_decider_answers(self, now: float) -> None:
+        """Apply every answer `self._poll_decider.collect()` has yielded since the
+        last call (poll_decider only; a no-op otherwise). Called at the start of
+        `on_tick`, before the neighbor loop, and once more by `Agent.shutdown` so a
+        deferred answer that arrives only after the last tick is not lost.
+
+        An interval outside the configured choices raises -- the same refusal a
+        synchronous answer gets from `_decide`, checked before anything about this
+        answer is counted or applied, whether or not its token still matches a
+        pending entry: a decider that returns a value outside its own choice set is
+        a bug worth a loud failure regardless of which answer it happens to be.
+
+        For each `(token, interval, _info)` that passes that check: a token
+        matching no pending entry -- answered twice, or for a poll that was never
+        deferred -- is dropped and counted `orphan`; one token is never applied
+        twice, since the matching entry is popped here. Still the pair's newest
+        poll (`collect_decider_answers` is the only place a deferred answer's own
+        poll can have stopped being that): the schedule is armed from this poll's
+        own send time and jitter draw, `late` is False, and `clamped_by_wait` is
+        counted when the wait alone, not the answer itself, is what put the arming
+        in the past. No longer the newest: the pair's next poll already went out on
+        the held interval, the schedule is left exactly as it is, and `late` is True.
+        """
+        if self._poll_decider is None:
+            return
+        for token, interval, _info in self._poll_decider.collect():
+            neighbor, poll_epoch_ms = token
+            self._check_in_choices(neighbor, "state_poll_reschedule", interval)
+            pending = self._poll_pending.pop(token, None)
+            if pending is None:
+                self._decider_counts["orphan"] += 1
+                continue
+            applied_interval = interval * (1 + self._config.state_poll_choice_jitter_frac * (2 * pending["jitter_u"] - 1))
+            due_at = pending["sent_at"] + applied_interval
+            res_now = pending["res_now"]
+            replies = self._poll_replies.get(neighbor)
+            newest = replies is not None and bool(replies.polls) and replies.polls[-1].epoch_ms == poll_epoch_ms
+            late = not newest
+            held_applied_interval_s = None
+            if late:
+                self._decider_counts["late"] += 1
+                held_applied_interval_s = pending["held_applied_interval_s"]
+            else:
+                self._next_state_poll[neighbor] = max(due_at, now)
+                self._decider_counts["applied"] += 1
+                if due_at >= res_now and due_at < now:
+                    self._decider_counts["clamped_by_wait"] += 1
+            self._emit_decider_reschedule_row(
+                neighbor,
+                pending["state"],
+                poll_epoch_ms,
+                pending["trigger"],
+                pending["empty"],
+                interval,
+                applied_interval,
+                due_at,
+                res_now=res_now,
+                decided_at_ms=round(now * 1000),
+                late=late,
+                held_applied_interval_s=held_applied_interval_s,
+                action_prob=1.0,
+            )
+
+    def decider_counts(self) -> dict[str, int]:
+        """The six running counts of what happened to every deferred resolution
+        (poll_decider only; all zero otherwise), plus `unanswered` -- the number of
+        deferred resolutions whose answer has not arrived, which is exactly
+        `len(self._poll_pending)` since nothing is ever evicted from it except by a
+        matching answer. `deferred == applied + late + unanswered` always.
+        """
+        return {**self._decider_counts, "unanswered": len(self._poll_pending)}
 
     def _choose_poll_interval(self, neighbor: str) -> tuple[dict, float, float, float | None]:
         """Draw the interval until `neighbor`'s next state poll: the decision's
