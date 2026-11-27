@@ -2663,8 +2663,10 @@ def test_read_meta_state_poll_decider_is_none_without_the_key_and_for_a_non_obje
 
 def test_the_poll_decider_round_trips_from_evalruns_meta_json_to_the_last_runs_csv_column(tmp_path: Path):
     """A decider spec recorded by evalrun reaches runs.csv's new last column as
-    compact, key-sorted JSON; null, a meta.json from before the key, and an
-    analysis_error run give an empty cell."""
+    compact, key-sorted JSON; null and a meta.json from before the key give an
+    empty cell, and an analysis_error run still carries whatever
+    state_poll_decider its own RunAnalysis holds -- non-empty here, since this one
+    has one set."""
     t0 = 1_000_000_000_000.0
     events = {"h0": [{"ts_ms": t0, "event": "agent_start", "node": "h0", "t0_ms": t0}]}
     analyses = []

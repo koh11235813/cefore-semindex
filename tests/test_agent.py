@@ -2389,6 +2389,54 @@ def _clean_decider_module():
             "state_poll_decider requires min(state_poll_interval_choices_s) * "
             "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
         ),
+        (
+            # Clears the bound unjittered (2.2 * 1000 = 2200 > 2100) but not once
+            # state_poll_choice_jitter_frac is actually applied (2.2 * 0.9 * 1000 =
+            # 1980, not > 2100): catches a check that drops the
+            # (1 - state_poll_choice_jitter_frac) factor instead of multiplying by it.
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": [2.2],
+                "state_poll_choice_jitter_frac": 0.1,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
+        ),
+        (
+            # Clears the bound against the default receive_timeout_ms (3.0 * 1000 =
+            # 3000 > 2000 + 100) but not against this config's own 1000 ms
+            # (3000, not > 2000 + 1000 = 3000): catches a check that reads
+            # DEFAULT_RECEIVE_TIMEOUT_MS instead of this config's own
+            # receive_timeout_ms.
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": [3.0],
+                "state_poll_choice_jitter_frac": 0.0,
+                "receive_timeout_ms": 1000,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
+        ),
+        (
+            # Two choices straddling the bound: the smallest (0.5 * 1000 = 500) fails
+            # it against the default 2000 + 100, the largest (10.0 * 1000 = 10000)
+            # clears it easily. Catches a check that reads max(choices) in place of
+            # min(choices), which would pass this config though the engine can still
+            # poll again, on the smaller choice, before a poll driven by it resolves.
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": [0.5, 10.0],
+                "state_poll_choice_jitter_frac": 0.0,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
+        ),
     ],
 )
 def test_validate_config_rejects_a_bad_state_poll_decider(overrides: dict, message: str):
@@ -2540,7 +2588,9 @@ def _write_deferring_decider(path: Path) -> None:
     answers `interval` synchronously at a send and defers every resolution,
     auto-queuing that resolution's own answer for its very next collect() call --
     enough to show a stop reached right after the deferral still finds that answer
-    available at shutdown."""
+    available at shutdown. close() discards whatever was not collected, as a client
+    that drops its connection does: a shutdown that closed the decider before its
+    last collect would otherwise go unnoticed by a fake whose answers outlive close()."""
     path.write_text(
         "class _Deferring:\n"
         "    def __init__(self, interval):\n"
@@ -2556,7 +2606,7 @@ def _write_deferring_decider(path: Path) -> None:
         "        ready, self._ready = self._ready, []\n"
         "        return ready\n"
         "    def close(self):\n"
-        "        pass\n"
+        "        self._ready = []\n"
         "\n"
         "def build(node, interval):\n"
         "    return _Deferring(interval)\n",

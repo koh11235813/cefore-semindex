@@ -119,6 +119,39 @@ class _Reporting:
     assert decider.decide(None) == str(path)
 
 
+def test_a_decider_file_that_reads_its_own_entry_out_of_sys_modules_at_its_top_level_succeeds(tmp_path: Path):
+    """A decider file whose top level reads `sys.modules[__name__]` while it is
+    still running -- a dataclass module using `from __future__ import annotations`
+    does exactly this of its own accord, to resolve its own annotations -- must see
+    itself already registered there: `load_poll_decider` has to put the module in
+    `sys.modules` *before* `exec` runs, not after, or this raises KeyError instead
+    of returning the loaded decider."""
+    source = """
+import sys
+
+_SELF = sys.modules[__name__]
+
+
+def build(*, node, **kwargs):
+    return _Reporting()
+
+
+class _Reporting:
+    def decide(self, obs):
+        return _SELF.__name__
+
+    def collect(self):
+        return []
+
+    def close(self):
+        pass
+"""
+    path, digest = _write_decider(tmp_path, source)
+    spec = {"path": str(path), "sha256": digest, "factory": "build", "args": {}}
+    decider = load_poll_decider(spec, node="h1")
+    assert decider.decide(None) == DECIDER_MODULE_NAME
+
+
 def test_a_decider_file_whose_top_level_raises_leaves_the_import_slot_empty(tmp_path: Path):
     """A decider file that fails before it ever defines its factory must not leave a
     half-initialised module registered under the fixed name for the rest of the
@@ -141,7 +174,9 @@ def test_the_module_imports_only_the_standard_library():
 
     tree = ast.parse(inspect.getsource(decider_module))
     roots = set()
-    for node in ast.iter_child_nodes(tree):
+    # ast.walk and not the top-level statements only: an import inside a function
+    # would add the dependency just the same.
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             roots.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module is not None:

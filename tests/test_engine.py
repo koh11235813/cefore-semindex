@@ -786,19 +786,29 @@ class _RecordingDecider:
 
 
 class _MutatingDecider:
-    """A poll_decider that mutates every `obs` it is handed -- its own state dict and
-    its own history list -- then answers a constant. Pins the mutation contract: a
-    decider that corrupts what it was given corrupts only its own row and nothing a
-    later decision reads (engine.py's `_decide` docstring)."""
+    """A poll_decider that mutates every `obs` it is handed -- its own state dict,
+    an existing row of its own history list (not just a newly appended one -- only
+    mutating a row already in the list can catch a copy that shares row objects
+    with the engine's own kept history), and its own history list -- then answers
+    a constant. Pins the mutation contract: a decider that corrupts what it was
+    given corrupts only its own row and nothing a later decision reads (engine.py's
+    `_decide` docstring). Also records `in_flight` as seen on entry, before this
+    call's own poisoning, so a test can check that an earlier call's poisoning
+    never leaked into a later call's supposedly fresh state."""
 
     def __init__(self, value: float) -> None:
-        """Remember the one value every decide() call returns."""
+        """Remember the one value every decide() call returns; nothing seen yet."""
         self.value = value
+        self.seen_in_flight: list = []
 
     def decide(self, obs: dict) -> float:
-        """Poison the state dict and the history list this call was handed, then
+        """Record `in_flight` as handed in, then poison the state dict, an
+        existing history row if one is there, and the history list itself, and
         answer the constant anyway."""
+        self.seen_in_flight.append(obs["state"]["in_flight"])
         obs["state"]["in_flight"] = "corrupted"
+        if obs["history"]:
+            obs["history"][-1]["corrupted"] = True
         obs["history"].append({"corrupted": True})
         return self.value
 
@@ -2670,7 +2680,8 @@ def test_the_decider_s_history_is_the_pair_s_last_eight_resolutions_oldest_first
 
 def test_the_decider_s_history_is_kept_per_pair(tmp_path: Path):
     """Two neighbors resolved once each keep two separate histories: h2's resolution
-    row never appears in h1's history, and vice versa."""
+    row never appears in h1's history, and vice versa -- checked both in what the
+    engine keeps and in what h2's own decider call is actually handed."""
     decider = _RecordingDecider(1.0)
     engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.5), neighbors=("h1", "h2"))
     engine.on_tick(0.0)
@@ -2683,6 +2694,11 @@ def test_the_decider_s_history_is_kept_per_pair(tmp_path: Path):
     [h2_row] = list(engine._poll_hist["h2"])
     assert h1_row["ts_ms"] == 50
     assert h2_row["ts_ms"] == 70
+    # h2's own resolution -- the last decide() call -- must be handed h2's own
+    # (empty) history, not h1's: a decider asking every neighbor for the first
+    # neighbor's history regardless would hand it [h1_row] instead.
+    assert decider.calls[-1]["where"]["neighbor"] == "h2"
+    assert decider.calls[-1]["history"] == []
 
 
 def test_a_decider_mutating_the_state_corrupts_only_its_own_row(tmp_path: Path):
@@ -2705,7 +2721,12 @@ def test_a_decider_mutating_the_state_corrupts_only_its_own_row(tmp_path: Path):
     engine.on_tick(due)
     [sent2] = _decisions(engine.drain_events(), "state_poll")
     assert sent2["state"] is not sent["state"]
-    # The decider's own history mutation never reaches the engine's kept history.
+    # Every call saw a clean in_flight on entry, including this one: decision_state()
+    # allocates fresh every time, so the previous calls' own poisoning never leaked
+    # forward into what this one was handed.
+    assert decider.seen_in_flight == [0, 0, 0]
+    # The decider's own history mutation (new row or existing one) never reaches
+    # the engine's kept history.
     assert all("corrupted" not in row for row in engine._poll_hist["h1"])
 
 
@@ -2868,7 +2889,10 @@ def test_an_answer_collected_before_the_provisional_timer_gives_the_synchronous_
     timer was armed from. Both engines send with the same held interval and share
     the same jitter stream, so the poll's own send stamp and jitter draw -- what the
     next-poll arithmetic actually runs on -- are identical; only whether the answer
-    arrived before or after the resolution differs."""
+    arrived before or after the resolution differs. Collected at a real delay --
+    0.5 s, after the 0.05 s resolution and still well before the smallest due
+    instant any `answer` here gives (1.05 s, for answer=1.0) -- not at the
+    resolution instant itself, so this is not a zero-latency coincidence."""
     held = 2.0
     (tmp_path / "deferred").mkdir()
     (tmp_path / "synchronous").mkdir()
@@ -2877,7 +2901,11 @@ def test_an_answer_collected_before_the_provisional_timer_gives_the_synchronous_
     _drive(engine_deferred, [("tick", 0.0)])
     engine_deferred.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)
     deferring.release(("h1", 0), answer)
-    engine_deferred.collect_decider_answers(0.05)
+    engine_deferred.collect_decider_answers(0.5)
+    # A no-op collect_decider_answers would leave this at 0 and the schedule
+    # unmoved -- for `answer == held` the unmoved schedule happens to already
+    # equal the correct one, so the schedule assert alone would not catch it.
+    assert engine_deferred.decider_counts()["applied"] == 1
 
     synchronous = _RecordingDecider(held, answer)
     engine_synchronous, _, _ = _decider_engine(tmp_path / "synchronous", synchronous, _Cycle(0.75))
@@ -3007,24 +3035,45 @@ def test_two_outstanding_answers_for_one_pair_are_each_applied_with_their_own_po
     first's answer was still outstanding -- are each applied with their own poll's
     own send stamp and jitter draw: the earlier one (collected after the pair's
     second poll has already gone out) is late, and the actual newest poll's answer
-    is applied."""
+    is applied. Both resolutions here are timeouts, not replies, so each row's
+    `trigger` is pinned to `timed_out` and `empty` to `None`, carried through the
+    defer rather than overwritten at collection."""
     engine, decider, due_after_poll0, res_now1 = _h1_pair_with_two_outstanding_deferrals(tmp_path)
     poll1_epoch_ms = round(due_after_poll0 * 1000)
 
     decider.release(("h1", 0), 0.3)
     decider.release(("h1", poll1_epoch_ms), 0.5)
-    engine.collect_decider_answers(res_now1 + 0.5)
+    # Well before poll1's own due instant, so poll1's schedule below is pinned by
+    # its own due_at (its own send time and jitter draw) winning the max(), not by
+    # the collection instant winning regardless of what due_at was.
+    now = res_now1 + 0.05
+    engine.collect_decider_answers(now)
     rows = _decisions(engine.drain_events(), "state_poll_reschedule")
     [row0, row1] = sorted(rows, key=lambda r: r["action"]["poll_epoch_ms"])
 
     assert row0["action"]["poll_epoch_ms"] == 0
     assert row0["action"]["late"] is True
+    assert row0["action"]["trigger"] == "timed_out"
+    assert row0["action"]["empty"] is None
     assert row0["action"]["held_applied_interval_s"] == pytest.approx(due_after_poll0)
+    # poll0's own jitter draw (0.9), not poll1's (0.1): applying both answers with
+    # poll1's own jitter draw would instead give 0.3 * (1 + 0.1 * (2 * 0.1 - 1)).
+    assert row0["action"]["applied_interval_s"] == pytest.approx(0.3 * (1 + 0.1 * (2 * 0.9 - 1)))
+    assert row0["ts_ms"] == 100
     assert row1["action"]["poll_epoch_ms"] == poll1_epoch_ms
     assert row1["action"]["late"] is False
+    assert row1["action"]["trigger"] == "timed_out"
+    assert row1["action"]["empty"] is None
+    assert row1["action"]["applied_interval_s"] == pytest.approx(0.5 * (1 + 0.1 * (2 * 0.1 - 1)))
+    assert row1["ts_ms"] == round(res_now1 * 1000)
     assert engine.decider_counts()["applied"] == 1
     assert engine.decider_counts()["late"] == 1
     assert engine.decider_counts()["unanswered"] == 0
+    # The newest poll's own schedule is armed from poll1's own due instant --
+    # poll1 is the one actually applied -- not left at its pre-collection value,
+    # which deleting the arming line entirely would leave it at.
+    due_at1 = due_after_poll0 + 0.5 * (1 + 0.1 * (2 * 0.1 - 1))
+    assert engine._next_state_poll["h1"] == pytest.approx(max(due_at1, now))
 
 
 def test_a_non_monotone_resolution_stamp_within_one_pair_raises(tmp_path: Path):
@@ -3095,7 +3144,11 @@ def test_a_deferred_row_is_stamped_with_the_resolution_instant_and_its_old_state
     """A deferred row's `ts_ms` is the resolution instant, not the instant it was
     finally collected, and its `state` is the snapshot taken then, not the state as
     it stands by the time the answer arrives: a record created in between changes
-    what a fresh decision_state call would report, but not what this row carries."""
+    what a fresh decision_state call would report, but not what this row carries.
+    The row's `trigger` and `empty` are pinned to what the original reply resolved,
+    not a placeholder stamped at defer time, and the kept history entry -- a second,
+    separate `ts_ms` stamp from the one on the emitted decision -- carries that same
+    resolution instant through to the next call the decider is handed its history on."""
     decider = _DeferringDecider(1.0)
     engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
     _drive(engine, [("tick", 0.0)])
@@ -3105,21 +3158,44 @@ def test_a_deferred_row_is_stamped_with_the_resolution_instant_and_its_old_state
     engine.drain_events()
 
     decider.release(("h1", 0), 2.0)
-    engine.collect_decider_answers(0.2)
+    engine.collect_decider_answers(0.2)  # well after the 0.05 s resolution instant
     [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
     assert row["ts_ms"] == 50  # the resolution instant (res_now), not the collection one
     assert row["state"]["origins"]["h0"]["hi"] == 1  # the state as it stood at the resolution
     assert engine._tracker.decision_state("h1")["origins"]["h0"]["hi"] == 2  # not what it is now
+    assert row["action"]["trigger"] == "answered"  # the reply that was deferred, not a stand-in
+    assert row["action"]["empty"] is True  # _NOTHING_NEW's own emptiness, carried through the defer
+    assert engine._poll_hist["h1"][-1]["ts_ms"] == 50  # the kept history row, not just the emitted one
+    due = engine._next_state_poll["h1"]
+    _drive(engine, [("tick", due)])  # h1's next send, which hands the decider its history again
+    assert decider.calls[-1]["history"][-1]["ts_ms"] == 50
+
+
+def test_a_deferred_answer_s_row_carries_the_reply_s_own_empty_value(tmp_path: Path):
+    """The non-empty twin of the `empty` check above: a reply with something new
+    collected through the deferred path still logs `empty` False, matching what a
+    synchronous answer to the same reply would log -- not a value fixed at defer
+    time regardless of what the reply actually held."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
+    _drive(engine, [("tick", 0.0)])
+    engine.on_state("h1", _SOMETHING_NEW, 0.05, poll_epoch_ms=0)
+    engine.drain_events()
+    decider.release(("h1", 0), 2.0)
+    engine.collect_decider_answers(0.2)
+    [row] = _decisions(engine.drain_events(), "state_poll_reschedule")
+    assert row["action"]["empty"] is False
 
 
 def test_a_deferred_run_is_the_same_run_with_logging_off(tmp_path: Path):
     """The deferred path's own twin of test_a_decider_run_is_the_same_run_with_logging_off:
     with log_decisions True and False the same Interests go out at the same times,
     the decider is handed exactly the same sequence of obs, its kept history ends up
-    identical, and decider_counts agrees -- turning logging off must not change what
-    the deferred path is ever asked or how it is counted."""
+    identical, decider_counts agrees, and the pair's own next-poll schedule ends up
+    armed at the same instant -- turning logging off must not change what the
+    deferred path is ever asked, how it is counted, or what it actually arms."""
 
-    def _run(label: str, log_decisions: bool) -> tuple[list[str], list[dict], dict, dict]:
+    def _run(label: str, log_decisions: bool) -> tuple[list[str], list[dict], dict, dict, dict]:
         decider = _DeferringDecider(1.0)
         store = Store(tmp_path / f"{label}.db")
         transport = RecordingTransport()
@@ -3147,14 +3223,25 @@ def test_a_deferred_run_is_the_same_run_with_logging_off(tmp_path: Path):
         decider.release(("h1", round(due * 1000)), 2.0)
         engine.collect_decider_answers(due + 0.1)
         engine.drain_events()
-        return _poll_names(transport), decider.calls, dict(engine._poll_hist), engine.decider_counts()
+        return (
+            _poll_names(transport),
+            decider.calls,
+            dict(engine._poll_hist),
+            engine.decider_counts(),
+            dict(engine._next_state_poll),
+        )
 
-    sent_on, calls_on, hist_on, counts_on = _run("logging-on", True)
-    sent_off, calls_off, hist_off, counts_off = _run("logging-off", False)
+    sent_on, calls_on, hist_on, counts_on, next_on = _run("logging-on", True)
+    sent_off, calls_off, hist_off, counts_off, next_off = _run("logging-off", False)
     assert sent_on == sent_off
     assert calls_on == calls_off
     assert hist_on == hist_off
     assert counts_on == counts_off
+    assert next_on == next_off
+    # An exact anchor, not just the two runs agreeing with each other: a schedule
+    # the collected answer (2.0 s) itself arms, worked out independently of
+    # whichever run this came from -- due_at = 0 + 2.0 * (1 + 0.1 * (2 * 0.3 - 1)).
+    assert next_on["h1"] == pytest.approx(2.0 * (1 + 0.1 * (2 * 0.3 - 1)))
 
 
 def test_decider_counts_add_up_to_deferred(tmp_path: Path):

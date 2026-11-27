@@ -1696,8 +1696,10 @@ _DECIDER_SETTINGS = dict(
 
 
 def test_a_given_state_poll_decider_reaches_every_agent_config():
-    """True is written into the experiment and into every agent config, beside the
-    choices, the redecide knob and the run seed the choice stream draws from."""
+    """The decider's own spec dict is written into the experiment and into every
+    agent config, beside the choices and the redecide knob; the run seed is also
+    carried, for the choice-jitter stream it draws from (decider mode never draws
+    from the choice stream itself)."""
     raw = evalgen.build_experiment(0.2, 7, "s12a", "/out", state_poll_decider=_DECIDER, **_DECIDER_SETTINGS)
     assert raw["state_poll_decider"] == _DECIDER
     configs = gen.generate(parse_experiment(raw), "/cfg").agent_configs
@@ -1757,6 +1759,21 @@ def test_validate_settings_rejects_a_decider_whose_choices_cannot_clear_the_boun
     with pytest.raises(ExperimentError) as excinfo:
         evalgen.validate_settings(
             1, [2.0], state_poll_choice_redecide=True, state_poll_decider=_DECIDER
+        )
+    assert str(excinfo.value) == (
+        "state_poll_decider requires min(state_poll_interval_choices_s) * "
+        "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms"
+    )
+
+
+def test_validate_settings_rejects_a_decider_whose_choices_clear_the_bound_unjittered_but_not_with_jitter():
+    """The same bound, but only once state_poll_choice_jitter_frac is actually
+    applied (2.2 * 0.9 * 1000 = 1980, not > 2100) does it fail -- unjittered (2.2 *
+    1000 = 2200) it would clear: catches a check that drops the
+    (1 - state_poll_choice_jitter_frac) factor instead of multiplying by it."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(
+            1, [2.2], 0.1, state_poll_choice_redecide=True, state_poll_decider=_DECIDER
         )
     assert str(excinfo.value) == (
         "state_poll_decider requires min(state_poll_interval_choices_s) * "

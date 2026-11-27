@@ -946,6 +946,26 @@ def test_parse_experiment_rejects_a_state_poll_decider_whose_choices_cannot_clea
     )
 
 
+def test_parse_experiment_rejects_a_state_poll_decider_whose_choices_clear_the_bound_unjittered_but_not_with_jitter():
+    """A choice set that clears the port's own bound with no jitter (2.2 * 1000 =
+    2200 > 2100) but not once state_poll_choice_jitter_frac is applied (2.2 * 0.9 *
+    1000 = 1980, not > 2100) is refused too: catches a check that drops the
+    (1 - state_poll_choice_jitter_frac) factor instead of multiplying by it."""
+    raw = _minimal_raw(
+        seed=9,
+        state_poll_interval_choices_s=[2.2],
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        state_poll_decider=_DECIDER,
+    )
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(raw)
+    assert str(exc_info.value) == (
+        "state_poll_decider requires min(state_poll_interval_choices_s) * "
+        "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms"
+    )
+
+
 @pytest.mark.parametrize(
     ("extra", "message"),
     [

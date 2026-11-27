@@ -590,8 +590,8 @@ def parse_state_poll_decider(
     adding this key to parse_state_poll_policy's/parse_state_poll_rule's own
     combination parameters, the same reason the agent's own validator gives (see its
     docstring): those two functions' parameters name only the keys that existed when
-    each was written. The numeric messages use this module's own phrasing (as for the
-    rule); the structural and combination ones are the agent's text. The bound below
+    each was written. Every message here, the bound's included, is the agent's own
+    text verbatim; none of it is this module's own phrasing. The bound below
     reads `interest_lifetime_ms` and `receive_timeout_ms` off the agent's own defaults,
     not off a top-level experiment key -- neither is one, so every generated config
     actually runs with exactly these two values.

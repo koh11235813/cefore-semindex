@@ -401,11 +401,11 @@ class SyncEngine:
         self._poll_replies: dict[str, _PollReplies] = {}
         # 2026-11-27: poll_decider only -- the per-neighbor history a decider is
         # handed beside its state: its pair's last 8 resolved polls, oldest first.
-        # Appended once a state_poll_reschedule row exists for a resolution --
-        # synchronously from _redecide_next_poll, or later from
-        # collect_decider_answers once a deferred answer is collected -- after that
-        # row's own decision has been asked, so a decision is never asked about
-        # itself.
+        # Appended once a resolution's interval is known -- synchronously from
+        # _redecide_next_poll, or later from collect_decider_answers once a deferred
+        # answer is collected -- whether or not decisions are logged, and after that
+        # resolution's own decision has been asked, so a decision is never asked
+        # about itself.
         self._poll_hist: dict[str, deque] = {}
         # 2026-11-27: poll_decider only -- the applied interval `neighbor`'s pending
         # next-poll time was last armed from at a send (_send_state_request). A
@@ -599,9 +599,9 @@ class SyncEngine:
             action_prob = 1.0
             # 2026-11-27: the interval this poll's own schedule entry is armed from
             # (the shared assignment at the end of this method), kept per neighbor
-            # because a deferred answer to *this* poll, collected after its own
-            # lifetime, has to report what actually ran -- which is this value, not
-            # the answer's.
+            # because a deferred answer to *this* poll, collected after the pair's
+            # next poll went out, has to report what actually ran -- which is this
+            # value, not the answer's.
             self._poll_held[neighbor] = applied_interval
         elif self._config.state_poll_policy is None and self._config.state_poll_rule is None:
             action, applied_interval, action_prob, jitter_u = self._choose_poll_interval(neighbor)
@@ -965,10 +965,11 @@ class SyncEngine:
         `res_now` must never be smaller than the previous row's, or a reader ageing
         a row's own stamp against the state it carries would see time run
         backwards for that pair. A single decider answered once per pair in
-        arrival order cannot produce that; only two deferred
-        answers of the same pair, collected out of the order their resolutions
-        happened in, can -- which is exactly the ordering `collect_decider_answers`
-        must not let through silently.
+        arrival order cannot produce that; only two deferred answers of the same
+        pair, collected out of the order their resolutions happened in, or a
+        decider that mixes deferring and answering at once for the same pair --
+        a shape the protocol does not admit -- can, which is exactly the ordering
+        `collect_decider_answers` must not let through silently.
         """
         last_res_now = self._poll_last_res_now.get(neighbor)
         if last_res_now is not None and res_now < last_res_now:
@@ -1079,7 +1080,9 @@ class SyncEngine:
         (poll_decider only; all zero otherwise), plus `unanswered` -- the number of
         deferred resolutions whose answer has not arrived, which is exactly
         `len(self._poll_pending)` since nothing is ever evicted from it except by a
-        matching answer. `deferred == applied + late + unanswered` always.
+        matching answer. `deferred == applied + late + unanswered` holds given each
+        pending poll of a pair has a distinct send millisecond, which the bound on
+        the smallest choice gives.
         """
         return {**self._decider_counts, "unanswered": len(self._poll_pending)}
 

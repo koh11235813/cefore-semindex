@@ -418,12 +418,12 @@ def _validate_poll_decider(
     policy or a rule; requires choices; requires redecide (present and true -- a decider
     never asked at a resolution could not be the thing polling); the spec's own shape
     (`path`, `sha256`, `factory`, `args`, nothing else); and the bound every poll a
-    decider drives must clear, so that the `last_poll_status` and
-    `consecutive_poll_timeouts` a decider reads describe this poll's own history and
-    not a later poll's that has already superseded it: the choice set's smallest
+    decider drives must clear, so that a poll is always resolved -- timed out or
+    answered -- before the pair's next poll is sent: the choice set's smallest
     applied interval must still exceed the poll's own timeout plus one tick, or a
-    poll can be superseded before it resolves and a decider asked about it reads a
-    status that already belongs to the neighbor's next poll instead.
+    poll can be superseded before it resolves, leaving the next poll's own
+    send-time decision reading `last_poll_status` as still pending for it while
+    the superseded poll itself is silently never resolved.
 
     `have_policy`/`have_rule` are checked here rather than by editing the policy's or
     the rule's own combination lists (_validate_poll_policy, _validate_poll_rule): those
