@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import pytest
@@ -3320,3 +3321,107 @@ def test_a_reply_after_a_deferred_timeout_is_logged_late_not_redecided(tmp_path:
     assert len(decider.calls) == calls_before  # not asked about this poll again
     assert engine._next_state_poll["h1"] == due_after_defer
     assert engine.decider_counts()["unanswered"] == 1
+
+
+# -- decider_unanswered -------------------------------------------------------
+
+
+def test_decider_unanswered_lists_the_one_still_pending_with_its_own_asked_ms(tmp_path: Path):
+    """Two neighbors each defer once, h1's answer is collected and h2's is not: the
+    single entry decider_unanswered() returns names h2, carries h2's own
+    poll_epoch_ms, and stamps asked_ms with the resolution instant (res_now) --
+    not the poll's own send instant (0) and not the instant this collect() call
+    runs at (500) -- so a wrong field in the implementation fails this test."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75), neighbors=("h1", "h2"))
+    _drive(engine, [("tick", 0.0)])  # both h1 and h2 sent, epoch 0
+    engine.on_state("h1", _NOTHING_NEW, 0.05, poll_epoch_ms=0)  # h1 defers, res_now=0.05
+    engine.on_state("h2", _NOTHING_NEW, 0.09, poll_epoch_ms=0)  # h2 defers, res_now=0.09
+    engine.drain_events()
+
+    decider.release(("h1", 0), 2.0)
+    engine.collect_decider_answers(0.5)  # the collect instant itself, kept out of asked_ms
+    engine.drain_events()
+
+    assert engine.decider_unanswered() == [{"neighbor": "h2", "poll_epoch_ms": 0, "asked_ms": 90}]
+
+
+def test_decider_unanswered_sorts_by_asked_ms_and_does_not_mutate_anything(tmp_path: Path):
+    """Two pairs deferred out of resolution order (h2 resolved first, h1 second) come
+    back ordered by asked_ms, each entry's asked_ms matching that pair's own res_now
+    and not the other's; a second call gives the same list and decider_counts() is
+    unchanged, since decider_unanswered() only reads self._poll_pending. Here
+    insertion order and asked_ms order already agree (h2 is both deferred first and
+    the smaller res_now), so this does not by itself tell a real sort from a plain
+    walk of self._poll_pending -- test_decider_unanswered_breaks_a_tie_by_neighbor_
+    then_poll_epoch_ms below forces an actual tie to pin that."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75), neighbors=("h1", "h2"))
+    _drive(engine, [("tick", 0.0)])  # both h1 and h2 sent, epoch 0
+    engine.on_state("h2", _NOTHING_NEW, 0.03, poll_epoch_ms=0)  # h2 defers first, res_now=0.03
+    engine.on_state("h1", _NOTHING_NEW, 0.07, poll_epoch_ms=0)  # h1 defers second, res_now=0.07
+    engine.drain_events()
+
+    expected = [
+        {"neighbor": "h2", "poll_epoch_ms": 0, "asked_ms": 30},
+        {"neighbor": "h1", "poll_epoch_ms": 0, "asked_ms": 70},
+    ]
+    counts_before = engine.decider_counts()
+    # A deep copy, because the entries are dicts: a read that popped a key out of
+    # one (the state a late answer's row is still written from) would leave the
+    # store's own keys and every asked_ms exactly as they were.
+    pending_before = copy.deepcopy(engine._poll_pending)
+    assert engine.decider_unanswered() == expected
+    assert engine.decider_unanswered() == expected  # a second call changes nothing
+    assert engine.decider_counts() == counts_before
+    assert engine._poll_pending == pending_before
+
+
+def test_decider_unanswered_breaks_a_tie_by_neighbor_then_poll_epoch_ms(tmp_path: Path):
+    """Both neighbors are polled at tick 0 and both time out, unresolved, at the
+    very next tick (interest_lifetime_ms=100), so on_tick's own neighbor loop
+    defers them in config order -- h2 then h1 -- at the identical res_now (0.1):
+    insertion order into self._poll_pending is (h2, h1), the opposite of the
+    neighbor order decider_unanswered() must return (h1 before h2) once asked_ms
+    ties. Dropping the sort, or sorting by asked_ms alone with no
+    (neighbor, poll_epoch_ms) tie-break, both give (h2, h1) here and fail this
+    assertion; only the documented sort key gives (h1, h2)."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(
+        tmp_path, decider, _Cycle(0.75), neighbors=("h2", "h1"), interest_lifetime_ms=100
+    )
+    _drive(engine, [("tick", 0.0)])  # h2 then h1 sent, epoch 0
+    _drive(engine, [("tick", 0.1)])  # both time out and defer in that same order
+    engine.drain_events()
+
+    assert engine.decider_unanswered() == [
+        {"neighbor": "h1", "poll_epoch_ms": 0, "asked_ms": 100},
+        {"neighbor": "h2", "poll_epoch_ms": 0, "asked_ms": 100},
+    ]
+
+
+def test_decider_unanswered_asked_ms_rounds_the_resolution_instant(tmp_path: Path):
+    """res_now = 1.001 lands at 1000.9999999999999 when multiplied by 1000 (binary
+    float rounding), so round() gives 1001 while a truncating int() gives 1000:
+    this res_now pins round() against that off-by-one-ms mutant, which the other
+    decider_unanswered tests (whose res_now values multiply out exactly) do not."""
+    decider = _DeferringDecider(1.0)
+    engine, _, _ = _decider_engine(tmp_path, decider, _Cycle(0.75))
+    _drive(engine, [("tick", 0.0)])  # h1 sent, epoch 0
+    engine.on_state("h1", _NOTHING_NEW, 1.001, poll_epoch_ms=0)  # h1 defers, res_now=1.001
+    engine.drain_events()
+
+    assert engine.decider_unanswered() == [{"neighbor": "h1", "poll_epoch_ms": 0, "asked_ms": 1001}]
+
+
+def test_decider_unanswered_is_empty_without_a_decider_or_with_nothing_pending(tmp_path: Path):
+    """No decider at all, and a decider engine with nothing deferred yet, both give
+    []."""
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "decider").mkdir()
+    plain, _, _ = _engine(tmp_path / "plain", neighbors=("h1",))
+    assert plain.decider_unanswered() == []
+
+    decider = _DeferringDecider(1.0)
+    decider_engine, _, _ = _decider_engine(tmp_path / "decider", decider, _Cycle(0.75))
+    assert decider_engine.decider_unanswered() == []

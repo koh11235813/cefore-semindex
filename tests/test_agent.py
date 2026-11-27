@@ -2618,3 +2618,82 @@ def test_the_last_deferral_of_a_run_is_collected_in_shutdown(tmp_path: Path):
     assert decider_counts["applied"] == 1
     assert decider_counts["late"] == 0
     assert decider_counts["unanswered"] == 0
+    assert decider_counts["unanswered_asked"] == []  # everything was answered
+
+
+def _write_never_answering_decider(path: Path) -> None:
+    """A decider file whose factory `build(node, interval)` answers `interval`
+    synchronously at a send, defers every resolution (decide() returns None at
+    one), and never queues an answer for collect() (which always returns []) --
+    so the deferral is left outstanding through shutdown and unanswered_asked
+    has something to report."""
+    path.write_text(
+        "class _NeverAnswering:\n"
+        "    def __init__(self, interval):\n"
+        "        self.interval = interval\n"
+        "    def decide(self, obs):\n"
+        "        if obs['where']['kind'] == 'state_poll':\n"
+        "            return self.interval\n"
+        "        return None\n"
+        "    def collect(self):\n"
+        "        return []\n"
+        "    def close(self):\n"
+        "        pass\n"
+        "\n"
+        "def build(node, interval):\n"
+        "    return _NeverAnswering(interval)\n",
+        encoding="utf-8",
+    )
+
+
+def test_shutdown_s_decider_counts_row_carries_the_unanswered_deferral_s_own_stamp(tmp_path: Path):
+    """A resolution deferred and never answered is still pending at shutdown: the
+    decider_counts row's unanswered_asked names its neighbor and poll_epoch_ms and
+    stamps asked_ms with the resolution instant. This only checks that the row
+    exists and precedes counters -- a missing row, or one written after counters,
+    fails it -- not that it comes after close(): that ordering is unguarded here
+    (it is only observable when close() itself raises)."""
+    decider_path = tmp_path / "never_answering_decider.py"
+    _write_never_answering_decider(decider_path)
+    digest = hashlib.sha256(decider_path.read_bytes()).hexdigest()
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        seed=7,
+        interest_lifetime_ms=300,
+        stop_at_s=0.5,
+        state_poll_decider={
+            "path": str(decider_path),
+            "sha256": digest,
+            "factory": "build",
+            "args": {"interval": _DECIDER_CHOICES[0]},
+        },
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.run()
+
+    lines = _read_events(config)
+    kinds = [e["event"] for e in lines]
+    assert kinds[-1] == "counters"
+    decider_counts = next(e for e in lines if e["event"] == "decider_counts")
+    assert kinds.index("decider_counts") < kinds.index("counters")
+    # The whole row, not key by key: a key that is not one of these would be written
+    # into every decider run's log and no per-key assert would notice it.
+    assert decider_counts == {
+        "event": "decider_counts",
+        "ts_ms": decider_counts["ts_ms"],
+        "deferred": 1,
+        "applied": 0,
+        "late": 0,
+        "clamped_by_wait": 0,
+        "overlap": 0,
+        "orphan": 0,
+        "unanswered": 1,
+        "unanswered_asked": [{"neighbor": "h1", "poll_epoch_ms": 100, "asked_ms": 400}],
+    }

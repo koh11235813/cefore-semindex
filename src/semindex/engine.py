@@ -1083,6 +1083,26 @@ class SyncEngine:
         """
         return {**self._decider_counts, "unanswered": len(self._poll_pending)}
 
+    def decider_unanswered(self) -> list[dict]:
+        """One entry per resolution still in `self._poll_pending`, so a reader of
+        `decider_counts`' own `unanswered` count can tell a resolution asked just
+        before the run stopped (which no decider, however fast, could have
+        answered in time) from one the decider was actually slow on -- the count
+        alone carries no instant to compare against. Each entry's `asked_ms` is
+        `res_now` (the resolution's own instant, the same value a row for this
+        token would have carried as `ts_ms`), not the collect instant and not the
+        poll's send instant: what a reader compares against the stop is when the
+        question was put. Returns [] when nothing is pending or there is no decider
+        at all, and never mutates `self._poll_pending` or any count -- it only
+        reads what is there.
+        """
+        return [
+            {"neighbor": neighbor, "poll_epoch_ms": poll_epoch_ms, "asked_ms": round(pending["res_now"] * 1000)}
+            for (neighbor, poll_epoch_ms), pending in sorted(
+                self._poll_pending.items(), key=lambda item: (round(item[1]["res_now"] * 1000), item[0][0], item[0][1])
+            )
+        ]
+
     def _choose_poll_interval(self, neighbor: str) -> tuple[dict, float, float, float | None]:
         """Draw the interval until `neighbor`'s next state poll: the decision's
         `action`, the interval actually applied, the probability the policy gave
