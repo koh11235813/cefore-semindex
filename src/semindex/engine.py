@@ -968,8 +968,9 @@ class SyncEngine:
         arrival order cannot produce that; only two deferred answers of the same
         pair, collected out of the order their resolutions happened in, or a
         decider that mixes deferring and answering at once for the same pair --
-        a shape the protocol does not admit -- can, which is exactly the ordering
-        `collect_decider_answers` must not let through silently.
+        a shape the protocol does not admit -- or a clock that steps backwards
+        can, which is exactly the ordering `collect_decider_answers` must not let
+        through silently.
         """
         last_res_now = self._poll_last_res_now.get(neighbor)
         if last_res_now is not None and res_now < last_res_now:
@@ -1082,7 +1083,7 @@ class SyncEngine:
         `len(self._poll_pending)` since nothing is ever evicted from it except by a
         matching answer. `deferred == applied + late + unanswered` holds given each
         pending poll of a pair has a distinct send millisecond, which the bound on
-        the smallest choice gives.
+        the smallest choice gives for a clock that does not step backwards.
         """
         return {**self._decider_counts, "unanswered": len(self._poll_pending)}
 
