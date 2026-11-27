@@ -1569,8 +1569,11 @@ wording the design is not reopened. Two things have to be said beside that. The 
 because of the staircase alone. And the quantity that decides whether an answer is late is the wait the engine
 sees, which adds up to one tick to the round trip and whose p99 in `t25l` is 609 ms, above 0.56 s. Neither of the
 two waits above 0.56 s can make an answer late: they belong to a pair's first resolution, when the pair holds
-6.0 s and its next poll is at least 5.4 s after the send. Whether the number is read on the round trip or on the
-engine's wait is put to the user and then written into `spec.md`.
+6.0 s and its next poll is at least 5.4 s after the send. The user decided (ticket, decision 10) that the margin
+is measured on the round trip and that the design is not reopened. The deadline an answer has to meet is the
+pair's next send, 1.1255 s away at the least; 0.56 s is a guide set at half of that and not the deadline itself.
+What each run reports is the number of answers that missed the deadline (`late`) and of those the wait alone
+pushed past it (`clamped_by_wait`); what a run with either does to the comparison is `spec.md`'s.
 
 **Not measured.** The round trip from inside a node with nothing between the client and the clock: `t25l` gives
 the engine's wait, which includes the tick, and the replay ran from the host. A run in which the relay or the
