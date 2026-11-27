@@ -16,13 +16,6 @@ import os
 # matters most here, because importing m24 below pulls in a dozen modules of
 # the checkout, every one of which would otherwise be compiled to a .pyc.
 sys.dont_write_bytecode = True
-# 2026-11-27: `dont_write_bytecode` only stops a NEW .pyc from being WRITTEN; Python
-# still READS an existing __pycache__/*.pyc whose header (mtime, size) matches the
-# source on disk, and `_check_pins` below hashes the source bytes on disk, not
-# whatever bytecode import actually ran. Cache LOOKUPS are disabled outright here,
-# before `import m24` below (or anything it pulls in) loads a single byte, for the
-# same reason `lserver.py` sets this beside its own `dont_write_bytecode`.
-sys.pycache_prefix = os.devnull
 
 import hashlib  # noqa: E402
 import time  # noqa: E402
@@ -82,11 +75,12 @@ def _sha256_file(path):
 def _check_pins(coef):
     """Refuse to run on anything but the exact bytes this comparison was scored with.
 
-    Four separate failures, each a different way the checkout could have
+    Five separate failures, each a different way the checkout could have
     drifted from what the table above describes: `coef` is not the pinned
     coefficient file, a file was loaded that the table does not know about,
-    a pinned file's bytes changed, or a pinned `.py` entry names a file
-    that `import m24` no longer loads at all.
+    a pinned file has a bytecode cache that may have run in its place, a
+    pinned file's bytes changed, or a pinned `.py` entry names a file that
+    `import m24` no longer loads at all.
     """
     want_coef = os.path.join(EVID, "24", "coef_a.npy")
     if os.path.realpath(coef) != os.path.realpath(want_coef):
@@ -105,6 +99,22 @@ def _check_pins(coef):
     for rel in loaded:
         if rel not in PINS:
             raise RuntimeError("mdecider: unpinned file loaded: %s" % rel)
+
+    # 2026-11-27: the pins are over source bytes, and Python runs a bytecode cache in a
+    # source file's place whenever one exists whose header matches the source's time
+    # and size. So a pinned file that HAS a cache is refused: what ran may not be what
+    # was hashed. Refusing costs nothing in a checkout that holds no cache, which is
+    # what `dont_write_bytecode` above keeps true; switching cache reads off for the
+    # whole process instead tripled this file's load time, because numpy was then
+    # compiled from source in every node, and made these nodes start differently from
+    # the nodes of every other stage.
+    for mod in list(sys.modules.values()):
+        f = getattr(mod, "__file__", None)
+        if f is None or os.path.relpath(os.path.realpath(f), os.path.realpath(EVID)) not in loaded:
+            continue
+        cached = getattr(mod, "__cached__", None)
+        if cached and os.path.exists(cached):
+            raise RuntimeError("mdecider: a bytecode cache exists for a pinned file: %s" % cached)
 
     for rel, expected in PINS.items():
         path = coef if rel == "24/coef_a.npy" else os.path.join(EVID, rel)

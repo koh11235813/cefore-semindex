@@ -1468,6 +1468,7 @@ its own, `/home/lab_shared/t25store`, with the record directories in `/home/lab_
 | `t25l` | L, through the relay and the recorder | `1bb5ab1` |
 | `t25m2` | M again, after the scripts were corrected (18.4) | `b70f5e8` |
 | `t25l2` | L again, after the scripts were corrected (18.4) | `b70f5e8` |
+| `t25m3`, `t25m4` | M twice more, while its entry file's handling of bytecode caches was settled (18.4) | `b70f5e8` |
 
 ### 18.1 Statements above that the runs showed to be wrong
 
@@ -1533,9 +1534,10 @@ its own, `/home/lab_shared/t25store`, with the record directories in `/home/lab_
 
 ### 18.3 What sections 7.3 and 13.2 asked to be measured
 
-**M (section 13.2 items 1 and 2).** Loading `mdecider.py` in a node process, five at once: 0.150 to 0.241 s over
-the five runs that load it, against the 3 s margin. One resolution-time decision inside the live loop, per run:
-median 0.25 to 0.33 ms, p99 0.45 to 0.58 ms, largest 0.76 ms. The constant decider consumed no draw of the engine's stream: `t25c6` and
+**M (section 13.2 items 1 and 2).** Loading `mdecider.py` in a node process, five at once: 0.147 to 0.248 s with
+the entry file as it now stands (`t25m4`), and 0.150 to 0.241 s over the five runs before the review, against the
+3 s margin. One resolution-time decision inside the live loop, per run, over all eight M runs: median 0.25 to
+0.33 ms, p99 0.45 to 0.58 ms, largest 0.76 ms. The constant decider consumed no draw of the engine's stream: `t25c6` and
 `t25b6` sent the same number of polls on every pair, and 148 of their 174 send rows carry the same applied
 interval to the last digit.
 
@@ -1584,6 +1586,24 @@ resolution, which is at least 3.3255 s after the previous send: eight requests a
 in these runs, 102.5 ms, is 0.82 s. A server slower than about 0.4 s a request would let a pair ask twice, and
 the staircase could then grow. The run reports this itself: `overlap` is zero in `t25l`.
 
+**The answers have the shape the replay recorded.** A check of the engine against its own log cannot say
+whether the inputs a decider meets on the emulator are of the kind it was scored on. One thing that can be
+compared is how its answers are distributed, against the scoring of seeds 81 to 100 (800 runs a decider):
+
+| | 3.695 s | 6.0 s | 10.043 s | exact ties | decisions |
+|---|---|---|---|---|---|
+| L, replay scoring | 0.478 | 0.000 | 0.522 | 0.065 | 122076 |
+| L, `t25l` | 0.445 | 0.000 | 0.555 | 0.055 | 146 |
+| L, `t25l2` | 0.459 | 0.000 | 0.541 | 0.061 | 148 |
+| M, replay scoring | 0.209 | 0.480 | 0.311 | | 125336 |
+| M, `t25m` | 0.199 | 0.464 | 0.338 | | 151 |
+| M, `t25m4` | 0.199 | 0.464 | 0.338 | | 151 |
+
+L never answers the middle arm: not once in the 122076 scored decisions, and not once on the emulator. That is
+the candidate, not the seam. A tie at the maximum is resolved toward the shortest interval, and L ties about as
+often on the emulator as in the scoring. These are shares of one seed against shares of twenty: they agree, and
+agreement of shares is not agreement decision by decision, which nothing here measures.
+
 **Read against section 7.3's reconsideration number.** The number is on the round trip: a p99 above 0.56 s, or
 any observation above 1.1255 s. The round trip's p99 is 488.8 ms and nothing is above 1.1255 s, so by its own
 wording the design is not reopened. Two things have to be said beside that. The margin is thin, and it is thin
@@ -1620,8 +1640,16 @@ with no log, on a record file for a node the run does not have, on a decider run
 on a count of logged rows that differs from applied plus late; a second `agent_start` excuses nothing; the
 overlap excuse is a budget; send rows are compared with what the decider returned; a second release of one token
 must be matched by the engine's `orphan` count; and, given the jitter fraction, every applied interval must lie
-inside its arm's band. `t25m2` and `t25l2` are the reruns after these changes, and all nine decider runs pass both
-checks.
+inside its arm's band. `t25m2` and `t25l2` are the reruns after these changes, and all eleven decider runs pass
+both checks.
+
+**A bytecode cache is kept from standing in for a pinned source in two different ways, on purpose.** The server
+switches cache reads off for its whole process: the GPU machine's checkout holds caches from the earlier scoring
+runs, nothing on that machine is deleted for this, and the cost falls once, at start-up. `mdecider.py` did the
+same at first and loaded in 0.37 to 0.51 s (`t25m2`), because numpy was then compiled from source in each of five
+node processes; switching it off around the one import still gave 0.28 to 0.35 s (`t25m3`). It now leaves the
+interpreter alone and refuses to start if any pinned file has a cache on disk, which costs nothing in a checkout
+that holds none and leaves M's nodes starting the way every other stage's nodes do (`t25m4`, 0.147 to 0.248 s).
 
 **Left as they are**, because the second reader found each unreachable with this client and this server, and a
 guard for a failure that cannot occur is code that has to be kept true for nothing:
