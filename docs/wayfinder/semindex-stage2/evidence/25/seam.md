@@ -1447,6 +1447,137 @@ The arithmetic that differs between a baseline stage and a decider stage, exactl
    whether a Mininet host sees the same `/tmp` as the ssh forwarding process (section 8.4); and everything about
    `hpc-debian`, the forward and the card, which is section 7.3.
 
+## 18. What the first emulator runs changed (2026-11-27)
+
+This section was written after the seam ran on the emulator for the first time. It records what those runs showed
+to be wrong in the sections above, where the scripts deliberately differ from them, and the numbers sections 7.3
+and 13.2 asked for. Nothing above was edited: a reader comparing the two sees what the design said before it met
+the emulator.
+
+Every run below is one run of learning seed 1 (p 0.2, k 4, `w0`, `--disconnect-duration-s 8 12`) in a store of
+its own, `/home/lab_shared/t25store`, with the record directories in `/home/lab_shared/t25rec`. No run of seeds
+121 to 160 exists yet. All were valid with no flag.
+
+| stage | what ran | `src` commit |
+|---|---|---|
+| `t25b6` | one fixed arm, 6.0 s | `f7a1a31` |
+| `t25c6` | a constant decider returning 6.0, through the recorder | `f7a1a31` |
+| `t25m` | M, through the recorder | `f7a1a31` |
+| `t25md`, `t25md1`, `t25md45` | M deferred by 0.07 s, 1.0 s and 4.5 s | `f7a1a31` |
+| `t25n45` | M deferred by 4.5 s again | `1bb5ab1` |
+| `t25l` | L, through the relay and the recorder | `1bb5ab1` |
+
+### 18.1 Statements above that the runs showed to be wrong
+
+1. **Section 5 item 3 cannot be counted the way it says.** It says an undecodable reply "writes `state_rx` with
+   `hi == {}`" and is "countable from the log with no new counter". A valid reply from a neighbour that holds
+   nothing yet writes the same row: `t25c6` has two to six such rows per node and not one reschedule row with
+   `trigger` answered and `empty` null. The count has to be taken from the reschedule rows (answered with `empty`
+   null), which is what `parity.py` prints per node.
+2. **Section 13.3's fourth bullet fires on the end of the run.** It sends the design back on any `unanswered`
+   decision of a validity run and says the shutdown drain is what makes that readable. The drain collects once and
+   does not wait, and an answer reaches the engine only after the decider's latency plus up to one loop tick, so a
+   resolution in the last moments before the stop stays pending however fast the server is. In `t25md45` a node
+   whose last resolution came 0.6 s before the stop left two unanswered. The user decided (ticket, decision 9) to
+   leave the run's behaviour alone and to record, per unanswered resolution, when it was asked: the
+   `decider_counts` row now carries `unanswered_asked` (commit `1bb5ab1`). In `t25n45` the three unanswered
+   resolutions were asked 1.3 s, 1.7 s and 3.4 s before the row was written, all inside the 4.5 s delay. Where the
+   line between "the run ended" and "the server did not answer" falls is `spec.md`'s.
+
+### 18.2 Where the scripts differ from the sections above, on purpose
+
+1. **`parity.py` excuses less than check 28 allows.** Check 28 lists a `state_poll_late_reply` and an undecodable
+   reply as explanations of a mismatch. Within one run the `state` and `resolved` a decider is handed are the very
+   values its row logs, taken at the same instant, so no event of the log can make the two sides differ; a
+   difference in either is reported as a defect. Both are still counted per node, because those counts are what
+   section 5's caveats need.
+2. **A history is checked against the instant of the ask before it is checked against the log's row order.**
+   The engine appends an exchange to a pair's history when its row is written, which for a deferred answer is
+   when the answer is applied. So the history at an ask is "the pair's rows already written", and it equals
+   "the pair's earlier rows in file order" only when no two resolutions of the pair overlap. `parity.py` rebuilds
+   the first from `decided_at_ms` and treats any difference as a defect (a restart excepted); a difference from
+   the row-order rebuild, which is what M was fitted on, is then the `overlap` caveat and nothing else. In
+   `t25md45` the 189 recorded histories equal the as-of-ask rebuild in all 189 cases, with 72 overlaps.
+3. **An unanswered resolution is matched by name.** With `unanswered_asked` in the log, a recorded resolution
+   with no logged row is excused only if the row names that resolution, and a named one that was never recorded
+   or has a row is a defect. On a log written before the key existed the excuse is a budget of `unanswered` many.
+4. **`arms.py` reads send rows as well as reschedule rows.** Section 9 says the check reads the reschedule rows.
+   A fixed-arm stage writes no reschedule row at all (`t25b6` has none), so that check would pass such a stage
+   without reading one interval. Membership is checked on both kinds; the comparison with what the decider
+   returned stays on the reschedule rows.
+5. **An out-of-choices answer raises even when its token matches no pending entry.** Section 6.7 says such an
+   answer is counted and dropped. The engine checks the value before it looks the token up, and that is kept: a
+   decider that returns a value outside its own choice set is wrong whichever answer it happens on.
+6. **The client's factory is `build(node, socket_path, send_start, stats_dir, record_dir=None)`**, two arguments
+   more than section 8.2: the counts of section 8.3 need a place outside the node's own directory, and a validity
+   run needs the recorder. Its memory is keyed by the neighbour alone, which is the pair for one client per node.
+7. **The local socket is `/home/lab_shared/t25sock/l.sock` and not under `/tmp`** (section 8.4). A node reaches a
+   socket on the shared file system; whether a node sees this machine's `/tmp` was never tested, which leaves the
+   second item of section 17.7 open and unneeded.
+8. **M's entry file pins thirteen files, not one.** Section 8.1 pins `mdecider.py` through the config's digest.
+   Importing M loads twelve evidence files, so `mdecider.py` refuses to start unless each of them and the
+   coefficient file hash to a table in it. Seven of the thirteen digests are the ones the scoring run recorded.
+   For the other six no recorded digest exists; they have not changed in git since before the scoring commit, and
+   what their pins enforce is that every run of the comparison loads the same bytes. `lserver.py` does the same
+   for L, plus the adapter's two files, the three library versions and the archived logits of the repeat row.
+
+### 18.3 What sections 7.3 and 13.2 asked to be measured
+
+**M (section 13.2 items 1 and 2).** Loading `mdecider.py` in a node process, five at once: 0.150 to 0.239 s over
+five runs, against the 3 s margin. One resolution-time decision inside the live loop: median 0.25 to 0.33 ms, p99
+0.45 to 0.54 ms, largest 0.59 ms. The constant decider consumed no draw of the engine's stream: `t25c6` and
+`t25b6` sent the same number of polls on every pair, and 148 of their 174 send rows carry the same applied
+interval to the last digit.
+
+**The deferred path, without a model.**
+
+| delay | asked | applied | late | unanswered | overlap | clamped by the wait | wait the engine saw, ms (min, median, max) |
+|---|---|---|---|---|---|---|---|
+| 0.07 s | 148 | 148 | 0 | 0 | 0 | 0 | 70, 101, 122 |
+| 1.0 s | 149 | 149 | 0 | 0 | 0 | 0 | 1001, 1004, 1095 |
+| 4.5 s | 189 | 99 | 84 | 6 | 72 | 25 | 4502, 4517, 4596 |
+
+The wait the engine sees is the decider's latency plus the time to the next loop pass, up to one tick. The 4.5 s
+run is far outside any margin of section 7.2 and exists to reach the late and the overlapping answer: it raised
+nothing and stayed valid.
+
+**L (section 7.3).** The server on the GPU machine, `torch 2.15.0+cu132`, `transformers 5.24.0`, `peft 0.22.0`,
+the adapter's two digests as the tuning and the scoring recorded them, the repeat row read out as
+`[18.5, 17.75, 19.25]` twice at start-up.
+
+| quantity | value |
+|---|---|
+| cold first pass at start-up, three starts | 376.6, 386.7, 373.4 ms |
+| warm pass at start-up | 69.7, 71.3, 68.7 ms |
+| replay of `t25m`'s 151 resolutions from five clients at their recorded instants, from the host through the relay: round trip median, p99, largest | 72.3, 488.8, 564.6 ms |
+| the same with the first second left out (143) | 72.3, 148.0, 212.6 ms |
+| the same replay at four times the rate | 72.6, 498.9, 568.5 ms |
+| the server's own compute time in that replay: median, p99, largest | 70.4, 78.6, 80.1 ms |
+| `t25l`, the wait the engine saw (146): min, median, p99, largest | 75, 101, 609, 705 ms |
+| `t25l` with each node's first second left out (138): median, p99, largest | 101, 201, 212 ms |
+| `t25l`, the client's `decide` at a resolution: median, largest | 0.05, 0.24 ms |
+| `t25l`: applied, late, unanswered, overlap, orphan, clamped by the wait | 146, 0, 0, 0, 0, 0 |
+
+**The slow answers are one event, the start of the run.** The first poll of all eight ordered pairs is sent and
+answered inside the same 10 ms, the server answers one request at a time, and the eight answers therefore come
+back as a staircase of about 70 ms a step. That is where the replay's p99 and largest value come from, and both
+of `t25l`'s waits above 0.56 s. Eight is the number of pairs, so the staircase cannot be taller than this.
+
+**Read against section 7.3's reconsideration number.** The number is on the round trip: a p99 above 0.56 s, or
+any observation above 1.1255 s. The round trip's p99 is 488.8 ms and nothing is above 1.1255 s, so by its own
+wording the design is not reopened. Two things have to be said beside that. The margin is thin, and it is thin
+because of the staircase alone. And the quantity that decides whether an answer is late is the wait the engine
+sees, which adds up to one tick to the round trip and whose p99 in `t25l` is 609 ms, above 0.56 s. Neither of the
+two waits above 0.56 s can make an answer late: they belong to a pair's first resolution, when the pair holds
+6.0 s and its next poll is at least 5.4 s after the send. Whether the number is read on the round trip or on the
+engine's wait is put to the user and then written into `spec.md`.
+
+**Not measured.** The round trip from inside a node with nothing between the client and the clock: `t25l` gives
+the engine's wait, which includes the tick, and the replay ran from the host. A run in which the relay or the
+server dies part way. A reply the agent cannot decode, and a restart of an agent, on the emulator: neither
+occurred in these runs. That a node's stderr reaches `semindex_agent.log` (section 17.7, first item) is read from
+ReCefore's runner, which sends both streams to the log file when one is given; no node has raised in a run yet.
+
 ## Appendix A: the ADR text, in this repository's format
 
 > # A state-poll interval may come from a decider injected into the agent

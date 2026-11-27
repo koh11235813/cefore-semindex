@@ -80,9 +80,11 @@ def make_classifier(decider_counts, agent_starts):
     """Build a per-node classifier: mismatch_class(field) -> class name.
 
     Each excuse is tied to the one thing it can explain. A recorded resolution with no
-    logged row is excused only up to the node's own `unanswered` count, a budget that is
-    used up: a run with one unanswered resolution at the stop boundary must not be
-    allowed to wave away an unrelated pile of real defects. A history that differs from
+    logged row is excused only when the node's own `decider_counts` row names that very
+    resolution as unanswered: a run with one unanswered resolution at the stop boundary
+    must not be allowed to wave away an unrelated pile of real defects. A log written
+    before the row named them carries a count only, and there the excuse is a budget of
+    that many, used up one at a time. A history that differs from
     the log's row-order rebuild is excused as `overlap` only on a node that counted one,
     and only when the as-of-ask rebuild agreed (the caller reports `history_asof`
     otherwise, which nothing but a restart excuses).
@@ -90,13 +92,18 @@ def make_classifier(decider_counts, agent_starts):
     counts = decider_counts or {}
     overlap = counts.get("overlap", 0)
     budget = {"unanswered_left": counts.get("unanswered", 0)}
+    named = None
+    if "unanswered_asked" in counts:
+        named = {(u["neighbor"], u["poll_epoch_ms"]) for u in counts["unanswered_asked"]}
 
-    def classify(field):
+    def classify(field, key):
         if field == "join_logged_missing":
             # Nothing in the log explains a decision the engine logged without ever
             # asking the decider: there is no decider-side event that could produce this.
             return "DEFECT"
         if field == "join_recorded_missing":
+            if named is not None:
+                return "unanswered" if key in named else "DEFECT"
             if budget["unanswered_left"] > 0:
                 budget["unanswered_left"] -= 1
                 return "unanswered"
@@ -205,7 +212,7 @@ def check_node(node, run_dir, record_dir):
     defects = [0]
 
     def report(neighbor, poll_epoch_ms, field, logged_val, recorded_val):
-        c = classify(field)
+        c = classify(field, (neighbor, poll_epoch_ms))
         if c == "DEFECT":
             defects[0] += 1
         mismatches.append(
@@ -271,6 +278,19 @@ def check_node(node, run_dir, record_dir):
     for key in sorted(only_recorded, key=lambda k: (k[0] or "", k[1] or 0)):
         report(key[0], key[1], "join_recorded_missing",
                "none", "recorded resolution with no logged row")
+
+    # The other direction of the same claim: a resolution the engine names as unanswered
+    # must be one the decider was asked and that has no row. One that was never recorded,
+    # or that has a row after all, means the engine's own account of its pending store
+    # is wrong.
+    for u in (decider_counts or {}).get("unanswered_asked", []):
+        key = (u["neighbor"], u["poll_epoch_ms"])
+        if has_record and key not in only_recorded:
+            mismatches.append("MISMATCH node=%s neighbor=%s poll_epoch_ms=%s field=unanswered_asked "
+                               "class=DEFECT logged=named_unanswered recorded=%s"
+                               % (node, key[0], key[1],
+                                  "has_logged_row" if key in logged_by_key else "never_asked"))
+            defects[0] += 1
 
     for key in sorted(joined_keys, key=lambda k: (k[0] or "", k[1] or 0)):
         neighbor, poll_epoch_ms = key
