@@ -1682,3 +1682,189 @@ def test_cli_rejects_choice_redecide_without_interval_choices(tmp_path: Path, ca
         "semindex.evalgen: state_poll_choice_redecide requires state_poll_interval_choices_s\n"
     )
     assert not outdir.exists()
+
+
+# -- state_poll_decider (external decider object, 2026-11-27) ---------------
+
+_DECIDER = {"path": "/abs/decider.py", "sha256": "0" * 64, "factory": "build", "args": {}}
+_DECIDER_CHOICES = [3.695, 6.0, 10.043]
+_DECIDER_SETTINGS = dict(
+    state_poll_interval_choices_s=_DECIDER_CHOICES,
+    state_poll_choice_jitter_frac=0.1,
+    state_poll_choice_redecide=True,
+)
+
+
+def test_a_given_state_poll_decider_reaches_every_agent_config():
+    """The decider's own spec dict is written into the experiment and into every
+    agent config, beside the choices and the redecide knob; the run seed is also
+    carried, for the choice-jitter stream it draws from (decider mode never draws
+    from the choice stream itself)."""
+    raw = evalgen.build_experiment(0.2, 7, "s12a", "/out", state_poll_decider=_DECIDER, **_DECIDER_SETTINGS)
+    assert raw["state_poll_decider"] == _DECIDER
+    configs = gen.generate(parse_experiment(raw), "/cfg").agent_configs
+    assert sorted(configs) == [f"h{h}" for h in evalgen.AGENTS]
+    for config in configs.values():
+        assert config["seed"] == 7
+        assert config["state_poll_decider"] == _DECIDER
+        assert config["state_poll_interval_choices_s"] == _DECIDER_CHOICES
+        assert config["state_poll_choice_redecide"] is True
+
+
+def test_build_experiment_without_a_state_poll_decider_writes_no_key():
+    """Absent, no key is written, so an existing choices+redecide run's agent configs
+    stay byte for byte."""
+    raw = evalgen.build_experiment(0.2, 7, "s12a", "/out", **_DECIDER_SETTINGS)
+    assert "state_poll_decider" not in raw
+    for config in gen.generate(parse_experiment(raw), "/cfg").agent_configs.values():
+        assert "state_poll_decider" not in config
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"state_poll_policy": _SHORTEN}, "state_poll_decider cannot be combined with state_poll_policy"),
+        ({"state_poll_rule": _T37R}, "state_poll_decider cannot be combined with state_poll_rule"),
+    ],
+)
+def test_validate_settings_rejects_the_decider_with_the_table_or_the_rule(extra, message):
+    """The up-front sweep check refuses a decider beside the table or the rule as the
+    combination, not as "nothing to pick from"."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(1, None, state_poll_decider=_DECIDER, **extra)
+    assert str(excinfo.value) == message
+
+
+@pytest.mark.parametrize(
+    ("choices", "redecide", "message"),
+    [
+        (None, None, "state_poll_decider requires state_poll_interval_choices_s"),
+        (_DECIDER_CHOICES, None, "state_poll_decider requires state_poll_choice_redecide"),
+        (_DECIDER_CHOICES, False, "state_poll_decider requires state_poll_choice_redecide"),
+    ],
+)
+def test_validate_settings_rejects_the_decider_without_choices_or_redecide(choices, redecide, message):
+    """The up-front sweep check refuses the decider without the choices and the
+    redecide knob it rides, present and true."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(
+            1, choices, state_poll_choice_redecide=redecide, state_poll_decider=_DECIDER
+        )
+    assert str(excinfo.value) == message
+
+
+def test_validate_settings_rejects_a_decider_whose_choices_cannot_clear_the_bound():
+    """The up-front sweep check refuses a choice set too small for the port's own bound,
+    so a misconfigured sweep fails once here instead of at every run of it."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(
+            1, [2.0], state_poll_choice_redecide=True, state_poll_decider=_DECIDER
+        )
+    assert str(excinfo.value) == (
+        "state_poll_decider requires min(state_poll_interval_choices_s) * "
+        "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms"
+    )
+
+
+def test_validate_settings_rejects_a_decider_whose_choices_clear_the_bound_unjittered_but_not_with_jitter():
+    """The same bound, but only once state_poll_choice_jitter_frac is actually
+    applied (2.2 * 0.9 * 1000 = 1980, not > 2100) does it fail -- unjittered (2.2 *
+    1000 = 2200) it would clear: catches a check that drops the
+    (1 - state_poll_choice_jitter_frac) factor instead of multiplying by it."""
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.validate_settings(
+            1, [2.2], 0.1, state_poll_choice_redecide=True, state_poll_decider=_DECIDER
+        )
+    assert str(excinfo.value) == (
+        "state_poll_decider requires min(state_poll_interval_choices_s) * "
+        "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms"
+    )
+
+
+def test_the_decider_without_choices_is_rejected_before_anything_is_written(tmp_path: Path):
+    """The refusal comes before any file is written, like every other bad setting."""
+    outdir = tmp_path / "run"
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.generate_run(0.2, 7, "s12a", str(outdir), state_poll_decider=_DECIDER)
+    assert str(excinfo.value) == "state_poll_decider requires state_poll_interval_choices_s"
+    assert not outdir.exists()
+
+
+def test_parse_poll_decider_arg_reads_a_json_object_and_refuses_invalid_json():
+    """The CLI string is parsed as JSON as is (its shape is semindex.gen's to check)."""
+    assert evalgen.parse_poll_decider_arg(json.dumps(_DECIDER)) == _DECIDER
+    assert evalgen.parse_poll_decider_arg(None) is None
+    with pytest.raises(ExperimentError) as excinfo:
+        evalgen.parse_poll_decider_arg("{path: 1}")
+    assert str(excinfo.value) == "--poll-decider must be valid JSON"
+
+
+def test_cli_poll_decider_reaches_the_written_agent_configs(tmp_path: Path):
+    """--poll-decider goes through the CLI into the experiment JSON and every agent
+    config, and each written config loads as an agent config carrying that spec."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        [
+            "--p", "0.2", "--seed", "1", "--stage", "s12a", "--out", str(outdir),
+            "--interval-choices", "3.695", "6.0", "10.043",
+            "--choice-jitter", "0.1",
+            "--choice-redecide",
+            "--poll-decider", json.dumps(_DECIDER),
+        ]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s12a_p020_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert raw["state_poll_decider"] == _DECIDER
+    for host in evalgen.AGENTS:
+        path = outdir / "s12a_p020_seed1" / f"h{host}.json"
+        assert json.loads(path.read_text(encoding="utf-8"))["state_poll_decider"] == _DECIDER
+        assert load_config(str(path), t0_ms=0).sync_overrides["state_poll_decider"] == _DECIDER
+
+
+def test_cli_without_poll_decider_writes_no_key(tmp_path: Path):
+    """Omitting the flag leaves the key out entirely."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        [
+            "--p", "0.2", "--seed", "1", "--stage", "s12a", "--out", str(outdir),
+            "--interval-choices", "3.695", "6.0", "10.043",
+            "--choice-redecide",
+        ]
+    )
+    assert rc == 0
+    raw = json.loads((outdir / "s12a_p020_seed1.experiment.json").read_text(encoding="utf-8"))
+    assert "state_poll_decider" not in raw
+    for host in evalgen.AGENTS:
+        path = outdir / "s12a_p020_seed1" / f"h{host}.json"
+        assert "state_poll_decider" not in json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--poll-policy", json.dumps(_SHORTEN)], "state_poll_decider cannot be combined with state_poll_policy"),
+        (["--poll-rule", json.dumps(_T37R)], "state_poll_decider cannot be combined with state_poll_rule"),
+    ],
+)
+def test_cli_rejects_a_poll_decider_with_the_table_or_the_rule(tmp_path: Path, capsys, extra, message):
+    """--poll-decider with --poll-policy or --poll-rule exits 1 with the exact
+    diagnostic, before anything is written."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0.2", "--seed", "1", "--stage", "s12a", "--out", str(outdir), "--poll-decider", json.dumps(_DECIDER)]
+        + extra
+    )
+    assert rc == 1
+    assert capsys.readouterr().err == f"semindex.evalgen: {message}\n"
+    assert not outdir.exists()
+
+
+def test_cli_rejects_a_poll_decider_that_is_not_json(tmp_path: Path, capsys):
+    """A --poll-decider string that is not JSON exits 1 with the exact diagnostic."""
+    outdir = tmp_path / "run"
+    rc = evalgen.main(
+        ["--p", "0.2", "--seed", "1", "--stage", "s12a", "--out", str(outdir), "--poll-decider", "{3,"]
+    )
+    assert rc == 1
+    assert capsys.readouterr().err == "semindex.evalgen: --poll-decider must be valid JSON\n"
+    assert not outdir.exists()

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import signal
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,7 @@ from semindex.agent import (
     load_config,
     validate_config,
 )
+from semindex.decider import DECIDER_MODULE_NAME
 from semindex.engine import StatePollPolicy, StatePollRule
 from semindex.store import OriginProgress, Store
 
@@ -2218,3 +2221,529 @@ def test_validate_config_carries_the_redecide_knob_and_defaults_it_to_off():
     assert build_sync_config(validate_config(raw)).state_poll_choice_redecide is True
     del raw["state_poll_choice_redecide"]
     assert build_sync_config(validate_config(raw)).state_poll_choice_redecide is False
+
+
+# -- state_poll_decider (external decider object, 2026-11-27) ----------------
+
+_DECIDER = {"path": "/abs/decider.py", "sha256": "0" * 64, "factory": "build", "args": {}}
+_DECIDER_CHOICES = [3.695, 6.0, 10.043]
+
+
+@pytest.fixture(autouse=True)
+def _clean_decider_module():
+    """Keep the fixed import slot empty between tests, since `sys.modules` is a
+    process-wide dict: a build_agent test below that loads a real decider file
+    would otherwise leave the slot populated for whatever test runs next."""
+    sys.modules.pop(DECIDER_MODULE_NAME, None)
+    yield
+    sys.modules.pop(DECIDER_MODULE_NAME, None)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"state_poll_decider": _DECIDER, "state_poll_policy": _POLICY, "seed": 1},
+            "state_poll_decider cannot be combined with state_poll_policy",
+        ),
+        (
+            {"state_poll_decider": _DECIDER, "state_poll_rule": _RULE, "seed": 1},
+            "state_poll_decider cannot be combined with state_poll_rule",
+        ),
+        ({"state_poll_decider": _DECIDER}, "state_poll_decider requires state_poll_interval_choices_s"),
+        (
+            {"state_poll_decider": _DECIDER, "state_poll_interval_choices_s": _DECIDER_CHOICES, "seed": 1},
+            "state_poll_decider requires state_poll_choice_redecide",
+        ),
+        (
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": False,
+                "seed": 1,
+            },
+            "state_poll_decider requires state_poll_choice_redecide",
+        ),
+        (
+            {
+                "state_poll_decider": [1],
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider must be an object with keys path, sha256, factory and args",
+        ),
+        (
+            {
+                "state_poll_decider": {k: v for k, v in _DECIDER.items() if k != "args"},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider must be an object with keys path, sha256, factory and args",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "extra": 1},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider must be an object with keys path, sha256, factory and args",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "path": "relative/decider.py"},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider.path must be a non-empty absolute path",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "path": ""},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider.path must be a non-empty absolute path",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "path": 7},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider.path must be a non-empty absolute path",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "sha256": "0" * 63},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider.sha256 must be 64 lower-case hex characters",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "sha256": "F" * 64},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider.sha256 must be 64 lower-case hex characters",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "factory": "not an identifier"},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider.factory must be a Python identifier",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "factory": "1bad"},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider.factory must be a Python identifier",
+        ),
+        (
+            {
+                "state_poll_decider": {**_DECIDER, "args": [1]},
+                "state_poll_interval_choices_s": _DECIDER_CHOICES,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider.args must be an object",
+        ),
+        (
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": [2.0],
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
+        ),
+        (
+            # Exactly on the bound (strict >, not >=): 3.0 * (1 - 0) * 1000 = 3000.0,
+            # interest_lifetime_ms + receive_timeout_ms = 2900 + 100 = 3000. Chosen so
+            # both sides are exact in float, which 2.1 * 1000 (DEFAULT_RECEIVE_TIMEOUT_MS's
+            # own 100 plus a non-finite jitter fraction elsewhere in this file) is not.
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": [3.0],
+                "state_poll_choice_jitter_frac": 0.0,
+                "interest_lifetime_ms": 2900,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
+        ),
+        (
+            # Clears the bound unjittered (2.2 * 1000 = 2200 > 2100) but not once
+            # state_poll_choice_jitter_frac is actually applied (2.2 * 0.9 * 1000 =
+            # 1980, not > 2100): catches a check that drops the
+            # (1 - state_poll_choice_jitter_frac) factor instead of multiplying by it.
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": [2.2],
+                "state_poll_choice_jitter_frac": 0.1,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
+        ),
+        (
+            # Clears the bound against the default receive_timeout_ms (3.0 * 1000 =
+            # 3000 > 2000 + 100) but not against this config's own 1000 ms
+            # (3000, not > 2000 + 1000 = 3000): catches a check that reads
+            # DEFAULT_RECEIVE_TIMEOUT_MS instead of this config's own
+            # receive_timeout_ms.
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": [3.0],
+                "state_poll_choice_jitter_frac": 0.0,
+                "receive_timeout_ms": 1000,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
+        ),
+        (
+            # Two choices straddling the bound: the smallest (0.5 * 1000 = 500) fails
+            # it against the default 2000 + 100, the largest (10.0 * 1000 = 10000)
+            # clears it easily. Catches a check that reads max(choices) in place of
+            # min(choices), which would pass this config though the engine can still
+            # poll again, on the smaller choice, before a poll driven by it resolves.
+            {
+                "state_poll_decider": _DECIDER,
+                "state_poll_interval_choices_s": [0.5, 10.0],
+                "state_poll_choice_jitter_frac": 0.0,
+                "state_poll_choice_redecide": True,
+                "seed": 1,
+            },
+            "state_poll_decider requires min(state_poll_interval_choices_s) * "
+            "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms",
+        ),
+    ],
+)
+def test_validate_config_rejects_a_bad_state_poll_decider(overrides: dict, message: str):
+    """Each refusal of the decider key -- combined with a policy or a rule, without
+    choices, without redecide present and true, a malformed spec, and a choice set
+    that cannot clear the port's own bound -- fails with its own exact diagnostic."""
+    raw = _minimal_raw()
+    raw.update(overrides)
+    with pytest.raises(ConfigError) as exc_info:
+        validate_config(raw)
+    assert str(exc_info.value) == message
+
+
+def test_validate_config_accepts_a_state_poll_decider_one_ms_inside_the_bound():
+    """One millisecond inside the bound (interest_lifetime_ms 2899, one less than the
+    exact-equality refusal above) passes -- `>`, not `>=`, on the other side too."""
+    raw = _minimal_raw()
+    raw.update(
+        state_poll_interval_choices_s=[3.0],
+        state_poll_choice_jitter_frac=0.0,
+        interest_lifetime_ms=2899,
+        state_poll_choice_redecide=True,
+        seed=1,
+        state_poll_decider=_DECIDER,
+    )
+    assert build_sync_config(validate_config(raw)).state_poll_decider == _DECIDER
+
+
+def test_validate_config_carries_the_state_poll_decider_and_leaves_it_out_when_unset():
+    """A valid spec reaches SyncConfig as given; without the key SyncConfig has none."""
+    raw = _minimal_raw()
+    raw.update(
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_redecide=True,
+        seed=1,
+        state_poll_decider=_DECIDER,
+    )
+    config = validate_config(raw)
+    assert build_sync_config(config).state_poll_decider == _DECIDER
+    assert build_sync_config(validate_config(_minimal_raw())).state_poll_decider is None
+
+
+def _write_const_decider(path: Path) -> None:
+    """A decider file whose factory `build(node, value, closed)` returns a decider
+    that always answers `value` and records a close() call into the list `closed`."""
+    path.write_text(
+        "class _Const:\n"
+        "    def __init__(self, value, closed):\n"
+        "        self.value = value\n"
+        "        self.closed = closed\n"
+        "    def decide(self, obs):\n"
+        "        return self.value\n"
+        "    def collect(self):\n"
+        "        return []\n"
+        "    def close(self):\n"
+        "        self.closed.append(True)\n"
+        "\n"
+        "def build(node, value, closed):\n"
+        "    return _Const(value, closed)\n",
+        encoding="utf-8",
+    )
+
+
+def test_build_agent_wires_a_decider_file_into_a_decider_mode_engine(tmp_path: Path):
+    """End to end through build_agent: a decider spec naming a file written at
+    tmp_path reaches SyncEngine as a working poll_decider, and every state-poll
+    decision is the constant it returns, with action_prob 1.0 (the decider replaces
+    the draw, not its probability, so the engine never records a probability no
+    decision of the run had)."""
+    decider_path = tmp_path / "const_decider.py"
+    _write_const_decider(decider_path)
+    digest = hashlib.sha256(decider_path.read_bytes()).hexdigest()
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        seed=7,
+        state_poll_decider={
+            "path": str(decider_path),
+            "sha256": digest,
+            "factory": "build",
+            "args": {"value": 6.0, "closed": []},
+        },
+    )
+    agent = build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))
+    engine = agent._engine
+    assert engine._poll_decider is not None
+    events = []
+    now = 0.0
+    for _ in range(3):
+        engine.on_tick(now)
+        for event in engine.drain_events():
+            if event["event"] == "decision" and event["kind"] == "state_poll":
+                events.append(event)
+                now += event["action"]["applied_interval_s"]
+    assert len(events) == 3
+    assert [e["action"]["interval_s"] for e in events] == [6.0, 6.0, 6.0]
+    assert [e["action_prob"] for e in events] == [1.0, 1.0, 1.0]
+
+
+def test_agent_shutdown_closes_the_poll_decider_exactly_once(tmp_path: Path):
+    """shutdown() closes a configured decider; not the engine's job (the engine is
+    never told to shut down, only this Agent is)."""
+    decider_path = tmp_path / "const_decider.py"
+    _write_const_decider(decider_path)
+    digest = hashlib.sha256(decider_path.read_bytes()).hexdigest()
+    closed: list = []
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_redecide=True,
+        seed=7,
+        state_poll_decider={
+            "path": str(decider_path),
+            "sha256": digest,
+            "factory": "build",
+            "args": {"value": 6.0, "closed": closed},
+        },
+    )
+    agent = build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))
+    agent.shutdown()
+    assert closed == [True]
+
+
+def test_no_decider_run_never_touches_the_loader(tmp_path: Path, monkeypatch):
+    """With state_poll_decider absent, build_agent must not call load_poll_decider at
+    all and the fixed import slot must stay empty: the only path to the loader is
+    config.sync_overrides carrying the key (build_agent's own guard), so a run that
+    never asked for a decider cannot reach it, importable file or not.
+
+    Patched where build_agent actually looks it up -- semindex.agent imports the name
+    directly (`from semindex.decider import load_poll_decider`), so patching
+    semindex.decider's own attribute would not be seen here."""
+
+    def _must_not_be_called(spec, *, node):
+        raise AssertionError("load_poll_decider must not be called without the field")
+
+    monkeypatch.setattr("semindex.agent.load_poll_decider", _must_not_be_called)
+    config = _config(tmp_path, neighbors=["h1"])
+    build_agent(config, _FakeHandle(), clock=_FakeClock(0.0))
+    assert DECIDER_MODULE_NAME not in sys.modules
+
+
+def _write_deferring_decider(path: Path) -> None:
+    """A decider file whose factory `build(node, interval)` returns a decider that
+    answers `interval` synchronously at a send and defers every resolution,
+    auto-queuing that resolution's own answer for its very next collect() call --
+    enough to show a stop reached right after the deferral still finds that answer
+    available at shutdown. close() discards whatever was not collected, as a client
+    that drops its connection does: a shutdown that closed the decider before its
+    last collect would otherwise go unnoticed by a fake whose answers outlive close()."""
+    path.write_text(
+        "class _Deferring:\n"
+        "    def __init__(self, interval):\n"
+        "        self.interval = interval\n"
+        "        self._ready = []\n"
+        "    def decide(self, obs):\n"
+        "        if obs['where']['kind'] == 'state_poll':\n"
+        "            return self.interval\n"
+        "        token = (obs['where']['neighbor'], obs['resolved']['poll_epoch_ms'])\n"
+        "        self._ready.append((token, self.interval, {}))\n"
+        "        return None\n"
+        "    def collect(self):\n"
+        "        ready, self._ready = self._ready, []\n"
+        "        return ready\n"
+        "    def close(self):\n"
+        "        self._ready = []\n"
+        "\n"
+        "def build(node, interval):\n"
+        "    return _Deferring(interval)\n",
+        encoding="utf-8",
+    )
+
+
+def test_the_last_deferral_of_a_run_is_collected_in_shutdown(tmp_path: Path):
+    """A stop boundary reached right after a resolution has deferred, with its
+    answer already available, is not lost: shutdown's own drain applies it, the row
+    is written, unanswered is 0, the decider_counts line precedes counters, and
+    counters stays the last line -- the same shutdown-order property
+    test_a_counters_snapshot_captured_mid_probe_is_not_lost_when_that_probe_is_what_triggers_stop
+    and test_stop_at_s_ends_the_loop_exactly_as_sigterm_would_after_the_last_due_step
+    pin for a counters_snapshot and for stop_at_s itself.
+
+    Timed so the poll sent at the first tick (t=0.1s) times out at exactly t=0.4s
+    (interest_lifetime_ms=300), the last tick run() ever reaches, and stop_at_s=0.5s
+    is crossed on the very next step's poll() -- so that step returns before calling
+    on_tick again and the deferred answer (auto-queued the instant it deferred) is
+    collected nowhere but shutdown's own drain.
+    """
+    decider_path = tmp_path / "deferring_decider.py"
+    _write_deferring_decider(decider_path)
+    digest = hashlib.sha256(decider_path.read_bytes()).hexdigest()
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        seed=7,
+        interest_lifetime_ms=300,
+        stop_at_s=0.5,
+        state_poll_decider={
+            "path": str(decider_path),
+            "sha256": digest,
+            "factory": "build",
+            "args": {"interval": _DECIDER_CHOICES[0]},
+        },
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.run()
+
+    lines = _read_events(config)
+    kinds = [e["event"] for e in lines]
+    assert kinds.count("counters") == 1
+    assert kinds[-1] == "counters"
+    assert kinds.index("decider_counts") < kinds.index("counters")
+    reschedule = next(e for e in lines if e["event"] == "decision" and e["kind"] == "state_poll_reschedule")
+    assert reschedule["action"]["trigger"] == "timed_out"
+    assert reschedule["action"]["late"] is False
+    decider_counts = next(e for e in lines if e["event"] == "decider_counts")
+    assert lines.index(reschedule) < lines.index(decider_counts)  # the drain runs before _drain_engine_events
+    assert decider_counts["deferred"] == 1
+    assert decider_counts["applied"] == 1
+    assert decider_counts["late"] == 0
+    assert decider_counts["unanswered"] == 0
+    assert decider_counts["unanswered_asked"] == []  # everything was answered
+
+
+def _write_never_answering_decider(path: Path) -> None:
+    """A decider file whose factory `build(node, interval)` answers `interval`
+    synchronously at a send, defers every resolution (decide() returns None at
+    one), and never queues an answer for collect() (which always returns []) --
+    so the deferral is left outstanding through shutdown and unanswered_asked
+    has something to report."""
+    path.write_text(
+        "class _NeverAnswering:\n"
+        "    def __init__(self, interval):\n"
+        "        self.interval = interval\n"
+        "    def decide(self, obs):\n"
+        "        if obs['where']['kind'] == 'state_poll':\n"
+        "            return self.interval\n"
+        "        return None\n"
+        "    def collect(self):\n"
+        "        return []\n"
+        "    def close(self):\n"
+        "        pass\n"
+        "\n"
+        "def build(node, interval):\n"
+        "    return _NeverAnswering(interval)\n",
+        encoding="utf-8",
+    )
+
+
+def test_shutdown_s_decider_counts_row_carries_the_unanswered_deferral_s_own_stamp(tmp_path: Path):
+    """A resolution deferred and never answered is still pending at shutdown: the
+    decider_counts row's unanswered_asked names its neighbor and poll_epoch_ms and
+    stamps asked_ms with the resolution instant. This only checks that the row
+    exists and precedes counters -- a missing row, or one written after counters,
+    fails it -- not that it comes after close(): that ordering is unguarded here
+    (it is only observable when close() itself raises)."""
+    decider_path = tmp_path / "never_answering_decider.py"
+    _write_never_answering_decider(decider_path)
+    digest = hashlib.sha256(decider_path.read_bytes()).hexdigest()
+    clock = _FakeClock(0.0)
+    handle = _FakeHandle([], clock=clock, step_s=0.1)
+    config = _config(
+        tmp_path,
+        neighbors=["h1"],
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        seed=7,
+        interest_lifetime_ms=300,
+        stop_at_s=0.5,
+        state_poll_decider={
+            "path": str(decider_path),
+            "sha256": digest,
+            "factory": "build",
+            "args": {"interval": _DECIDER_CHOICES[0]},
+        },
+    )
+    agent = build_agent(config, handle, clock=clock)
+
+    agent.run()
+
+    lines = _read_events(config)
+    kinds = [e["event"] for e in lines]
+    assert kinds[-1] == "counters"
+    decider_counts = next(e for e in lines if e["event"] == "decider_counts")
+    assert kinds.index("decider_counts") < kinds.index("counters")
+    # The whole row, not key by key: a key that is not one of these would be written
+    # into every decider run's log and no per-key assert would notice it.
+    assert decider_counts == {
+        "event": "decider_counts",
+        "ts_ms": decider_counts["ts_ms"],
+        "deferred": 1,
+        "applied": 0,
+        "late": 0,
+        "clamped_by_wait": 0,
+        "overlap": 0,
+        "orphan": 0,
+        "unanswered": 1,
+        "unanswered_asked": [{"neighbor": "h1", "poll_epoch_ms": 100, "asked_ms": 400}],
+    }

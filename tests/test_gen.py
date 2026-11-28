@@ -849,3 +849,157 @@ def test_parse_experiment_rejects_a_non_boolean_redecide_knob(value):
     with pytest.raises(ExperimentError) as exc_info:
         parse_experiment(raw)
     assert str(exc_info.value) == "state_poll_choice_redecide must be a boolean"
+
+
+# -- state_poll_decider (agent key, 2026-11-27) ------------------------------
+
+_DECIDER = {"path": "/abs/decider.py", "sha256": "0" * 64, "factory": "build", "args": {}}
+_DECIDER_CHOICES = [3.695, 6.0, 10.043]
+
+
+def test_a_state_poll_decider_reaches_every_agent_config():
+    """Given a decider beside the choices and redecide, every agent config carries the
+    decider, the choices, redecide and the run seed."""
+    raw = _minimal_raw(
+        seed=9,
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_redecide=True,
+        state_poll_decider=_DECIDER,
+    )
+    configs = generate(parse_experiment(raw), "/cfg").agent_configs
+    assert sorted(configs) == ["h0", "h1"]
+    for config in configs.values():
+        assert config["seed"] == 9
+        assert config["state_poll_interval_choices_s"] == _DECIDER_CHOICES
+        assert config["state_poll_choice_redecide"] is True
+        assert config["state_poll_decider"] == _DECIDER
+
+
+def test_no_state_poll_decider_writes_no_key_at_all():
+    """Absent, no key is written, so an existing choices+redecide experiment's agent
+    configs stay byte for byte."""
+    raw = _minimal_raw(
+        seed=9, state_poll_interval_choices_s=_DECIDER_CHOICES, state_poll_choice_redecide=True
+    )
+    for config in generate(parse_experiment(raw), "/cfg").agent_configs.values():
+        assert "state_poll_decider" not in config
+
+
+def test_a_written_state_poll_decider_passes_the_agents_own_validation(tmp_path: Path):
+    """The written agent config loads, so gen's rules are no looser than the agent's."""
+    experiment = tmp_path / "exp.json"
+    raw = _minimal_raw(
+        seed=9,
+        state_poll_interval_choices_s=_DECIDER_CHOICES,
+        state_poll_choice_redecide=True,
+        state_poll_decider=_DECIDER,
+    )
+    experiment.write_text(json.dumps(raw), encoding="utf-8")
+    write_experiment(str(experiment), str(tmp_path / "out"))
+    config = load_config(str(tmp_path / "out" / "mini" / "h0.json"))
+    assert config.sync_overrides["state_poll_decider"] == _DECIDER
+
+
+@pytest.mark.parametrize(
+    ("decider", "message"),
+    [
+        ([1], "state_poll_decider must be an object with keys path, sha256, factory and args"),
+        (
+            {k: v for k, v in _DECIDER.items() if k != "args"},
+            "state_poll_decider must be an object with keys path, sha256, factory and args",
+        ),
+        (
+            {**_DECIDER, "extra": 1},
+            "state_poll_decider must be an object with keys path, sha256, factory and args",
+        ),
+        ({**_DECIDER, "path": "relative/decider.py"}, "state_poll_decider.path must be a non-empty absolute path"),
+        ({**_DECIDER, "path": ""}, "state_poll_decider.path must be a non-empty absolute path"),
+        ({**_DECIDER, "path": 7}, "state_poll_decider.path must be a non-empty absolute path"),
+        ({**_DECIDER, "sha256": "0" * 63}, "state_poll_decider.sha256 must be 64 lower-case hex characters"),
+        ({**_DECIDER, "sha256": "F" * 64}, "state_poll_decider.sha256 must be 64 lower-case hex characters"),
+        ({**_DECIDER, "factory": "not an identifier"}, "state_poll_decider.factory must be a Python identifier"),
+        ({**_DECIDER, "factory": "1bad"}, "state_poll_decider.factory must be a Python identifier"),
+        ({**_DECIDER, "args": [1]}, "state_poll_decider.args must be an object"),
+    ],
+)
+def test_parse_experiment_rejects_a_bad_state_poll_decider(decider, message):
+    """Each of the agent's shape rules is refused at generation, with the exact diagnostic."""
+    raw = _minimal_raw(
+        seed=9, state_poll_interval_choices_s=_DECIDER_CHOICES, state_poll_choice_redecide=True, state_poll_decider=decider
+    )
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(raw)
+    assert str(exc_info.value) == message
+
+
+def test_parse_experiment_rejects_a_state_poll_decider_whose_choices_cannot_clear_the_bound():
+    """A choice set too small for the port's own bound is refused at generation, not
+    after a full run."""
+    raw = _minimal_raw(
+        seed=9, state_poll_interval_choices_s=[2.0], state_poll_choice_redecide=True, state_poll_decider=_DECIDER
+    )
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(raw)
+    assert str(exc_info.value) == (
+        "state_poll_decider requires min(state_poll_interval_choices_s) * "
+        "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms"
+    )
+
+
+def test_parse_experiment_rejects_a_state_poll_decider_whose_choices_clear_the_bound_unjittered_but_not_with_jitter():
+    """A choice set that clears the port's own bound with no jitter (2.2 * 1000 =
+    2200 > 2100) but not once state_poll_choice_jitter_frac is applied (2.2 * 0.9 *
+    1000 = 1980, not > 2100) is refused too: catches a check that drops the
+    (1 - state_poll_choice_jitter_frac) factor instead of multiplying by it."""
+    raw = _minimal_raw(
+        seed=9,
+        state_poll_interval_choices_s=[2.2],
+        state_poll_choice_jitter_frac=0.1,
+        state_poll_choice_redecide=True,
+        state_poll_decider=_DECIDER,
+    )
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(raw)
+    assert str(exc_info.value) == (
+        "state_poll_decider requires min(state_poll_interval_choices_s) * "
+        "(1 - state_poll_choice_jitter_frac) * 1000 > interest_lifetime_ms + receive_timeout_ms"
+    )
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"state_poll_policy": _POLICY}, "state_poll_decider cannot be combined with state_poll_policy"),
+        ({"state_poll_rule": _RULE}, "state_poll_decider cannot be combined with state_poll_rule"),
+    ],
+)
+def test_parse_experiment_rejects_a_state_poll_decider_with_the_table_or_the_rule(extra, message):
+    """A decider beside the table or the rule is refused as the combination, not as
+    "nothing to pick from" -- have_policy/have_rule are checked before have_choices."""
+    raw = _minimal_raw(seed=9, state_poll_decider=_DECIDER, **extra)
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(raw)
+    assert str(exc_info.value) == message
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({}, "state_poll_decider requires state_poll_interval_choices_s"),
+        (
+            {"state_poll_interval_choices_s": _DECIDER_CHOICES},
+            "state_poll_decider requires state_poll_choice_redecide",
+        ),
+        (
+            {"state_poll_interval_choices_s": _DECIDER_CHOICES, "state_poll_choice_redecide": False},
+            "state_poll_decider requires state_poll_choice_redecide",
+        ),
+    ],
+)
+def test_parse_experiment_rejects_a_state_poll_decider_without_choices_or_redecide(extra, message):
+    """The decider rides the choices and the redecide knob, present and true; absent
+    or false, both are refused rather than silently ignored."""
+    raw = _minimal_raw(seed=9, state_poll_decider=_DECIDER, **extra)
+    with pytest.raises(ExperimentError) as exc_info:
+        parse_experiment(raw)
+    assert str(exc_info.value) == message
