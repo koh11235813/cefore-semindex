@@ -33,10 +33,24 @@ PY=/home/lab_shared/cefore-semindex/.venv/bin/python3
 SSH="ssh -o BatchMode=yes"
 
 probe() {
+  # 2026-11-28 crash fix: this used to print whatever came back and exit 0 regardless, so
+  # a live ssh forward over a dead lserver.py (the far end closes the stream, recv returns
+  # b"") printed a blank line and still looked like success. Now it exits non-zero on
+  # anything but the server's own {"probe": 1, "ready": true, ...} reply, an empty reply
+  # included.
   "$PY" -B -c "
+import json
 import socket
+import sys
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.settimeout(3); s.connect('$LSOCK')
-s.sendall(b'{\"probe\": 1}\n'); print(s.recv(4096).decode().strip())"
+s.sendall(b'{\"probe\": 1}\n')
+reply = s.recv(4096).decode().strip()
+print(reply)
+try:
+    ok = json.loads(reply).get('ready') is True
+except ValueError:
+    ok = False
+sys.exit(0 if ok else 1)"
 }
 
 case "${1:-}" in

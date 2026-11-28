@@ -803,8 +803,8 @@ candidate b's `coef_b.npy`), imported by `mdecider.py`, which is itself pinned b
   the L client is the one script of this directory that must stay as small as a socket and a JSON encoder inside
   a node process. Two things check it instead: the engine refuses any value outside the configured choices
   (section 6.7), so a wrong `send_start` raises on the pair's first send rather than quietly polling at it; and
-  `parity.py`, which runs in the analysis venv and imports `port` anyway, asserts
-  `send_start == PORT.ARMS[1]` before the sweep. **This is the precondition `ARMS[1] in
+  `main12.sh` loads `port` with the analysis venv and refuses to start unless
+  `send_start == PORT.ARMS[1]`. **This is the precondition `ARMS[1] in
   state_poll_interval_choices_s`**, which section 17.4 leaves to `spec.md` together with the arms themselves;
 - **a late answer therefore also moves the next send row.** `mem` is written when the answer arrives, so a send
   that went out while the answer was outstanding carries the pair's previous value and the send after it carries
@@ -1366,7 +1366,7 @@ The arithmetic that differs between a baseline stage and a decider stage, exactl
 16. `engine.py:529-533` is guarded rather than duplicated into the existing branches (section 6.1). Not taken:
     rebuilding the state after the decision, which would hand the row a different object from the decider's.
 17. `send_start` is a factory argument of the L client, checked by the engine's own choice-set refusal and by
-    `parity.py`, rather than imported from `../22/port.py` (section 8.2). Not taken: importing the constant,
+    `main12.sh` before the sweep, rather than imported from `../22/port.py` (section 8.2). Not taken: importing the constant,
     which would pull `replay` and `bound` into every node process.
 18. An out-of-order resolution stamp within one pair raises (section 6.5). Not taken: counting the inversion,
     which leaves a file the labelling cannot read.
